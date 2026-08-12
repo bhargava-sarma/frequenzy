@@ -27,6 +27,7 @@ interface Row {
 
 export function DiagnosticScreen() {
   const client = useServerStore((state) => state.client);
+  const library = useServerStore((state) => state.library);
   const connection = useServerStore((state) => state.connection);
   const config = useServerStore((state) => state.config);
   const signOut = useServerStore((state) => state.signOut);
@@ -37,7 +38,7 @@ export function DiagnosticScreen() {
   const [error, setError] = useState<string[]>([]);
 
   const run = useCallback(async () => {
-    if (!client) return;
+    if (!client || !library) return;
 
     setStatus('running');
     setRows([]);
@@ -58,20 +59,34 @@ export function DiagnosticScreen() {
       collected.push({ label: 'Server', value: `${pong.type ?? '?'} ${pong.serverVersion ?? ''}` });
       collected.push({ label: 'Subsonic API', value: pong.version });
 
-      const artistsResponse = await client.getArtists();
-      const artists = (artistsResponse.artists.index ?? []).flatMap((index) => index.artist);
+      // Force one read over the network, then repeat it against the cache.
+      // Comparing the two is the only way to show the cache is genuinely
+      // serving on device rather than quietly falling through every time.
+      const networkStartedAt = Date.now();
+      const artists = await library.getArtists({ forceRefresh: true });
+      const networkMs = Date.now() - networkStartedAt;
+
+      const cacheStartedAt = Date.now();
+      await library.getArtists();
+      const cacheMs = Date.now() - cacheStartedAt;
+
       collected.push({ label: 'Artists', value: String(artists.length) });
+      collected.push({
+        label: 'Cache read',
+        value: `${cacheMs}ms vs ${networkMs}ms network`,
+        tone: cacheMs < networkMs ? 'good' : 'bad',
+      });
       setRows([...collected]);
 
       // Walk down to a real track and confirm the stream is untouched.
       const firstArtist = artists[0];
       if (firstArtist) {
-        const detail = await client.getArtist(firstArtist.id);
-        const album = detail.artist.album?.[0];
+        const detail = await library.getArtist(firstArtist.id);
+        const album = detail.albums[0];
 
         if (album) {
-          const albumDetail = await client.getAlbum(album.id);
-          const track = albumDetail.album.song?.find((song) => (song.size ?? 0) > 0);
+          const albumDetail = await library.getAlbum(album.id);
+          const track = albumDetail.songs.find((song) => (song.size ?? 0) > 0);
 
           if (track) {
             const probe = await client.probeStream(track.id);
@@ -121,7 +136,7 @@ export function DiagnosticScreen() {
       setRows(collected);
       setStatus('error');
     }
-  }, [client]);
+  }, [client, library]);
 
   useEffect(() => {
     void run();

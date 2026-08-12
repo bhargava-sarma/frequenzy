@@ -124,6 +124,24 @@ export class SubsonicClient {
   }
 
   /**
+   * Seeds this client with a connection another client already proved.
+   *
+   * Used when setup verifies credentials against the server and the app then
+   * builds its long-lived client: without this the new client re-probes from
+   * scratch and pays the full local timeout again, seconds after we already
+   * learned which address answers.
+   *
+   * Safe because the proof was just obtained with this same config, and it is
+   * self-correcting regardless — a stale address surfaces as a transport
+   * failure on the next request and triggers a re-probe.
+   */
+  adoptConnection(state: ConnectionState): void {
+    this.connection = { ...state };
+    this.onConnectionChange?.(this.connection);
+    this.log(`Adopted verified ${state.kind} connection`);
+  }
+
+  /**
    * Drops the cached connection so the next request re-probes from the top.
    * Call this on resume-from-background: the device may have moved between
    * home Wi-Fi and cellular while we weren't looking.

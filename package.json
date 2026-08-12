@@ -26,7 +26,8 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
-    "check:connection": "node --env-file-if-exists=.env --import tsx scripts/check-connection.ts"
+    "check:connection": "node --env-file-if-exists=.env --import tsx scripts/check-connection.ts",
+    "check:cache": "node --import tsx scripts/check-cache.ts"
   },
   "private": true
 }

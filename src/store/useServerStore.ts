@@ -3,6 +3,8 @@ import { create } from 'zustand';
 import { SubsonicClient } from '../api/client';
 import type { ConnectionState } from '../api/client';
 import { resolveCandidates, type ServerConfig } from '../api/config';
+import { LibraryRepository } from '../data/libraryRepository';
+import { createAsyncStorageCache } from '../storage/asyncStorageCache';
 import { clearServerConfig, loadServerConfig, saveServerConfig } from '../storage/credentials';
 
 /**
@@ -20,13 +22,19 @@ interface ServerStore {
   status: ServerStatus;
   config: ServerConfig | null;
   client: SubsonicClient | null;
+  /** Cached library reads. Screens use this rather than the raw client. */
+  library: LibraryRepository | null;
   /** Mirrors the client's active connection so UI can show local vs remote. */
   connection: ConnectionState | null;
 
   /** Reads persisted credentials. Call once at app start. */
   hydrate: () => Promise<void>;
-  /** Persists a validated config and swaps in a client built from it. */
-  saveConfig: (config: ServerConfig) => Promise<void>;
+  /**
+   * Persists a validated config and swaps in a client built from it.
+   * Pass the connection returned by verifyServerConfig so the new client
+   * inherits it instead of re-probing what we just proved.
+   */
+  saveConfig: (config: ServerConfig, verified?: ConnectionState) => Promise<void>;
   /** Forgets credentials and returns to setup. */
   signOut: () => Promise<void>;
   /**
@@ -38,8 +46,9 @@ interface ServerStore {
 }
 
 export const useServerStore = create<ServerStore>((set, get) => {
-  const buildClient = (config: ServerConfig) =>
-    new SubsonicClient({
+  /** Builds the client and its cached read layer as one unit. */
+  const buildSession = (config: ServerConfig) => {
+    const client = new SubsonicClient({
       config,
       onConnectionChange: (connection) => set({ connection }),
       log: (message) => {
@@ -47,31 +56,57 @@ export const useServerStore = create<ServerStore>((set, get) => {
       },
     });
 
+    const library = new LibraryRepository({ client, cache: createAsyncStorageCache() });
+    return { client, library };
+  };
+
   return {
     status: 'hydrating',
     config: null,
     client: null,
+    library: null,
     connection: null,
 
     hydrate: async () => {
       const config = await loadServerConfig();
 
       if (!config) {
-        set({ status: 'needsSetup', config: null, client: null, connection: null });
+        set({
+          status: 'needsSetup',
+          config: null,
+          client: null,
+          library: null,
+          connection: null,
+        });
         return;
       }
 
-      set({ status: 'ready', config, client: buildClient(config), connection: null });
+      set({ status: 'ready', config, ...buildSession(config), connection: null });
     },
 
-    saveConfig: async (config) => {
+    saveConfig: async (config, verified) => {
       await saveServerConfig(config);
-      set({ status: 'ready', config, client: buildClient(config), connection: null });
+
+      const session = buildSession(config);
+      if (verified) session.client.adoptConnection(verified);
+
+      set({ status: 'ready', config, ...session, connection: verified ?? null });
     },
 
     signOut: async () => {
+      // Drop cached library data too. It belongs to the account being signed
+      // out of, and leaving it behind would show a stale library to whoever
+      // sets the app up next.
+      await get().library?.clear();
       await clearServerConfig();
-      set({ status: 'needsSetup', config: null, client: null, connection: null });
+
+      set({
+        status: 'needsSetup',
+        config: null,
+        client: null,
+        library: null,
+        connection: null,
+      });
     },
 
     refreshConnection: () => {

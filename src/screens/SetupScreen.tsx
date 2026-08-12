@@ -61,10 +61,11 @@ export function SetupScreen() {
     };
 
     try {
+      // Hand the proven connection to the store so the app's client starts
+      // warm rather than re-probing an address we just confirmed.
       const connection = await verifyServerConfig(config);
-      await saveConfig(config);
+      await saveConfig(config, connection);
       // No navigation needed — the root switches on store status.
-      if (__DEV__) console.log(`[setup] verified via ${connection.kind}`);
     } catch (err) {
       if (err instanceof ApiError && err.isAuthError) {
         setError('Navidrome rejected these credentials.');
