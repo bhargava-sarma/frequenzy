@@ -71,28 +71,27 @@ function redact(url: string): string {
 
 function loadConfig(): ServerConfig {
   const {
-    EXPO_PUBLIC_NAVIDROME_LOCAL_URL,
-    EXPO_PUBLIC_NAVIDROME_REMOTE_URL,
-    EXPO_PUBLIC_NAVIDROME_USERNAME,
-    EXPO_PUBLIC_NAVIDROME_PASSWORD,
+    NAVIDROME_LOCAL_URL,
+    NAVIDROME_REMOTE_URL,
+    NAVIDROME_USERNAME,
+    NAVIDROME_PASSWORD,
   } = process.env;
 
-  if (!EXPO_PUBLIC_NAVIDROME_USERNAME || !EXPO_PUBLIC_NAVIDROME_PASSWORD) {
+  if (!NAVIDROME_USERNAME || !NAVIDROME_PASSWORD) {
     console.error(
       `\n${RED}Missing credentials.${RESET}\n\n` +
         `Copy the template and fill it in:\n` +
         `  cp .env.example .env\n\n` +
-        `Then set EXPO_PUBLIC_NAVIDROME_USERNAME and EXPO_PUBLIC_NAVIDROME_PASSWORD\n` +
-        `(and at least one URL).\n`,
+        `Then set NAVIDROME_USERNAME and NAVIDROME_PASSWORD (and at least one URL).\n`,
     );
     process.exit(1);
   }
 
   return {
-    localUrl: EXPO_PUBLIC_NAVIDROME_LOCAL_URL,
-    remoteUrl: EXPO_PUBLIC_NAVIDROME_REMOTE_URL,
-    username: EXPO_PUBLIC_NAVIDROME_USERNAME,
-    password: EXPO_PUBLIC_NAVIDROME_PASSWORD,
+    localUrl: NAVIDROME_LOCAL_URL,
+    remoteUrl: NAVIDROME_REMOTE_URL,
+    username: NAVIDROME_USERNAME,
+    password: NAVIDROME_PASSWORD,
   };
 }
 

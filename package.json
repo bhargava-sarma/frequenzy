@@ -3,13 +3,17 @@
   "version": "1.0.0",
   "main": "index.ts",
   "dependencies": {
+    "@expo-google-fonts/inter": "^0.4.2",
+    "@react-native-async-storage/async-storage": "2.2.0",
     "expo": "~57.0.12",
     "expo-build-properties": "~57.0.10",
+    "expo-font": "~57.0.1",
     "expo-secure-store": "~57.0.1",
     "expo-status-bar": "~57.0.1",
     "js-md5": "^0.9.2",
     "react": "19.2.3",
-    "react-native": "0.86.2"
+    "react-native": "0.86.2",
+    "zustand": "^5.0.14"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",

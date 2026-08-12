@@ -1,0 +1,279 @@
+import { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+
+import { ApiError, NoReachableServerError } from '../api/errors';
+import { useServerStore } from '../store/useServerStore';
+import { color, hairline, layout, radius, space, type } from '../theme/tokens';
+
+/**
+ * Connection diagnostics.
+ *
+ * Carries the "connected via local/remote" indicator the brief asks for, plus
+ * the losslessness check — kept in the app rather than only in the dev script
+ * so it can be re-run on the device that actually plays audio, from wherever
+ * you happen to be.
+ *
+ * This is scaffolding standing in for the real screens until Phase 4; it will
+ * end up folded into Settings.
+ */
+
+type Status = 'idle' | 'running' | 'ok' | 'error';
+
+interface Row {
+  label: string;
+  value: string;
+  tone?: 'good' | 'bad';
+}
+
+export function DiagnosticScreen() {
+  const client = useServerStore((state) => state.client);
+  const connection = useServerStore((state) => state.connection);
+  const config = useServerStore((state) => state.config);
+  const signOut = useServerStore((state) => state.signOut);
+  const refreshConnection = useServerStore((state) => state.refreshConnection);
+
+  const [status, setStatus] = useState<Status>('idle');
+  const [rows, setRows] = useState<Row[]>([]);
+  const [error, setError] = useState<string[]>([]);
+
+  const run = useCallback(async () => {
+    if (!client) return;
+
+    setStatus('running');
+    setRows([]);
+    setError([]);
+
+    const collected: Row[] = [];
+
+    try {
+      const startedAt = Date.now();
+      const pong = await client.ping();
+      const active = client.getConnectionState();
+
+      collected.push({
+        label: 'Connected via',
+        value: `${active?.kind ?? '?'} · ${Date.now() - startedAt}ms`,
+        tone: 'good',
+      });
+      collected.push({ label: 'Server', value: `${pong.type ?? '?'} ${pong.serverVersion ?? ''}` });
+      collected.push({ label: 'Subsonic API', value: pong.version });
+
+      const artistsResponse = await client.getArtists();
+      const artists = (artistsResponse.artists.index ?? []).flatMap((index) => index.artist);
+      collected.push({ label: 'Artists', value: String(artists.length) });
+      setRows([...collected]);
+
+      // Walk down to a real track and confirm the stream is untouched.
+      const firstArtist = artists[0];
+      if (firstArtist) {
+        const detail = await client.getArtist(firstArtist.id);
+        const album = detail.artist.album?.[0];
+
+        if (album) {
+          const albumDetail = await client.getAlbum(album.id);
+          const track = albumDetail.album.song?.find((song) => (song.size ?? 0) > 0);
+
+          if (track) {
+            const probe = await client.probeStream(track.id);
+            const matches = probe.totalBytes === track.size;
+
+            collected.push({ label: 'Test track', value: track.title });
+            collected.push({
+              label: 'Format',
+              value:
+                `${(track.suffix ?? '?').toUpperCase()} · ` +
+                `${track.bitDepth ?? '?'}/${
+                  track.samplingRate ? track.samplingRate / 1000 : '?'
+                }`,
+            });
+            collected.push({ label: 'Content type', value: probe.contentType ?? '?' });
+            collected.push({
+              label: 'Source bytes',
+              value: (track.size ?? 0).toLocaleString(),
+            });
+            collected.push({
+              label: 'Stream bytes',
+              value: (probe.totalBytes ?? 0).toLocaleString(),
+              tone: matches ? 'good' : 'bad',
+            });
+            collected.push({
+              label: 'Transcoding',
+              value: matches ? 'none — byte identical' : 'DETECTED',
+              tone: matches ? 'good' : 'bad',
+            });
+          }
+        }
+      }
+
+      setRows(collected);
+      setStatus('ok');
+    } catch (err) {
+      if (err instanceof NoReachableServerError) {
+        setError([
+          'Could not reach the server.',
+          ...err.attempts.map((a) => `${a.url} — ${a.error}`),
+        ]);
+      } else if (err instanceof ApiError && err.isAuthError) {
+        setError(['Navidrome rejected the stored credentials.']);
+      } else {
+        setError([err instanceof Error ? err.message : String(err)]);
+      }
+      setRows(collected);
+      setStatus('error');
+    }
+  }, [client]);
+
+  useEffect(() => {
+    void run();
+  }, [run]);
+
+  return (
+    <View style={styles.root}>
+      <View style={styles.header}>
+        <Text style={styles.headerLabel}>Connection</Text>
+        <Text style={[styles.headerStatus, status === 'error' && styles.headerStatusBad]}>
+          {status}
+        </Text>
+      </View>
+
+      {/* The indicator the brief asks for: which address is live right now. */}
+      <View style={styles.indicator}>
+        <Text style={styles.indicatorLabel}>{config?.nickname || 'Navidrome'}</Text>
+        <Text style={styles.indicatorValue}>
+          {connection ? connection.kind : 'not connected'}
+        </Text>
+      </View>
+
+      <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
+        {rows.map((row) => (
+          <View key={row.label} style={styles.row}>
+            <Text style={styles.rowLabel}>{row.label}</Text>
+            <Text
+              style={[
+                styles.rowValue,
+                row.tone === 'good' && styles.rowValueGood,
+                row.tone === 'bad' && styles.rowValueBad,
+              ]}
+              numberOfLines={1}
+            >
+              {row.value}
+            </Text>
+          </View>
+        ))}
+
+        {status === 'running' && <ActivityIndicator style={styles.spinner} color={color.accent} />}
+
+        {error.length > 0 && (
+          <View style={styles.errorBlock}>
+            {error.map((line, index) => (
+              <Text key={line} style={index === 0 ? styles.errorText : styles.errorDetail}>
+                {line}
+              </Text>
+            ))}
+          </View>
+        )}
+      </ScrollView>
+
+      <View style={styles.actions}>
+        <Pressable
+          style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}
+          onPress={() => {
+            refreshConnection();
+            void run();
+          }}
+          disabled={status === 'running'}
+        >
+          <Text style={styles.secondaryButtonText}>Re-probe</Text>
+        </Pressable>
+
+        <Pressable
+          style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}
+          onPress={() => void signOut()}
+        >
+          <Text style={styles.secondaryButtonText}>Sign out</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: color.paper, paddingTop: space[6] * 2 },
+
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: layout.screenPadding,
+    paddingBottom: space[3],
+  },
+  headerLabel: { ...type.label, color: color.textSecondary },
+  headerStatus: { ...type.label, color: color.textPrimary },
+  headerStatusBad: { color: color.accent },
+
+  indicator: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginHorizontal: layout.screenPadding,
+    paddingVertical: space[3],
+    paddingHorizontal: space[3],
+    borderRadius: radius.md,
+    backgroundColor: color.paperDim,
+  },
+  indicatorLabel: { ...type.body, color: color.textPrimary },
+  indicatorValue: { ...type.label, color: color.textPrimary },
+
+  list: { flex: 1, marginTop: space[5] },
+  listContent: { paddingBottom: space[5] },
+  row: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    height: layout.rowHeight - space[3],
+    paddingHorizontal: layout.screenPadding,
+    borderBottomWidth: hairline,
+    borderBottomColor: color.paperLine,
+  },
+  rowLabel: { ...type.meta, color: color.textSecondary },
+  rowValue: {
+    ...type.numeral,
+    fontSize: 12,
+    color: color.textPrimary,
+    flexShrink: 1,
+    marginLeft: space[4],
+  },
+  rowValueGood: { color: color.textPrimary },
+  rowValueBad: { color: color.accent },
+
+  spinner: { alignSelf: 'center', marginTop: space[5] },
+
+  errorBlock: {
+    marginTop: space[5],
+    marginHorizontal: layout.screenPadding,
+    borderLeftWidth: 2,
+    borderLeftColor: color.accent,
+    paddingLeft: space[3],
+  },
+  errorText: { ...type.body, color: color.accent },
+  errorDetail: { ...type.meta, color: color.textSecondary, marginTop: space[1] },
+
+  actions: {
+    flexDirection: 'row',
+    gap: space[3],
+    paddingHorizontal: layout.screenPadding,
+    paddingBottom: space[6] * 1.5,
+    paddingTop: space[3],
+  },
+  secondaryButton: {
+    flex: 1,
+    height: 44,
+    borderRadius: radius.sm,
+    borderWidth: hairline,
+    borderColor: color.paperLine,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  secondaryButtonText: { ...type.body, color: color.textPrimary },
+  pressed: { opacity: 0.6 },
+});
