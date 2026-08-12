@@ -134,6 +134,11 @@ export interface AlbumResponse {
   album: AlbumSummary & { song?: Child[] };
 }
 
+/** getAlbumList2 is paginated (500 max per page) and carries songCount per album. */
+export interface AlbumList2Response {
+  albumList2: { album?: AlbumSummary[] };
+}
+
 export interface SearchResult3Response {
   searchResult3: {
     artist?: ArtistSummary[];

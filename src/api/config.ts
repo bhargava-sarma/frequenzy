@@ -27,25 +27,34 @@ export interface UrlCandidate {
 
 export class ConfigError extends Error {}
 
+/** scheme :// host[:port] [/path] — deliberately strict about the whole string. */
+const BASE_URL_PATTERN = /^(https?):\/\/([^/?#\s]+)(\/[^?#\s]*)?$/i;
+
 /**
- * Trailing slashes would produce `//rest/ping.view`, which some reverse
- * proxies handle badly. A missing scheme is a common typo when entering a
- * bare IP into the setup screen, so we assume http rather than failing.
+ * Normalizes a user-entered server address.
+ *
+ * Parsed by regex rather than `new URL()` on purpose. React Native ships a
+ * regex approximation of URL rather than a spec-compliant parser, so the same
+ * input can normalize differently under Node and on-device. Doing it by hand
+ * keeps this module identical across Node, React Native, and the browser —
+ * which is the point of keeping `api/` free of platform assumptions.
+ *
+ * Trailing slashes are stripped because they would produce `//rest/ping.view`,
+ * which some reverse proxies mishandle. A missing scheme is assumed to be http
+ * rather than rejected, since typing a bare IP into the setup screen is the
+ * common case.
  */
 export function normalizeBaseUrl(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) throw new ConfigError('Server URL is empty');
 
   const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+  const match = BASE_URL_PATTERN.exec(withScheme);
 
-  let parsed: URL;
-  try {
-    parsed = new URL(withScheme);
-  } catch {
-    throw new ConfigError(`Not a valid server URL: ${raw}`);
-  }
+  if (!match) throw new ConfigError(`Not a valid server URL: ${raw}`);
 
-  return `${parsed.protocol}//${parsed.host}${parsed.pathname.replace(/\/+$/, '')}`;
+  const [, scheme, authority, path = ''] = match;
+  return `${scheme.toLowerCase()}://${authority}${path.replace(/\/+$/, '')}`;
 }
 
 /**

@@ -70,24 +70,29 @@ function redact(url: string): string {
 // ---------------------------------------------------------------------------
 
 function loadConfig(): ServerConfig {
-  const { NAVIDROME_LOCAL_URL, NAVIDROME_REMOTE_URL, NAVIDROME_USERNAME, NAVIDROME_PASSWORD } =
-    process.env;
+  const {
+    EXPO_PUBLIC_NAVIDROME_LOCAL_URL,
+    EXPO_PUBLIC_NAVIDROME_REMOTE_URL,
+    EXPO_PUBLIC_NAVIDROME_USERNAME,
+    EXPO_PUBLIC_NAVIDROME_PASSWORD,
+  } = process.env;
 
-  if (!NAVIDROME_USERNAME || !NAVIDROME_PASSWORD) {
+  if (!EXPO_PUBLIC_NAVIDROME_USERNAME || !EXPO_PUBLIC_NAVIDROME_PASSWORD) {
     console.error(
       `\n${RED}Missing credentials.${RESET}\n\n` +
         `Copy the template and fill it in:\n` +
         `  cp .env.example .env\n\n` +
-        `Then set NAVIDROME_USERNAME and NAVIDROME_PASSWORD (and at least one URL).\n`,
+        `Then set EXPO_PUBLIC_NAVIDROME_USERNAME and EXPO_PUBLIC_NAVIDROME_PASSWORD\n` +
+        `(and at least one URL).\n`,
     );
     process.exit(1);
   }
 
   return {
-    localUrl: NAVIDROME_LOCAL_URL,
-    remoteUrl: NAVIDROME_REMOTE_URL,
-    username: NAVIDROME_USERNAME,
-    password: NAVIDROME_PASSWORD,
+    localUrl: EXPO_PUBLIC_NAVIDROME_LOCAL_URL,
+    remoteUrl: EXPO_PUBLIC_NAVIDROME_REMOTE_URL,
+    username: EXPO_PUBLIC_NAVIDROME_USERNAME,
+    password: EXPO_PUBLIC_NAVIDROME_PASSWORD,
   };
 }
 
@@ -217,31 +222,49 @@ async function main() {
   // --- 5. Sizing data for the caching decision ------------------------------
   heading('5. CACHE SIZING (SQLite vs AsyncStorage)');
 
-  const sampleSize = Math.min(5, artists.length);
-  let sampledAlbums = 0;
+  // Enumerate every album rather than extrapolating from a handful. Navidrome
+  // reports songCount per album, so the true track total costs only a couple of
+  // paged requests — and guessing it from a few alphabetically-adjacent artists
+  // lands badly when that slice happens to be all singles.
+  const PAGE_SIZE = 500;
+  const allAlbums: AlbumSummary[] = [];
+
+  for (let offset = 0; ; offset += PAGE_SIZE) {
+    const page = await client.getAlbumList2({ size: PAGE_SIZE, offset });
+    const albums = page.albumList2.album ?? [];
+    allAlbums.push(...albums);
+    if (albums.length < PAGE_SIZE) break;
+  }
+
+  const totalTracks = allAlbums.reduce((sum, album) => sum + (album.songCount ?? 0), 0);
+  info(`enumerated ${num(allAlbums.length)} albums · ${num(totalTracks)} tracks (exact)`);
+
+  // Sample evenly across the whole list so compilations and singles are both
+  // represented, instead of whatever sits at the start of the alphabet.
+  const SAMPLE_TARGET = 15;
+  const step = Math.max(1, Math.floor(allAlbums.length / SAMPLE_TARGET));
+  const sample = allAlbums.filter((_, index) => index % step === 0).slice(0, SAMPLE_TARGET);
+
   let sampledTracks = 0;
   let sampledBytes = 0;
 
-  for (const artist of artists.slice(0, sampleSize)) {
-    const detail = await client.getArtist(artist.id);
-    for (const album of detail.artist.album ?? []) {
-      const albumDetail = await client.getAlbum(album.id);
-      sampledAlbums += 1;
-      sampledTracks += albumDetail.album.song?.length ?? 0;
-      sampledBytes += JSON.stringify(albumDetail).length;
-    }
+  for (const album of sample) {
+    const albumDetail = await client.getAlbum(album.id);
+    sampledTracks += albumDetail.album.song?.length ?? 0;
+    sampledBytes += JSON.stringify(albumDetail).length;
   }
 
-  if (sampledTracks > 0) {
+  if (sampledTracks > 0 && totalTracks > 0) {
     const bytesPerTrack = sampledBytes / sampledTracks;
-    const estimatedTracks = albumCount > 0 ? (sampledTracks / sampledAlbums) * albumCount : 0;
-    const projected = bytesPerTrack * estimatedTracks;
+    const projected = bytesPerTrack * totalTracks;
 
-    info(`sampled ${sampledAlbums} albums / ${sampledTracks} tracks from ${sampleSize} artists`);
+    info(`sampled ${sample.length} albums spread across the library / ${sampledTracks} tracks`);
     info(`~${Math.round(bytesPerTrack)} bytes of JSON per track`);
-    info(`~${Math.round(estimatedTracks / 100) * 100} tracks projected library-wide`);
     console.log();
     ok(`Projected full metadata cache: ${BOLD}${bytes(projected)}${RESET} (uncompressed JSON)`);
+    info(`plus ${bytes(artistsJsonBytes)} for the artist index`);
+  } else {
+    warn('Not enough data to project cache size.');
   }
 
   heading('RESULT');

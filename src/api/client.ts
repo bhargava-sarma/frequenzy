@@ -13,6 +13,7 @@ import {
   TransportError,
 } from './errors';
 import type {
+  AlbumList2Response,
   AlbumResponse,
   ArtistResponse,
   ArtistsResponse,
@@ -184,27 +185,32 @@ export class SubsonicClient {
   // Request plumbing
   // -------------------------------------------------------------------------
 
-  /** Builds a fully authenticated URL. Auth params are minted per call. */
+  /**
+   * Builds a fully authenticated URL. Auth params are minted per call.
+   *
+   * Encoded by hand rather than with `URLSearchParams` so the output is
+   * byte-identical under Node and React Native — see the note in config.ts.
+   */
   buildUrl(baseUrl: string, endpoint: string, params: QueryParams = {}): string {
-    const search = new URLSearchParams();
+    const parts: string[] = [];
+
+    const push = (key: string, value: string | number | boolean) => {
+      parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
+    };
 
     for (const [key, value] of Object.entries(params)) {
       if (value === undefined) continue;
       if (Array.isArray(value)) {
-        for (const item of value) search.append(key, String(item));
+        for (const item of value) push(key, item);
       } else {
-        search.append(key, String(value));
+        push(key, value);
       }
     }
 
-    for (const [key, value] of Object.entries(buildAuthParams(
-      this.config.username,
-      this.config.password,
-    ))) {
-      search.append(key, value);
-    }
+    const auth = buildAuthParams(this.config.username, this.config.password);
+    for (const [key, value] of Object.entries(auth)) push(key, value);
 
-    return `${baseUrl}/rest/${endpoint}.view?${search.toString()}`;
+    return `${baseUrl}/rest/${endpoint}.view?${parts.join('&')}`;
   }
 
   /**
@@ -320,6 +326,20 @@ export class SubsonicClient {
 
   async getAlbum(id: string): Promise<AlbumResponse> {
     return this.request<AlbumResponse>('getAlbum', { id });
+  }
+
+  /**
+   * Paginated album list. `size` is capped at 500 by the Subsonic spec, so
+   * callers wanting the whole library must page with `offset`.
+   */
+  async getAlbumList2(
+    options: { type?: string; size?: number; offset?: number } = {},
+  ): Promise<AlbumList2Response> {
+    return this.request<AlbumList2Response>('getAlbumList2', {
+      type: options.type ?? 'alphabeticalByName',
+      size: options.size ?? 500,
+      offset: options.offset ?? 0,
+    });
   }
 
   async search3(
