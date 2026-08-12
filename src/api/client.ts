@@ -28,6 +28,17 @@ import type {
 export type QueryValue = string | number | boolean | undefined | (string | number)[];
 export type QueryParams = Record<string, QueryValue>;
 
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Result of dialing one address. Modelled as a value rather than an exception
+ * so the two attempts can be raced without try/catch tangling the control flow.
+ * `skipped` marks an attempt that was never dialed because the other won first.
+ */
+type ProbeOutcome =
+  | { ok: true; candidate: UrlCandidate; ms: number; skipped?: false }
+  | { ok: false; candidate: UrlCandidate; error: unknown; skipped?: boolean };
+
 export interface ConnectionState {
   kind: ConnectionKind;
   url: string;
@@ -47,6 +58,17 @@ export interface SubsonicClientOptions {
   probeTimeoutMs?: number;
   /** Remote probe budget. Longer — Tailscale may need to negotiate a path. */
   remoteProbeTimeoutMs?: number;
+  /**
+   * Head start given to the local address before remote is dialed in
+   * parallel.
+   *
+   * Calibrated from measurement, not taste: this LAN answers in 124-294ms
+   * (once 424ms on a cold ARP entry), so a shorter window would sometimes let
+   * remote win while sitting at home and quietly defeat local-first. Long
+   * enough to cover that spread, still ~6x better than waiting out the full
+   * local timeout when away.
+   */
+  staggerMs?: number;
   /** Budget for ordinary requests once connected. */
   requestTimeoutMs?: number;
   /** How long a proven connection stays trusted without a successful request. */
@@ -69,6 +91,7 @@ export class SubsonicClient {
   private readonly config: ServerConfig;
   private readonly probeTimeoutMs: number;
   private readonly remoteProbeTimeoutMs: number;
+  private readonly staggerMs: number;
   private readonly requestTimeoutMs: number;
   private readonly connectionTtlMs: number;
   private readonly fetchImpl: typeof fetch;
@@ -83,6 +106,7 @@ export class SubsonicClient {
     this.config = options.config;
     this.probeTimeoutMs = options.probeTimeoutMs ?? 2000;
     this.remoteProbeTimeoutMs = options.remoteProbeTimeoutMs ?? 6000;
+    this.staggerMs = options.staggerMs ?? 400;
     this.requestTimeoutMs = options.requestTimeoutMs ?? 15000;
     this.connectionTtlMs = options.connectionTtlMs ?? 5 * 60 * 1000;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
@@ -130,55 +154,143 @@ export class SubsonicClient {
     return this.probeInFlight;
   }
 
-  /**
-   * Tries each candidate address in priority order until one answers.
-   *
-   * An auth rejection aborts the whole sequence rather than advancing to the
-   * next address: both addresses are the same Navidrome instance with the
-   * same credentials, so a second attempt would fail identically and only
-   * delay a clear error message.
-   */
+  /** Dials one address once, reporting the outcome instead of throwing. */
+  private async attemptCandidate(
+    candidate: UrlCandidate,
+    timeoutMs: number,
+  ): Promise<ProbeOutcome> {
+    this.log(`Probing ${candidate.kind} ${candidate.url} (${timeoutMs}ms budget)`);
+    const startedAt = Date.now();
+
+    try {
+      await this.fetchEnvelope(candidate.url, 'ping', {}, timeoutMs);
+      return { ok: true, candidate, ms: Date.now() - startedAt };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.log(`${candidate.kind} failed after ${Date.now() - startedAt}ms: ${message}`);
+      return { ok: false, candidate, error };
+    }
+  }
+
+  private commit(outcome: Extract<ProbeOutcome, { ok: true }>): ConnectionState {
+    const now = Date.now();
+    const state: ConnectionState = {
+      kind: outcome.candidate.kind,
+      url: outcome.candidate.url,
+      establishedAt: now,
+      lastOkAt: now,
+    };
+    this.connection = state;
+    this.onConnectionChange?.(state);
+    this.log(`Connected via ${outcome.candidate.kind} in ${outcome.ms}ms`);
+    return state;
+  }
+
+  private failProbe(error: unknown): never {
+    this.connection = null;
+    this.onConnectionChange?.(null);
+    throw error;
+  }
+
   private async probe(): Promise<ConnectionState> {
     const candidates: UrlCandidate[] = resolveCandidates(this.config);
+    const local = candidates.find((c) => c.kind === 'local');
+    const remote = candidates.find((c) => c.kind === 'remote');
+
+    return local && remote
+      ? this.probeStaggered(local, remote)
+      : this.probeSequential(candidates);
+  }
+
+  /**
+   * Races the two addresses with a head start for local (RFC 8305 "Happy
+   * Eyeballs", as browsers do for IPv6/IPv4).
+   *
+   * Probing strictly in sequence means that when the LAN address is absent —
+   * i.e. any time you're away from home — every cold start burns the full
+   * local timeout before remote is even dialed. Measured on device over 5G,
+   * that was 2.6s to first byte, nearly all of it spent waiting for a
+   * timeout we could have predicted.
+   *
+   * Local still goes first and still wins outright when it's there: it
+   * answers in ~160ms at home, well inside the stagger, so remote is never
+   * contacted at all. A flat parallel race would be faster to write but would
+   * defeat the intent, since Tailscale often beats the LAN on latency and
+   * would win the race while you're sitting at home.
+   */
+  private async probeStaggered(
+    local: UrlCandidate,
+    remote: UrlCandidate,
+  ): Promise<ConnectionState> {
+    let localWon = false;
+
+    const localAttempt = this.attemptCandidate(local, this.probeTimeoutMs).then((outcome) => {
+      if (outcome.ok) localWon = true;
+      return outcome;
+    });
+
+    const remoteAttempt = (async (): Promise<ProbeOutcome> => {
+      await sleep(this.staggerMs);
+      if (localWon) {
+        // Local already answered inside the head start — don't touch the network.
+        return { ok: false, candidate: remote, skipped: true, error: undefined };
+      }
+      return this.attemptCandidate(remote, this.remoteProbeTimeoutMs);
+    })();
+
+    // Promise.any resolves on the first success and only rejects once every
+    // attempt has failed, which is exactly the semantics we want here.
+    const asWinner = async (attempt: Promise<ProbeOutcome>) => {
+      const outcome = await attempt;
+      if (!outcome.ok) throw outcome;
+      return outcome;
+    };
+
+    try {
+      return this.commit(await Promise.any([asWinner(localAttempt), asWinner(remoteAttempt)]));
+    } catch (aggregate) {
+      const failures: ProbeOutcome[] =
+        aggregate instanceof AggregateError ? aggregate.errors : [];
+
+      // An auth rejection means the server answered and refused us. Report
+      // that rather than "unreachable" — the address was never the problem.
+      const rejected = failures.find(
+        (f) => !f.ok && !f.skipped && f.error instanceof ApiError,
+      );
+      if (rejected && !rejected.ok) return this.failProbe(rejected.error);
+
+      return this.failProbe(
+        new NoReachableServerError(
+          failures
+            .filter((f): f is Extract<ProbeOutcome, { ok: false }> => !f.ok && !f.skipped)
+            .map((f) => ({
+              url: f.candidate.url,
+              error: f.error instanceof Error ? f.error.message : String(f.error),
+            })),
+        ),
+      );
+    }
+  }
+
+  /** Plain in-order fallback for when only one address is configured. */
+  private async probeSequential(candidates: UrlCandidate[]): Promise<ConnectionState> {
     const attempts: { url: string; error: string }[] = [];
 
     for (const candidate of candidates) {
       const timeout =
         candidate.kind === 'local' ? this.probeTimeoutMs : this.remoteProbeTimeoutMs;
+      const outcome = await this.attemptCandidate(candidate, timeout);
 
-      this.log(`Probing ${candidate.kind} ${candidate.url} (${timeout}ms budget)`);
-      const startedAt = Date.now();
+      if (outcome.ok) return this.commit(outcome);
+      if (outcome.error instanceof ApiError) return this.failProbe(outcome.error);
 
-      try {
-        await this.fetchEnvelope(candidate.url, 'ping', {}, timeout);
-
-        const now = Date.now();
-        const state: ConnectionState = {
-          kind: candidate.kind,
-          url: candidate.url,
-          establishedAt: now,
-          lastOkAt: now,
-        };
-        this.connection = state;
-        this.onConnectionChange?.(state);
-        this.log(`Connected via ${candidate.kind} in ${now - startedAt}ms`);
-        return state;
-      } catch (error) {
-        if (error instanceof ApiError) {
-          this.log(`${candidate.url} reached, but rejected the request: ${error.message}`);
-          this.connection = null;
-          this.onConnectionChange?.(null);
-          throw error;
-        }
-        const message = error instanceof Error ? error.message : String(error);
-        this.log(`${candidate.kind} failed after ${Date.now() - startedAt}ms: ${message}`);
-        attempts.push({ url: candidate.url, error: message });
-      }
+      attempts.push({
+        url: candidate.url,
+        error: outcome.error instanceof Error ? outcome.error.message : String(outcome.error),
+      });
     }
 
-    this.connection = null;
-    this.onConnectionChange?.(null);
-    throw new NoReachableServerError(attempts);
+    return this.failProbe(new NoReachableServerError(attempts));
   }
 
   // -------------------------------------------------------------------------
