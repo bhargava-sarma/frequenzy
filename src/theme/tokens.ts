@@ -103,7 +103,9 @@ export const type = {
     fontFamily: fontFamily.medium,
     fontSize: 11,
     letterSpacing: 0.88,
-    textTransform: 'uppercase',
+    // Pinned to the literal so it satisfies TextStyle's union rather than
+    // widening to string.
+    textTransform: 'uppercase' as const,
   },
   /** Artist name, secondary row text. */
   meta: {
@@ -116,9 +118,11 @@ export const type = {
     fontFamily: fontFamily.regular,
     fontSize: 11,
     letterSpacing: 0.55,
-    fontVariant: ['tabular-nums'],
+    // Mutable tuple, not `as const`: React Native's TextStyle declares
+    // fontVariant as a mutable array and rejects a readonly one.
+    fontVariant: ['tabular-nums'] as ['tabular-nums'],
   },
-} as const;
+};
 
 // ---------------------------------------------------------------------------
 // 3. Spacing — 8px base unit, everything snaps to it
