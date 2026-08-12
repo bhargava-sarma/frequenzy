@@ -1,0 +1,28 @@
+{
+  "name": "music-app",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "dependencies": {
+    "expo": "~57.0.12",
+    "expo-build-properties": "~57.0.10",
+    "expo-secure-store": "~57.0.1",
+    "expo-status-bar": "~57.0.1",
+    "js-md5": "^0.9.2",
+    "react": "19.2.3",
+    "react-native": "0.86.2"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "tsx": "^4.23.12",
+    "typescript": "~6.0.3"
+  },
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit",
+    "check:connection": "node --env-file-if-exists=.env --import tsx scripts/check-connection.ts"
+  },
+  "private": true
+}
