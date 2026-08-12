@@ -10,6 +10,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ApiError, NoReachableServerError } from '../api/errors';
 import { ConfigError, type ServerConfig } from '../api/config';
@@ -29,6 +30,7 @@ import { color, hairline, layout, radius, space, type } from '../theme/tokens';
  * that cannot load anything.
  */
 export function SetupScreen() {
+  const insets = useSafeAreaInsets();
   const saveConfig = useServerStore((state) => state.saveConfig);
 
   const [nickname, setNickname] = useState('');
@@ -88,7 +90,10 @@ export function SetupScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[
+          styles.content,
+          { paddingTop: insets.top + space[6], paddingBottom: insets.bottom + space[6] },
+        ]}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
       >
@@ -201,11 +206,8 @@ function Field({ label, optional, hint, style, ...inputProps }: FieldProps) {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: color.paper },
-  content: {
-    paddingHorizontal: layout.screenPadding,
-    paddingTop: space[6] * 2,
-    paddingBottom: space[6] * 2,
-  },
+  // Vertical padding is applied inline from safe-area insets.
+  content: { paddingHorizontal: layout.screenPadding },
 
   sectionLabel: { ...type.label, color: color.textSecondary },
   sectionSpaced: { marginTop: space[6] },

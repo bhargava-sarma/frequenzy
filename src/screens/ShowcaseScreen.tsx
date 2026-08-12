@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Button, ButtonRow } from '../components/Button';
 import { ArtworkWell, FormatBadge } from '../components/ArtworkWell';
@@ -28,6 +29,7 @@ const DEMO_ROWS = [
 ];
 
 export function ShowcaseScreen() {
+  const insets = useSafeAreaInsets();
   const [playing, setPlaying] = useState(true);
   const [shuffle, setShuffle] = useState(false);
   const [repeat, setRepeat] = useState<RepeatMode>('off');
@@ -50,7 +52,7 @@ export function ShowcaseScreen() {
       {/* ---------------------------------------------------------------- */}
       {/* PANEL ZONE — always dark, per the two-zone split                  */}
       {/* ---------------------------------------------------------------- */}
-      <View style={styles.panel}>
+      <View style={[styles.panel, { paddingTop: insets.top + space[4] }]}>
         <View style={styles.panelHeader}>
           <Text style={styles.panelLabel}>Now playing</Text>
           <FormatBadge suffix="flac" bitDepth={24} samplingRate={96000} />
@@ -151,7 +153,6 @@ const styles = StyleSheet.create({
   panel: {
     backgroundColor: color.panel,
     paddingHorizontal: layout.panelPadding,
-    paddingTop: space[6] * 2,
     paddingBottom: space[6],
   },
   panelHeader: {

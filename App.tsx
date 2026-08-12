@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AppState, Pressable, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Inter_400Regular, Inter_500Medium, useFonts } from '@expo-google-fonts/inter';
 
@@ -16,7 +17,22 @@ import { color, hairline, space, type } from './src/theme/tokens';
 const DEV_SCREENS = ['diagnostics', 'components'] as const;
 type DevScreen = (typeof DEV_SCREENS)[number];
 
+/**
+ * Android 15 and Expo SDK 54+ render edge-to-edge, so content draws beneath
+ * the status bar and gesture bar unless it's inset explicitly. SafeAreaProvider
+ * supplies the real measurements; hardcoding them means guessing wrong on every
+ * device whose bars differ from whichever one you tested on.
+ */
 export default function App() {
+  return (
+    <SafeAreaProvider>
+      <AppContent />
+    </SafeAreaProvider>
+  );
+}
+
+function AppContent() {
+  const insets = useSafeAreaInsets();
   const status = useServerStore((state) => state.status);
   const hydrate = useServerStore((state) => state.hydrate);
   const refreshConnection = useServerStore((state) => state.refreshConnection);
@@ -74,7 +90,7 @@ export default function App() {
       </View>
 
       {__DEV__ && (
-        <View style={styles.switcher}>
+        <View style={[styles.switcher, { paddingBottom: Math.max(insets.bottom, space[2]) }]}>
           {DEV_SCREENS.map((name) => (
             <Pressable
               key={name}
@@ -104,7 +120,6 @@ const styles = StyleSheet.create({
     borderTopWidth: hairline,
     borderTopColor: color.paperLine,
     backgroundColor: color.paper,
-    paddingBottom: space[5],
   },
   switcherItem: { flex: 1, alignItems: 'center', paddingVertical: space[3] },
   switcherText: { ...type.label, color: color.textSecondary },

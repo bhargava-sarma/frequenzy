@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ApiError, NoReachableServerError } from '../api/errors';
 import { useServerStore } from '../store/useServerStore';
@@ -26,6 +27,7 @@ interface Row {
 }
 
 export function DiagnosticScreen() {
+  const insets = useSafeAreaInsets();
   const client = useServerStore((state) => state.client);
   const library = useServerStore((state) => state.library);
   const connection = useServerStore((state) => state.connection);
@@ -143,7 +145,7 @@ export function DiagnosticScreen() {
   }, [run]);
 
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, { paddingTop: insets.top + space[4] }]}>
       <View style={styles.header}>
         <Text style={styles.headerLabel}>Connection</Text>
         <Text style={[styles.headerStatus, status === 'error' && styles.headerStatusBad]}>
@@ -213,7 +215,7 @@ export function DiagnosticScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: color.paper, paddingTop: space[6] * 2 },
+  root: { flex: 1, backgroundColor: color.paper },
 
   header: {
     flexDirection: 'row',
@@ -277,7 +279,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: space[3],
     paddingHorizontal: layout.screenPadding,
-    paddingBottom: space[6] * 1.5,
+    // The dev switcher below owns the bottom safe-area inset, so this is
+    // spacing between the two rather than a guess at the gesture bar.
+    paddingBottom: space[4],
     paddingTop: space[3],
   },
   secondaryButton: {
