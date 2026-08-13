@@ -33,6 +33,12 @@
         }
       ],
       "expo-font"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "7506074c-fb57-4e60-88b3-48f6367fb2cc"
+      }
+    },
+    "owner": "obiwankenobi_05"
   }
 }
