@@ -539,6 +539,19 @@ export class SubsonicClient {
   }
 
   /**
+   * Synchronous cover art URL for list rendering.
+   *
+   * Lists render row by row and cannot await per thumbnail, so this uses the
+   * already-established connection and returns null when there isn't one.
+   * That's safe in practice: a screen only has rows to draw because a request
+   * already succeeded, which means a connection exists.
+   */
+  buildCoverArtUrl(coverArtId: string, size?: number): string | null {
+    if (!this.connection) return null;
+    return this.buildUrl(this.connection.url, 'getCoverArt', { id: coverArtId, size });
+  }
+
+  /**
    * Inspects what the server would actually send for a track, without
    * downloading it: a 2-byte range request returns the true total size in
    * the Content-Range header.

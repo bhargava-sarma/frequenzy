@@ -1,15 +1,20 @@
-import { Image, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Image } from 'expo-image';
 
-import { color, hairline, radius, space, type } from '../theme/tokens';
+import { color, hairline, motion, radius, space, type } from '../theme/tokens';
 import { IconDisc } from './icons';
 
 /**
  * Square artwork well, per spec 5.1.
  *
- * Always square and always `resizeMode="cover"` on a square frame, so art of
+ * Always square and always `contentFit="cover"` on a square frame, so art of
  * any aspect ratio is centre-cropped rather than stretched — the spec calls
  * out awkward stretching specifically. Missing art falls back to a disc glyph
  * on the raised panel fill instead of an empty hole.
+ *
+ * Uses expo-image rather than RN's Image for its memory+disk cache: a library
+ * list scrolls past hundreds of covers, and RN's Image re-decodes on every
+ * remount, which shows up as blank tiles when scrolling back up.
  */
 export interface ArtworkWellProps {
   uri?: string | null;
@@ -39,7 +44,15 @@ export function ArtworkWell({ uri, size, surface = 'panel', style }: ArtworkWell
       ]}
     >
       {uri ? (
-        <Image source={{ uri }} style={[frame, styles.image]} resizeMode="cover" />
+        <Image
+          source={{ uri }}
+          style={[frame, styles.image]}
+          contentFit="cover"
+          cachePolicy="memory-disk"
+          // Short crossfade only — the spec rules out anything with scale or
+          // bounce, and a hard pop on every tile reads as jitter while scrolling.
+          transition={motion.durationFast}
+        />
       ) : (
         <IconDisc
           size={Math.min(32, size * 0.34)}

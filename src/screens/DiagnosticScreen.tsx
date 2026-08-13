@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 import TrackPlayer, {
   RepeatMode,
   useActiveMediaItem,
@@ -10,11 +11,12 @@ import TrackPlayer, {
 
 import { ApiError, NoReachableServerError } from '../api/errors';
 import { Button } from '../components/Button';
+import { IconChevronRight } from '../components/icons';
 import { ProgressBar } from '../components/ProgressBar';
 import { TransportControls } from '../components/TransportControls';
 import { useServerStore } from '../store/useServerStore';
 import { usePlayerStore } from '../store/usePlayerStore';
-import { color, hairline, layout, radius, space, type } from '../theme/tokens';
+import { color, hairline, icon, layout, radius, space, type } from '../theme/tokens';
 import type { Child } from '../types/subsonic';
 
 /**
@@ -39,6 +41,7 @@ interface Row {
 
 export function DiagnosticScreen() {
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation();
   const client = useServerStore((state) => state.client);
   const library = useServerStore((state) => state.library);
   const connection = useServerStore((state) => state.connection);
@@ -188,6 +191,20 @@ export function DiagnosticScreen() {
   return (
     <View style={[styles.root, { paddingTop: insets.top + space[4] }]}>
       <View style={styles.header}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close"
+          hitSlop={space[3]}
+          onPress={() => navigation.goBack()}
+          style={styles.headerBack}
+        >
+          <IconChevronRight
+            size={icon.size}
+            strokeWidth={icon.strokeWidth}
+            color={color.textPrimary}
+            style={styles.headerBackIcon}
+          />
+        </Pressable>
         <Text style={styles.headerLabel}>Connection</Text>
         <Text style={[styles.headerStatus, status === 'error' && styles.headerStatusBad]}>
           {status}
@@ -323,7 +340,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: layout.screenPadding,
     paddingBottom: space[3],
   },
-  headerLabel: { ...type.label, color: color.textSecondary },
+  headerBack: { marginRight: space[3] },
+  headerBackIcon: { transform: [{ rotate: '180deg' }] },
+  headerLabel: { ...type.label, color: color.textSecondary, flex: 1 },
   headerStatus: { ...type.label, color: color.textPrimary },
   headerStatusBad: { color: color.accent },
 

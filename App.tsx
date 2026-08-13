@@ -1,51 +1,39 @@
-import { useEffect, useState } from 'react';
-import { AppState, Pressable, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useEffect } from 'react';
+import { AppState, StyleSheet, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Inter_400Regular, Inter_500Medium, useFonts } from '@expo-google-fonts/inter';
 
-import { DiagnosticScreen } from './src/screens/DiagnosticScreen';
+import { RootNavigator } from './src/navigation/RootNavigator';
 import { SetupScreen } from './src/screens/SetupScreen';
-import { ShowcaseScreen } from './src/screens/ShowcaseScreen';
 import { useServerStore } from './src/store/useServerStore';
-import { color, hairline, space, type } from './src/theme/tokens';
+import { color } from './src/theme/tokens';
 
 /**
- * Dev-only screen switcher, standing in until Phase 4 brings real navigation.
- * Gated on __DEV__ so it cannot reach a release build.
- */
-const DEV_SCREENS = ['diagnostics', 'components'] as const;
-type DevScreen = (typeof DEV_SCREENS)[number];
-
-/**
- * Android 15 and Expo SDK 54+ render edge-to-edge, so content draws beneath
- * the status bar and gesture bar unless it's inset explicitly. SafeAreaProvider
- * supplies the real measurements; hardcoding them means guessing wrong on every
- * device whose bars differ from whichever one you tested on.
+ * GestureHandlerRootView must wrap everything, and sit above SafeAreaProvider:
+ * gestures registered outside it silently never fire on Android, which is the
+ * kind of failure that looks like a broken swipe rather than missing setup.
  */
 export default function App() {
   return (
-    <SafeAreaProvider>
-      <AppContent />
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={styles.fill}>
+      <SafeAreaProvider>
+        <AppContent />
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
 
 function AppContent() {
-  const insets = useSafeAreaInsets();
   const status = useServerStore((state) => state.status);
   const hydrate = useServerStore((state) => state.hydrate);
   const refreshConnection = useServerStore((state) => state.refreshConnection);
 
-  const [screen, setScreen] = useState<DevScreen>('diagnostics');
-
   // Inter carries the tracked-out uppercase labels the design leans on. Render
   // nothing until it's resident — swapping the face mid-render reflows every
   // label and reads as a flash of the wrong typeface.
-  const [fontsLoaded] = useFonts({
-    Inter_400Regular,
-    Inter_500Medium,
-  });
+  const [fontsLoaded] = useFonts({ Inter_400Regular, Inter_500Medium });
 
   useEffect(() => {
     void hydrate();
@@ -53,9 +41,8 @@ function AppContent() {
 
   /**
    * Re-probe on resume. The phone may have moved between home Wi-Fi and
-   * cellular while we were backgrounded, which would leave the cached base URL
-   * pointing at an address that no longer resolves. Dropping it here means the
-   * next request re-probes rather than eating a timeout.
+   * cellular while backgrounded, which would leave the cached base URL
+   * pointing at an address that no longer resolves.
    */
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (next) => {
@@ -72,56 +59,15 @@ function AppContent() {
     );
   }
 
-  if (status === 'needsSetup') {
-    return (
-      <View style={styles.root}>
-        <StatusBar style="dark" />
-        <SetupScreen />
-      </View>
-    );
-  }
-
   return (
-    <View style={styles.root}>
+    <>
       <StatusBar style="dark" />
-
-      <View style={styles.screen}>
-        {screen === 'components' ? <ShowcaseScreen /> : <DiagnosticScreen />}
-      </View>
-
-      {__DEV__ && (
-        <View style={[styles.switcher, { paddingBottom: Math.max(insets.bottom, space[2]) }]}>
-          {DEV_SCREENS.map((name) => (
-            <Pressable
-              key={name}
-              onPress={() => setScreen(name)}
-              style={styles.switcherItem}
-              accessibilityRole="button"
-              accessibilityState={{ selected: screen === name }}
-            >
-              <Text style={[styles.switcherText, screen === name && styles.switcherTextActive]}>
-                {name}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-      )}
-    </View>
+      {status === 'needsSetup' ? <SetupScreen /> : <RootNavigator />}
+    </>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: color.paper },
+  fill: { flex: 1 },
   blank: { flex: 1, backgroundColor: color.paper },
-  screen: { flex: 1 },
-
-  switcher: {
-    flexDirection: 'row',
-    borderTopWidth: hairline,
-    borderTopColor: color.paperLine,
-    backgroundColor: color.paper,
-  },
-  switcherItem: { flex: 1, alignItems: 'center', paddingVertical: space[3] },
-  switcherText: { ...type.label, color: color.textSecondary },
-  switcherTextActive: { color: color.textPrimary },
 });
