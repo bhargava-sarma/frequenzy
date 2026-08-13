@@ -48,6 +48,16 @@ const COMMIT_RATIO = 0.3;
 /** How far the row can be dragged, so the reveal never fills the whole row. */
 const MAX_TRAVEL_RATIO = 0.45;
 
+/**
+ * Snap-back timing, per the spec's motion section: 180ms on a snappy ease-out
+ * with no overshoot. Defined at module scope so the worklet captures a stable
+ * value rather than rebuilding the easing on every gesture.
+ */
+const SETTLE_TIMING = {
+  duration: 180,
+  easing: Easing.bezier(0.2, 0, 0.2, 1),
+} as const;
+
 export function SwipeableRow({
   children,
   rightSwipe,
@@ -60,13 +70,19 @@ export function SwipeableRow({
   const commitDistance = width * COMMIT_RATIO;
   const maxTravel = width * MAX_TRAVEL_RATIO;
 
-  const settle = () => {
-    'worklet';
-    translateX.value = withTiming(0, {
-      duration: 180,
-      easing: Easing.bezier(0.2, 0, 0.2, 1),
-    });
-  };
+  /**
+   * Pull the callbacks and flags out before building the gesture.
+   *
+   * A worklet serializes everything its closure captures onto the UI thread,
+   * and SwipeAction carries a rendered React element in `icon`. Referencing
+   * `rightSwipe` inside a callback drags that element along and throws
+   * "Cannot copy value of type FiberNode" at runtime. Only plain values and
+   * functions may cross the boundary.
+   */
+  const onRight = rightSwipe?.onAction;
+  const onLeft = leftSwipe?.onAction;
+  const canSwipeRight = rightSwipe != null;
+  const canSwipeLeft = leftSwipe != null;
 
   const pan = Gesture.Pan()
     // Only claim the gesture once movement is clearly horizontal, so vertical
@@ -77,8 +93,8 @@ export function SwipeableRow({
       const { translationX } = event;
 
       // Don't allow dragging toward an action that isn't configured.
-      if (translationX > 0 && !rightSwipe) return;
-      if (translationX < 0 && !leftSwipe) return;
+      if (translationX > 0 && !canSwipeRight) return;
+      if (translationX < 0 && !canSwipeLeft) return;
 
       // Clamp rather than applying resistance: rubber-banding is the elastic
       // feel this design excludes.
@@ -87,15 +103,15 @@ export function SwipeableRow({
     .onEnd(() => {
       const dragged = translateX.value;
 
-      if (dragged >= commitDistance && rightSwipe) {
-        runOnJS(rightSwipe.onAction)();
-      } else if (dragged <= -commitDistance && leftSwipe) {
-        runOnJS(leftSwipe.onAction)();
+      if (dragged >= commitDistance && onRight) {
+        runOnJS(onRight)();
+      } else if (dragged <= -commitDistance && onLeft) {
+        runOnJS(onLeft)();
       }
 
       // Always return to rest, committed or not — these are one-shot actions,
       // not a drawer that should stay open.
-      settle();
+      translateX.value = withTiming(0, SETTLE_TIMING);
     });
 
   const rowStyle = useAnimatedStyle(() => ({
