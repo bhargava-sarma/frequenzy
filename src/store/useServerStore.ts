@@ -110,8 +110,19 @@ export const useServerStore = create<ServerStore>((set, get) => {
     },
 
     refreshConnection: () => {
-      get().client?.invalidateConnection();
+      const client = get().client;
+      if (!client) return;
+
+      client.invalidateConnection();
       set({ connection: null });
+
+      // Re-probe immediately rather than waiting for the next request. Without
+      // this the indicator sits at "not connected" for as long as the app is
+      // idle after a resume — reporting a problem that doesn't exist. The
+      // probe is cheap (~135ms at home) and self-corrects if the network moved.
+      void client.ensureConnection(true).catch(() => {
+        // Genuinely unreachable: the null connection state already says so.
+      });
     },
   };
 });

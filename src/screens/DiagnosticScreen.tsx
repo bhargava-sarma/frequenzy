@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import TrackPlayer, { useActiveMediaItem, useIsPlaying, useProgress } from '@rntp/player';
+import TrackPlayer, {
+  RepeatMode,
+  useActiveMediaItem,
+  useIsPlaying,
+  useProgress,
+} from '@rntp/player';
 
 import { ApiError, NoReachableServerError } from '../api/errors';
 import { Button } from '../components/Button';
@@ -45,15 +50,23 @@ export function DiagnosticScreen() {
   const [rows, setRows] = useState<Row[]>([]);
   const [error, setError] = useState<string[]>([]);
 
-  // Playback verification — the track the checks above proved is lossless is
-  // the same one we hand to the player, so a successful play confirms the
-  // whole path rather than a separately chosen file.
-  const [testTrack, setTestTrack] = useState<Child | null>(null);
+  // Playback verification. We queue the WHOLE album rather than the single
+  // verified track: with a one-item queue there is no next or previous, so
+  // Media3 correctly hides those controls and skip calls are no-ops — which
+  // looks like broken transport rather than an empty queue.
+  const [testAlbum, setTestAlbum] = useState<Child[]>([]);
+  const [testIndex, setTestIndex] = useState(0);
+  const testTrack = testAlbum[testIndex] ?? null;
+
   const playNow = usePlayerStore((state) => state.playNow);
   const playerError = usePlayerStore((state) => state.error);
   const activeItem = useActiveMediaItem();
   const isPlaying = useIsPlaying();
-  const progress = useProgress(1000);
+  // Seconds, not milliseconds — the hook multiplies by 1000 internally.
+  const progress = useProgress(1);
+
+  const [shuffle, setShuffle] = useState(false);
+  const [repeat, setRepeat] = useState<RepeatMode>(RepeatMode.Off);
 
   const run = useCallback(async () => {
     if (!client || !library) return;
@@ -96,46 +109,57 @@ export function DiagnosticScreen() {
       });
       setRows([...collected]);
 
-      // Walk down to a real track and confirm the stream is untouched.
+      // Exercise getArtist so its cache path is covered too.
       const firstArtist = artists[0];
-      if (firstArtist) {
-        const detail = await library.getArtist(firstArtist.id);
-        const album = detail.albums[0];
+      if (firstArtist) await library.getArtist(firstArtist.id);
 
-        if (album) {
-          const albumDetail = await library.getAlbum(album.id);
-          const track = albumDetail.songs.find((song) => (song.size ?? 0) > 0);
+      // Prefer a multi-track album for the playback test. This library is
+      // singles-heavy (573 albums, 793 tracks), so grabbing "the first album"
+      // usually yields a one-item queue with no next or previous to test.
+      const albums = await library.getAllAlbums();
+      const album =
+        albums.find((candidate) => (candidate.songCount ?? 0) > 1) ?? albums[0];
 
-          if (track) {
-            setTestTrack(track);
-            const probe = await client.probeStream(track.id);
-            const matches = probe.totalBytes === track.size;
+      if (album) {
+        const albumDetail = await library.getAlbum(album.id);
+        const index = albumDetail.songs.findIndex((song) => (song.size ?? 0) > 0);
+        const track = index >= 0 ? albumDetail.songs[index] : undefined;
 
-            collected.push({ label: 'Test track', value: track.title });
-            collected.push({
-              label: 'Format',
-              value:
-                `${(track.suffix ?? '?').toUpperCase()} · ` +
-                `${track.bitDepth ?? '?'}/${
-                  track.samplingRate ? track.samplingRate / 1000 : '?'
-                }`,
-            });
-            collected.push({ label: 'Content type', value: probe.contentType ?? '?' });
-            collected.push({
-              label: 'Source bytes',
-              value: (track.size ?? 0).toLocaleString(),
-            });
-            collected.push({
-              label: 'Stream bytes',
-              value: (probe.totalBytes ?? 0).toLocaleString(),
-              tone: matches ? 'good' : 'bad',
-            });
-            collected.push({
-              label: 'Transcoding',
-              value: matches ? 'none — byte identical' : 'DETECTED',
-              tone: matches ? 'good' : 'bad',
-            });
-          }
+        if (track) {
+          setTestAlbum(albumDetail.songs);
+          setTestIndex(index);
+
+          const probe = await client.probeStream(track.id);
+          const matches = probe.totalBytes === track.size;
+
+          collected.push({
+            label: 'Queue',
+            value: `${albumDetail.songs.length} tracks · ${album.name}`,
+          });
+          collected.push({ label: 'Test track', value: track.title });
+          collected.push({
+            label: 'Format',
+            value:
+              `${(track.suffix ?? '?').toUpperCase()} · ` +
+              `${track.bitDepth ?? '?'}/${
+                track.samplingRate ? track.samplingRate / 1000 : '?'
+              }`,
+          });
+          collected.push({ label: 'Content type', value: probe.contentType ?? '?' });
+          collected.push({
+            label: 'Source bytes',
+            value: (track.size ?? 0).toLocaleString(),
+          });
+          collected.push({
+            label: 'Stream bytes',
+            value: (probe.totalBytes ?? 0).toLocaleString(),
+            tone: matches ? 'good' : 'bad',
+          });
+          collected.push({
+            label: 'Transcoding',
+            value: matches ? 'none — byte identical' : 'DETECTED',
+            tone: matches ? 'good' : 'bad',
+          });
         }
       }
 
@@ -218,6 +242,9 @@ export function DiagnosticScreen() {
                 <Text style={styles.playbackTitle} numberOfLines={1}>
                   {activeItem.title ?? testTrack.title}
                 </Text>
+                <Text style={styles.playbackMeta} numberOfLines={1}>
+                  {activeItem.artist ?? testTrack.artist}
+                </Text>
                 <View style={styles.playbackProgress}>
                   <ProgressBar
                     position={progress.position}
@@ -227,17 +254,34 @@ export function DiagnosticScreen() {
                 </View>
                 <TransportControls
                   playing={isPlaying}
+                  shuffle={shuffle}
+                  repeat={repeat === RepeatMode.One ? 'one' : repeat === RepeatMode.All ? 'all' : 'off'}
                   onPlayPause={() => (isPlaying ? TrackPlayer.pause() : TrackPlayer.play())}
                   onPrevious={() => TrackPlayer.skipToPrevious()}
                   onNext={() => TrackPlayer.skipToNext()}
+                  onToggleShuffle={() => {
+                    const next = !shuffle;
+                    TrackPlayer.setShuffleEnabled(next);
+                    setShuffle(next);
+                  }}
+                  onCycleRepeat={() => {
+                    const next =
+                      repeat === RepeatMode.Off
+                        ? RepeatMode.All
+                        : repeat === RepeatMode.All
+                          ? RepeatMode.One
+                          : RepeatMode.Off;
+                    TrackPlayer.setRepeatMode(next);
+                    setRepeat(next);
+                  }}
                 />
               </>
             ) : (
               <Button
-                label="Play test track"
+                label={`Play album (${testAlbum.length} tracks)`}
                 variant="primary"
                 fullWidth
-                onPress={() => void playNow([testTrack])}
+                onPress={() => void playNow(testAlbum, testIndex)}
               />
             )}
 
@@ -331,6 +375,7 @@ const styles = StyleSheet.create({
   },
   playbackLabel: { ...type.label, color: color.textInverseSecondary },
   playbackTitle: { ...type.title, color: color.textInverse, marginTop: space[3] },
+  playbackMeta: { ...type.meta, color: color.textInverseSecondary, marginTop: space[1] },
   playbackProgress: { marginTop: space[4], marginBottom: space[4] },
 
   errorBlock: {
