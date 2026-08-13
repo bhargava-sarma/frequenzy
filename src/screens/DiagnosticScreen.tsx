@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import TrackPlayer, { useActiveMediaItem, useIsPlaying, useProgress } from '@rntp/player';
 
 import { ApiError, NoReachableServerError } from '../api/errors';
+import { Button } from '../components/Button';
+import { ProgressBar } from '../components/ProgressBar';
+import { TransportControls } from '../components/TransportControls';
 import { useServerStore } from '../store/useServerStore';
+import { usePlayerStore } from '../store/usePlayerStore';
 import { color, hairline, layout, radius, space, type } from '../theme/tokens';
+import type { Child } from '../types/subsonic';
 
 /**
  * Connection diagnostics.
@@ -38,6 +44,16 @@ export function DiagnosticScreen() {
   const [status, setStatus] = useState<Status>('idle');
   const [rows, setRows] = useState<Row[]>([]);
   const [error, setError] = useState<string[]>([]);
+
+  // Playback verification — the track the checks above proved is lossless is
+  // the same one we hand to the player, so a successful play confirms the
+  // whole path rather than a separately chosen file.
+  const [testTrack, setTestTrack] = useState<Child | null>(null);
+  const playNow = usePlayerStore((state) => state.playNow);
+  const playerError = usePlayerStore((state) => state.error);
+  const activeItem = useActiveMediaItem();
+  const isPlaying = useIsPlaying();
+  const progress = useProgress(1000);
 
   const run = useCallback(async () => {
     if (!client || !library) return;
@@ -91,6 +107,7 @@ export function DiagnosticScreen() {
           const track = albumDetail.songs.find((song) => (song.size ?? 0) > 0);
 
           if (track) {
+            setTestTrack(track);
             const probe = await client.probeStream(track.id);
             const matches = probe.totalBytes === track.size;
 
@@ -189,6 +206,44 @@ export function DiagnosticScreen() {
             ))}
           </View>
         )}
+
+        {/* Playback check — proves the stream the checks above verified as
+            lossless actually decodes and plays on this device. */}
+        {testTrack && (
+          <View style={styles.playback}>
+            <Text style={styles.playbackLabel}>Playback</Text>
+
+            {activeItem ? (
+              <>
+                <Text style={styles.playbackTitle} numberOfLines={1}>
+                  {activeItem.title ?? testTrack.title}
+                </Text>
+                <View style={styles.playbackProgress}>
+                  <ProgressBar
+                    position={progress.position}
+                    duration={progress.duration || testTrack.duration}
+                    surface="panel"
+                  />
+                </View>
+                <TransportControls
+                  playing={isPlaying}
+                  onPlayPause={() => (isPlaying ? TrackPlayer.pause() : TrackPlayer.play())}
+                  onPrevious={() => TrackPlayer.skipToPrevious()}
+                  onNext={() => TrackPlayer.skipToNext()}
+                />
+              </>
+            ) : (
+              <Button
+                label="Play test track"
+                variant="primary"
+                fullWidth
+                onPress={() => void playNow([testTrack])}
+              />
+            )}
+
+            {playerError && <Text style={styles.errorText}>{playerError}</Text>}
+          </View>
+        )}
       </ScrollView>
 
       <View style={styles.actions}>
@@ -264,6 +319,19 @@ const styles = StyleSheet.create({
   rowValueBad: { color: color.accent },
 
   spinner: { alignSelf: 'center', marginTop: space[5] },
+
+  // Transport lives on the dark panel surface per the two-zone split, even
+  // when it appears inside an otherwise-paper screen.
+  playback: {
+    marginTop: space[5],
+    marginHorizontal: layout.screenPadding,
+    padding: layout.panelPadding,
+    borderRadius: radius.md,
+    backgroundColor: color.panel,
+  },
+  playbackLabel: { ...type.label, color: color.textInverseSecondary },
+  playbackTitle: { ...type.title, color: color.textInverse, marginTop: space[3] },
+  playbackProgress: { marginTop: space[4], marginBottom: space[4] },
 
   errorBlock: {
     marginTop: space[5],
