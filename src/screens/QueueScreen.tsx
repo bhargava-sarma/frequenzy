@@ -8,12 +8,14 @@ import TrackPlayer, {
 } from '@rntp/player';
 
 import { Button } from '../components/Button';
+import { IconTrash } from '../components/icons';
 import { ListRow } from '../components/ListRow';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { EmptyState } from '../components/ScreenState';
+import { SwipeableRow } from '../components/SwipeableRow';
 import { extrasOf } from '../player/trackMapping';
 import { usePlayerStore } from '../store/usePlayerStore';
-import { color, space } from '../theme/tokens';
+import { color, icon, space } from '../theme/tokens';
 import { formatDuration, pluralize } from '../utils/time';
 
 /**
@@ -76,16 +78,27 @@ export function QueueScreen() {
         }
         contentContainerStyle={queue.length ? styles.listContent : styles.emptyContainer}
         renderItem={({ item, index }) => (
-          <ListRow
-            title={item.title ?? 'Unknown title'}
-            meta={[item.artist, item.duration ? formatDuration(item.duration) : null]
-              .filter(Boolean)
-              .join(' · ')}
-            artworkUri={typeof item.artworkUrl === 'string' ? item.artworkUrl : undefined}
-            active={extrasOf(item)?.subsonicId === activeId}
-            last={index === queue.length - 1}
-            onPress={() => TrackPlayer.skipToIndex(index)}
-          />
+          <SwipeableRow
+            leftSwipe={{
+              icon: <IconTrash size={icon.size} color={color.accentInk} strokeWidth={2} />,
+              label: 'Remove',
+              onAction: () => {
+                removeFromQueue(index);
+                syncQueue();
+              },
+            }}
+          >
+            <ListRow
+              title={item.title ?? 'Unknown title'}
+              meta={[item.artist, item.duration ? formatDuration(item.duration) : null]
+                .filter(Boolean)
+                .join(' · ')}
+              artworkUri={typeof item.artworkUrl === 'string' ? item.artworkUrl : undefined}
+              active={extrasOf(item)?.subsonicId === activeId}
+              last={index === queue.length - 1}
+              onPress={() => TrackPlayer.skipToIndex(index)}
+            />
+          </SwipeableRow>
         )}
         ListFooterComponent={
           queue.length > 0 ? (

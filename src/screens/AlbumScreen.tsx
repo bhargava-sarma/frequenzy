@@ -5,17 +5,19 @@ import { useActiveMediaItem } from '@rntp/player';
 
 import { ArtworkWell } from '../components/ArtworkWell';
 import { Button, ButtonRow } from '../components/Button';
+import { IconHeart, IconHeartFilled, IconPlus } from '../components/icons';
 import { ListRow } from '../components/ListRow';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { SectionHeader } from '../components/SectionHeader';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenState';
+import { SwipeableRow } from '../components/SwipeableRow';
 import { extrasOf } from '../player/trackMapping';
 import { useArtwork } from '../hooks/useArtwork';
 import { useLibraryData } from '../hooks/useLibraryData';
 import type { LibraryStackParamList } from '../navigation/types';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { useServerStore } from '../store/useServerStore';
-import { color, layout, space, type } from '../theme/tokens';
+import { color, icon, layout, space, type } from '../theme/tokens';
 import { formatDuration, pluralize } from '../utils/time';
 
 /** Album detail — artwork, actions, and the track list. */
@@ -105,21 +107,38 @@ export function AlbumScreen() {
         }
         contentContainerStyle={songs.length ? styles.listContent : styles.emptyContainer}
         renderItem={({ item, index }) => (
-          <ListRow
-            title={item.title}
-            meta={[item.artist, item.duration ? formatDuration(item.duration) : null]
-              .filter(Boolean)
-              .join(' · ')}
-            showArtwork={false}
-            action="favorite"
-            favorited={Boolean(item.starred)}
-            active={item.id === activeId}
-            last={index === songs.length - 1}
-            // Starting mid-album queues the whole album from that point,
-            // rather than the single track — the queue is the point.
-            onPress={() => void playNow(songs, index)}
-            onActionPress={() => void toggleStar(item.id, Boolean(item.starred))}
-          />
+          <SwipeableRow
+            rightSwipe={{
+              icon: <IconPlus size={icon.size} color={color.accentInk} strokeWidth={2} />,
+              label: 'Queue',
+              onAction: () => void addToQueue([item]),
+            }}
+            leftSwipe={{
+              icon: item.starred ? (
+                <IconHeartFilled size={icon.size} color={color.accentInk} />
+              ) : (
+                <IconHeart size={icon.size} color={color.accentInk} strokeWidth={2} />
+              ),
+              label: item.starred ? 'Unstar' : 'Star',
+              onAction: () => void toggleStar(item.id, Boolean(item.starred)),
+            }}
+          >
+            <ListRow
+              title={item.title}
+              meta={[item.artist, item.duration ? formatDuration(item.duration) : null]
+                .filter(Boolean)
+                .join(' · ')}
+              showArtwork={false}
+              action="favorite"
+              favorited={Boolean(item.starred)}
+              active={item.id === activeId}
+              last={index === songs.length - 1}
+              // Starting mid-album queues the whole album from that point,
+              // rather than the single track — the queue is the point.
+              onPress={() => void playNow(songs, index)}
+              onActionPress={() => void toggleStar(item.id, Boolean(item.starred))}
+            />
+          </SwipeableRow>
         )}
       />
     </View>

@@ -22,6 +22,8 @@ export { default as IconHeart } from '@tabler/icons-react-native/IconHeart';
 export { default as IconHeartFilled } from '@tabler/icons-react-native/IconHeartFilled';
 export { default as IconPlus } from '@tabler/icons-react-native/IconPlus';
 export { default as IconDisc } from '@tabler/icons-react-native/IconDisc';
+export { default as IconTrash } from '@tabler/icons-react-native/IconTrash';
+export { default as IconPlaylistAdd } from '@tabler/icons-react-native/IconPlaylistAdd';
 
 export { default as IconHome } from '@tabler/icons-react-native/IconHome';
 export { default as IconSearch } from '@tabler/icons-react-native/IconSearch';

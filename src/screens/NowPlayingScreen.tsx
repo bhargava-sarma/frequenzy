@@ -122,6 +122,7 @@ export function NowPlayingScreen() {
             position={progress.position}
             duration={progress.duration || activeItem.duration}
             surface="panel"
+            onSeek={(seconds) => TrackPlayer.seekTo(seconds)}
           />
         </View>
 

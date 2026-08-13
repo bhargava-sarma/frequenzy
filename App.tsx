@@ -7,6 +7,7 @@ import { Inter_400Regular, Inter_500Medium, useFonts } from '@expo-google-fonts/
 
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { SetupScreen } from './src/screens/SetupScreen';
+import { usePlayerStore } from './src/store/usePlayerStore';
 import { useServerStore } from './src/store/useServerStore';
 import { color } from './src/theme/tokens';
 
@@ -29,6 +30,7 @@ function AppContent() {
   const status = useServerStore((state) => state.status);
   const hydrate = useServerStore((state) => state.hydrate);
   const refreshConnection = useServerStore((state) => state.refreshConnection);
+  const initPlayer = usePlayerStore((state) => state.init);
 
   // Inter carries the tracked-out uppercase labels the design leans on. Render
   // nothing until it's resident — swapping the face mid-render reflows every
@@ -38,6 +40,18 @@ function AppContent() {
   useEffect(() => {
     void hydrate();
   }, [hydrate]);
+
+  /**
+   * Set the player up as soon as the app is usable, not on the first play.
+   *
+   * setupPlayer kicks off an asynchronous MediaController bind, and commands
+   * issued before it completes are silently discarded by the native module.
+   * Doing this at launch gives the bind the seconds it needs while the user is
+   * still browsing, so the first tap on Play actually plays.
+   */
+  useEffect(() => {
+    if (status === 'ready') initPlayer();
+  }, [status, initPlayer]);
 
   /**
    * Re-probe on resume. The phone may have moved between home Wi-Fi and
