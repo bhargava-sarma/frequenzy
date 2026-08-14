@@ -39,4 +39,7 @@ export const cacheKeys = {
   artist: (id: string) => `v${CACHE_VERSION}:artist:${id}`,
   album: (id: string) => `v${CACHE_VERSION}:album:${id}`,
   albumList: () => `v${CACHE_VERSION}:albumList`,
+  /** Shelf lists, keyed by the server-side ordering that produced them. */
+  albumsByType: (type: string, size: number) =>
+    `v${CACHE_VERSION}:albums:${type}:${size}`,
 } as const;

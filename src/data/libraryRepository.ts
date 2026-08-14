@@ -42,7 +42,26 @@ export interface LibraryRepositoryOptions {
 export interface ReadOptions {
   /** Skip the cache entirely — for pull-to-refresh. */
   forceRefresh?: boolean;
+  /**
+   * Overrides the repository default for this read. Lists that reorder as you
+   * listen go stale in minutes, not in a day.
+   */
+  ttlMs?: number;
 }
+
+/**
+ * Server-side album orderings, per the Subsonic `getAlbumList2` spec.
+ *
+ * `recent` and `frequent` are derived from play history, so they stay empty
+ * until something scrobbles — see src/player/scrobbler.ts.
+ */
+export type AlbumListType =
+  | 'newest'
+  | 'recent'
+  | 'frequent'
+  | 'random'
+  | 'starred'
+  | 'alphabeticalByName';
 
 export class LibraryRepository {
   private readonly client: SubsonicClient;
@@ -123,6 +142,28 @@ export class LibraryRepository {
   }
 
   /**
+   * One shelf's worth of albums in a server-side ordering.
+   *
+   * The ordering is done by Navidrome rather than by sorting `getAllAlbums`
+   * locally, because play counts and last-played timestamps aren't in the
+   * album summaries at all — only the server knows them.
+   */
+  async getAlbumsByType(
+    type: AlbumListType,
+    size = 20,
+    options: ReadOptions = {},
+  ): Promise<AlbumSummary[]> {
+    return this.readThrough(
+      cacheKeys.albumsByType(type, size),
+      async () => {
+        const response = await this.client.getAlbumList2({ type, size });
+        return response.albumList2.album ?? [];
+      },
+      options,
+    );
+  }
+
+  /**
    * Drops a single album's cached entry.
    *
    * Call after starring a track: the cached copy still carries the old
@@ -155,7 +196,8 @@ export class LibraryRepository {
         // >= so that a ttl of 0 means "always revalidate" rather than
         // "revalidate after 1ms". Immaterial at the real 24h TTL, but it
         // makes the boundary well defined and ttl=0 usable for debugging.
-        const isStale = Date.now() - entry.storedAt >= this.ttlMs;
+        const ttlMs = options.ttlMs ?? this.ttlMs;
+        const isStale = Date.now() - entry.storedAt >= ttlMs;
 
         if (isStale) {
           // Serve what we have and refresh behind it. Failures here are

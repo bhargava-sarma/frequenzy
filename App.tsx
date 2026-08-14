@@ -6,6 +6,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Inter_400Regular, Inter_500Medium, useFonts } from '@expo-google-fonts/inter';
 
 import { RootNavigator } from './src/navigation/RootNavigator';
+import { startScrobbler } from './src/player/scrobbler';
 import { SetupScreen } from './src/screens/SetupScreen';
 import { usePlayerStore } from './src/store/usePlayerStore';
 import { useServerStore } from './src/store/useServerStore';
@@ -52,6 +53,18 @@ function AppContent() {
   useEffect(() => {
     if (status === 'ready') initPlayer();
   }, [status, initPlayer]);
+
+  /**
+   * Report plays to Navidrome for as long as the app is alive.
+   *
+   * This lives here rather than in a screen because playback outlives every
+   * screen — scrobbling from the Now Playing screen would record nothing
+   * while the phone is locked, which is most of the listening.
+   */
+  useEffect(() => {
+    if (status !== 'ready') return;
+    return startScrobbler(() => useServerStore.getState().client);
+  }, [status]);
 
   /**
    * Re-probe on resume. The phone may have moved between home Wi-Fi and

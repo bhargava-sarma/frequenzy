@@ -508,8 +508,26 @@ export class SubsonicClient {
     await this.request('createPlaylist', { name, songId: songIds });
   }
 
-  async scrobble(id: string, submission = true): Promise<void> {
-    await this.request('scrobble', { id, submission });
+  /**
+   * Reports a play to the server.
+   *
+   * `submission: false` is a "now playing" ping, which Navidrome shows live
+   * and does not record. `submission: true` records the play, which is what
+   * feeds its recently-played and most-played lists.
+   *
+   * `time` is when the track *started*, in epoch ms. Submissions are sent
+   * partway through a track, so without it every play would be timestamped
+   * several minutes late.
+   */
+  async scrobble(
+    id: string,
+    options: { submission?: boolean; time?: number } = {},
+  ): Promise<void> {
+    await this.request('scrobble', {
+      id,
+      submission: options.submission ?? true,
+      time: options.time,
+    });
   }
 
   // -------------------------------------------------------------------------

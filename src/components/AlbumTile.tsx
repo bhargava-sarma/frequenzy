@@ -1,0 +1,55 @@
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+
+import { color, space, type } from '../theme/tokens';
+import { ArtworkWell } from './ArtworkWell';
+
+/**
+ * Album as artwork rather than as a row.
+ *
+ * The list row in spec 5.2 is right for tracks, where the title carries the
+ * meaning and a 40px thumbnail is incidental. It's the wrong unit for browsing
+ * albums: a library is recognised by its covers, and a screen of 40px squares
+ * shows almost none of them.
+ *
+ * Title and artist sit under the art in the standard body/meta pair, both
+ * clamped to one line. Wrapping titles would make tiles different heights and
+ * break the grid alignment, which is the one thing a grid has to get right.
+ */
+export interface AlbumTileProps {
+  title: string;
+  subtitle?: string;
+  artworkUri?: string | null;
+  /** Edge length of the artwork; the caption sits below it. */
+  size: number;
+  onPress?: () => void;
+}
+
+export function AlbumTile({ title, subtitle, artworkUri, size, onPress }: AlbumTileProps) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={subtitle ? `${title}, ${subtitle}` : title}
+      onPress={onPress}
+      style={({ pressed }) => [{ width: size }, pressed && styles.pressed]}
+    >
+      <ArtworkWell uri={artworkUri} size={size} surface="paper" />
+      <View style={styles.caption}>
+        <Text style={styles.title} numberOfLines={1}>
+          {title}
+        </Text>
+        {subtitle ? (
+          <Text style={styles.subtitle} numberOfLines={1}>
+            {subtitle}
+          </Text>
+        ) : null}
+      </View>
+    </Pressable>
+  );
+}
+
+const styles = StyleSheet.create({
+  caption: { marginTop: space[2] },
+  title: { ...type.body, color: color.textPrimary },
+  subtitle: { ...type.meta, color: color.textSecondary, marginTop: 2 },
+  pressed: { opacity: 0.7 },
+});
