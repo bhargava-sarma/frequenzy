@@ -44,17 +44,27 @@ export type HomeStackParamList = {
   Playlist: PlaylistRouteParams;
 };
 
+/**
+ * Three tabs, not four.
+ *
+ * The queue used to sit here, but a queue is a property of what's playing
+ * rather than a place in the library — you go to it from the player, the way
+ * every other music app arranges it. Giving it a permanent slot next to Home
+ * and Library also spent a quarter of the nav on a screen that is empty until
+ * something is playing.
+ */
 export type TabParamList = {
   Home: NavigatorScreenParams<HomeStackParamList>;
   Search: NavigatorScreenParams<SearchStackParamList>;
   Library: NavigatorScreenParams<LibraryStackParamList>;
-  Queue: undefined;
 };
 
 export type RootStackParamList = {
   Tabs: NavigatorScreenParams<TabParamList>;
   /** Full-screen player, presented over the tabs. */
   NowPlaying: undefined;
+  /** Reached from the player, presented over it. */
+  Queue: undefined;
   /** Development-only surfaces, not part of the shipped app. */
   Diagnostics: undefined;
   Showcase: undefined;

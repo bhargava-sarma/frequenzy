@@ -1,4 +1,4 @@
-import TrackPlayer from '@rntp/player';
+import TrackPlayer, { Event } from '@rntp/player';
 import { create } from 'zustand';
 
 import { setupPlayer } from '../player/setup';
@@ -11,25 +11,46 @@ import { useServerStore } from './useServerStore';
  *
  * The player owns the authoritative queue — duplicating it here would mean two
  * sources of truth that drift the moment playback advances on its own. This
- * store holds only what the player can't: initialization state, and the
- * actions that translate Subsonic songs into player calls.
+ * store holds only what the player can't: initialization state, the size of
+ * the hand-picked region at the front of the queue, and the actions that
+ * translate Subsonic songs into player calls.
  *
  * Read live playback state through the player's own hooks (useActiveMediaItem,
  * useIsPlaying, useProgress) rather than mirroring it here.
+ *
+ * THE TWO-TIER QUEUE
+ *
+ * Pressing Play on an album is a different intent from adding one track to the
+ * queue, and a single flat list can't tell them apart — an added track landing
+ * at the end of a 14-track album would not be heard for an hour. So the queue
+ * has two regions, as Apple Music does:
+ *
+ *   [ now playing ][ playing next — hand-picked ][ the rest of the context ]
+ *
+ * Adds insert at the end of the hand-picked region, so they play in the order
+ * you added them and always before the remainder of whatever album or playlist
+ * is running. Pressing Play replaces everything and empties the region.
  */
 
 interface PlayerStore {
   ready: boolean;
   /** Set when initialization fails, so UI can explain rather than hang. */
   error: string | null;
+  /**
+   * How many hand-picked tracks sit directly after the active one. Drives the
+   * "Playing next" grouping on the queue screen.
+   */
+  priorityCount: number;
 
   init: () => void;
 
   /** Replaces the queue and starts playing at `startIndex`. */
   playNow: (songs: Child[], startIndex?: number) => Promise<void>;
-  /** Inserts directly after the current track. */
+  /** Replaces the queue with a shuffled copy and plays from the top. */
+  shufflePlay: (songs: Child[]) => Promise<void>;
+  /** Inserts at the front of the hand-picked region — plays next. */
   playNext: (songs: Child[]) => Promise<void>;
-  /** Appends to the end of the queue. */
+  /** Inserts at the end of the hand-picked region. */
   addToQueue: (songs: Child[]) => Promise<void>;
 
   removeFromQueue: (index: number) => void;
@@ -100,80 +121,165 @@ async function applyQueueChange(
   }
 }
 
-export const usePlayerStore = create<PlayerStore>((set, get) => ({
-  ready: false,
-  error: null,
+/**
+ * Fisher-Yates on a copy.
+ *
+ * Shuffling the list here rather than using the player's own shuffle mode
+ * keeps the queue you see and the queue that plays identical. The native
+ * shuffle reorders playback behind an unchanged queue, which would make the
+ * hand-picked region point at the wrong tracks and the queue screen lie about
+ * what comes next.
+ */
+function shuffled<T>(items: T[]): T[] {
+  const out = [...items];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
 
-  init: () => {
-    if (get().ready) return;
-    try {
-      setupPlayer();
-      set({ ready: true, error: null });
-    } catch (error) {
-      set({ ready: false, error: error instanceof Error ? error.message : String(error) });
-    }
-  },
+export const usePlayerStore = create<PlayerStore>((set, get) => {
+  /**
+   * Shrinks the hand-picked region as playback moves into it.
+   *
+   * Tracked by how far the active index moved rather than by matching ids,
+   * because the same track can legitimately appear in the queue more than
+   * once and ids would not tell those copies apart.
+   */
+  let lastActiveIndex = -1;
+  let subscribed = false;
 
-  playNow: async (songs, startIndex = 0) => {
-    if (songs.length === 0) return;
-    get().init();
+  function watchQueuePosition() {
+    if (subscribed) return;
+    subscribed = true;
 
-    // Build before touching the queue: if URL construction fails, the current
-    // queue is left intact rather than cleared into an empty player.
-    const items = await buildItems(songs);
+    TrackPlayer.addEventListener(Event.MediaItemTransition, ({ index }) => {
+      const advancedBy = index - lastActiveIndex;
+      lastActiveIndex = index;
 
-    // A non-empty queue is proof the controller is live, which is all this
-    // needs to establish — play() is dispatched on the same native queue as
-    // setMediaItems, so it cannot overtake it.
-    await applyQueueChange(
-      () => TrackPlayer.setMediaItems(items, startIndex),
-      () => TrackPlayer.getQueue().length > 0,
-      { refire: true },
-    );
+      if (advancedBy > 0) {
+        set({ priorityCount: Math.max(0, get().priorityCount - advancedBy) });
+      }
+    });
+  }
 
-    TrackPlayer.play();
-  },
-
-  playNext: async (songs) => {
-    if (songs.length === 0) return;
-    get().init();
-
-    const items = await buildItems(songs);
-    const before = TrackPlayer.getQueue().length;
+  /** Where a hand-picked insert goes: after the active track and its region. */
+  function priorityInsertIndex(): number | null {
     const activeIndex = TrackPlayer.getActiveMediaItemIndex();
+    if (activeIndex == null) return null;
+    return activeIndex + 1 + get().priorityCount;
+  }
 
-    // With nothing playing there is no "next", so this degrades to an append.
-    await applyQueueChange(
-      () =>
-        activeIndex == null
-          ? TrackPlayer.addMediaItems(items)
-          : TrackPlayer.insertMediaItems(activeIndex + 1, items),
-      () => TrackPlayer.getQueue().length > before,
-    );
-  },
+  return {
+    ready: false,
+    error: null,
+    priorityCount: 0,
 
-  addToQueue: async (songs) => {
-    if (songs.length === 0) return;
-    get().init();
+    init: () => {
+      if (get().ready) return;
+      try {
+        setupPlayer();
+        watchQueuePosition();
+        set({ ready: true, error: null });
+      } catch (error) {
+        set({ ready: false, error: error instanceof Error ? error.message : String(error) });
+      }
+    },
 
-    const items = await buildItems(songs);
-    const before = TrackPlayer.getQueue().length;
+    playNow: async (songs, startIndex = 0) => {
+      if (songs.length === 0) return;
+      get().init();
 
-    await applyQueueChange(
-      () => TrackPlayer.addMediaItems(items),
-      () => TrackPlayer.getQueue().length > before,
-    );
-  },
+      // Build before touching the queue: if URL construction fails, the current
+      // queue is left intact rather than cleared into an empty player.
+      const items = await buildItems(songs);
 
-  removeFromQueue: (index) => {
-    TrackPlayer.removeMediaItem(index);
-  },
+      // A non-empty queue is proof the controller is live, which is all this
+      // needs to establish — play() is dispatched on the same native queue as
+      // setMediaItems, so it cannot overtake it.
+      await applyQueueChange(
+        () => TrackPlayer.setMediaItems(items, startIndex),
+        () => TrackPlayer.getQueue().length > 0,
+        { refire: true },
+      );
 
-  moveInQueue: (fromIndex, toIndex) => {
-    TrackPlayer.moveMediaItem(fromIndex, toIndex);
-  },
+      // Everything hand-picked belonged to the queue that was just replaced.
+      lastActiveIndex = startIndex;
+      set({ priorityCount: 0 });
 
-  clearQueue: () => {
-    TrackPlayer.clear();
-  },
-}));
+      TrackPlayer.play();
+    },
+
+    shufflePlay: async (songs) => {
+      await get().playNow(shuffled(songs));
+    },
+
+    playNext: async (songs) => {
+      if (songs.length === 0) return;
+      get().init();
+
+      const items = await buildItems(songs);
+      const before = TrackPlayer.getQueue().length;
+      const activeIndex = TrackPlayer.getActiveMediaItemIndex();
+
+      // With nothing playing there is no "next", so this degrades to starting
+      // playback rather than quietly stacking up an unheard queue.
+      if (activeIndex == null) {
+        await get().playNow(songs);
+        return;
+      }
+
+      await applyQueueChange(
+        () => TrackPlayer.insertMediaItems(activeIndex + 1, items),
+        () => TrackPlayer.getQueue().length > before,
+      );
+
+      set({ priorityCount: get().priorityCount + items.length });
+    },
+
+    addToQueue: async (songs) => {
+      if (songs.length === 0) return;
+      get().init();
+
+      const items = await buildItems(songs);
+      const before = TrackPlayer.getQueue().length;
+      const insertAt = priorityInsertIndex();
+
+      if (insertAt == null) {
+        await get().playNow(songs);
+        return;
+      }
+
+      await applyQueueChange(
+        () => TrackPlayer.insertMediaItems(insertAt, items),
+        () => TrackPlayer.getQueue().length > before,
+      );
+
+      set({ priorityCount: get().priorityCount + items.length });
+    },
+
+    removeFromQueue: (index) => {
+      const activeIndex = TrackPlayer.getActiveMediaItemIndex() ?? -1;
+      const count = get().priorityCount;
+
+      // Removing from inside the hand-picked region shrinks it; removing from
+      // the context after it leaves it alone.
+      if (index > activeIndex && index <= activeIndex + count) {
+        set({ priorityCount: count - 1 });
+      }
+
+      TrackPlayer.removeMediaItem(index);
+    },
+
+    moveInQueue: (fromIndex, toIndex) => {
+      TrackPlayer.moveMediaItem(fromIndex, toIndex);
+    },
+
+    clearQueue: () => {
+      lastActiveIndex = -1;
+      set({ priorityCount: 0 });
+      TrackPlayer.clear();
+    },
+  };
+});

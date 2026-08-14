@@ -13,34 +13,47 @@
 // ---------------------------------------------------------------------------
 
 /**
- * Two fixed surfaces, not a light/dark toggle.
+ * Two fixed surfaces, both dark.
  *
- * The player is ALWAYS the dark panel and the library is ALWAYS light paper.
- * These are roles, not themes — deliberately not wired to the OS color
- * scheme. `userInterfaceStyle` stays "light" in app.json for the same reason.
+ * The spec's original palette put the library on light paper and the player on
+ * a dark panel, and section 8 rules out a light/dark toggle on the grounds
+ * that the two-zone split *is* the design. This app is dark throughout by
+ * explicit request, so the split is kept and re-grounded rather than dropped:
+ * `paper` is the app floor and `panel` sits a step above it, which is what
+ * keeps the mini-player and transport reading as separate hardware instead of
+ * dissolving into the list behind them.
+ *
+ * The names stay `paper` and `panel` because they are structural roles — what
+ * a surface is for — not descriptions of their brightness. Every component
+ * already reasons in those terms, and renaming them would say the design
+ * changed when only the values did.
  */
 export const color = {
-  /** Light surface: library, lists, nav. */
-  paper: '#EFECE4',
+  /** App floor: library, lists, nav. */
+  paper: '#121211',
   /** Artwork placeholders, inactive fills. */
-  paperDim: '#DCD8CB',
-  /** Hairline borders on the light surface. */
-  paperLine: '#D8D5C9',
+  paperDim: '#1F1F1D',
+  /** Hairline borders on the floor. */
+  paperLine: '#2B2B27',
 
-  /** Dark surface: now playing, transport. */
-  panel: '#1A1A18',
-  /** Cards and artwork wells on the dark surface. */
+  /** Raised surface: now playing, transport, mini-player. */
+  panel: '#1E1E1B',
+  /** Cards and artwork wells on the raised surface. */
   panelRaised: '#2C2C29',
-  /** Hairline borders on the dark surface. */
+  /** Hairline borders on the raised surface. */
   panelLine: '#3A3A36',
 
-  /** On paper. */
-  textPrimary: '#1A1A18',
-  /** On paper, secondary/meta. */
+  /** On the floor. */
+  textPrimary: '#EFECE4',
+  /** On the floor, secondary/meta. */
   textSecondary: '#8C8B84',
-  /** On panel. */
+  /**
+   * On the raised surface. Identical to textPrimary now that both surfaces are
+   * dark — kept as a separate token so components kept their surface-aware
+   * wiring and a future light zone would only need this value changed.
+   */
   textInverse: '#EFECE4',
-  /** On panel, secondary/meta — same value reads correctly on both surfaces. */
+  /** On the raised surface, secondary/meta. */
   textInverseSecondary: '#8C8B84',
 
   /**

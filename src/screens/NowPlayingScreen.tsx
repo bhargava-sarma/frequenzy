@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Dimensions, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import TrackPlayer, {
@@ -13,18 +13,23 @@ import { ArtworkWell, FormatBadge } from '../components/ArtworkWell';
 import { ProgressBar } from '../components/ProgressBar';
 import { TransportControls } from '../components/TransportControls';
 import { EmptyState } from '../components/ScreenState';
-import { IconChevronRight, IconHeart, IconHeartFilled } from '../components/icons';
+import { IconChevronRight, IconHeart, IconHeartFilled, IconPlaylist } from '../components/icons';
 import { extrasOf } from '../player/trackMapping';
 import { useServerStore } from '../store/useServerStore';
-import { color, icon, layout, radius, space, type } from '../theme/tokens';
+import { color, icon, layout, space, type } from '../theme/tokens';
 
 /**
- * Now Playing — full-screen dark panel, per spec 5.1.
+ * Now Playing — full-screen panel, per spec 5.1.
  *
  * Full-bleed with no radius because it is a whole screen rather than a panel
  * inset into one. The accent appears exactly twice: the progress fill and the
  * play button (plus the heart when favourited, which is a state, not
  * decoration) — which is what keeps it meaningful.
+ *
+ * The artwork is measured rather than given a fixed cap. It used to be capped
+ * at 320px, which left a band of dead panel above and below it on a tall
+ * phone; it now takes whatever the transport and metadata don't need, so the
+ * screen is filled by the one thing worth looking at.
  */
 export function NowPlayingScreen() {
   const navigation = useNavigation();
@@ -37,13 +42,17 @@ export function NowPlayingScreen() {
 
   const [shuffle, setShuffle] = useState(false);
   const [repeat, setRepeat] = useState<RepeatMode>(RepeatMode.Off);
+  /** Edge of the largest square that fits the space left for artwork. */
+  const [artSize, setArtSize] = useState(0);
 
   const extras = extrasOf(activeItem);
   const [starred, setStarred] = useState<boolean | null>(null);
   const isStarred = starred ?? extras?.starred ?? false;
 
-  // Artwork is square and should never crowd the transport on short screens.
-  const artSize = Math.min(Dimensions.get('window').width - layout.panelPadding * 2, 320);
+  function measureArtwork(event: LayoutChangeEvent) {
+    const { width, height } = event.nativeEvent.layout;
+    setArtSize(Math.floor(Math.min(width, height)));
+  }
 
   if (!activeItem) {
     return (
@@ -80,14 +89,18 @@ export function NowPlayingScreen() {
         }
       />
 
-      <View style={styles.body}>
-        <ArtworkWell
-          uri={typeof activeItem.artworkUrl === 'string' ? activeItem.artworkUrl : undefined}
-          size={artSize}
-          surface="panel"
-          style={styles.art}
-        />
+      {/* Absorbs all the slack; the controls below keep their natural height. */}
+      <View style={styles.artArea} onLayout={measureArtwork}>
+        {artSize > 0 && (
+          <ArtworkWell
+            uri={typeof activeItem.artworkUrl === 'string' ? activeItem.artworkUrl : undefined}
+            size={artSize}
+            surface="panel"
+          />
+        )}
+      </View>
 
+      <View style={[styles.controls, { paddingBottom: insets.bottom + space[4] }]}>
         <View style={styles.meta}>
           <View style={styles.metaText}>
             <Text style={styles.title} numberOfLines={2}>
@@ -149,6 +162,22 @@ export function NowPlayingScreen() {
             setRepeat(next);
           }}
         />
+
+        {/* The queue lives here now rather than in the bottom nav — it belongs
+            to what's playing, not to the library. */}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open queue"
+          onPress={() => navigation.navigate('Queue')}
+          style={({ pressed }) => [styles.queueButton, pressed && styles.pressed]}
+        >
+          <IconPlaylist
+            size={icon.sizeSmall}
+            strokeWidth={icon.strokeWidth}
+            color={color.textInverseSecondary}
+          />
+          <Text style={styles.queueLabel}>Queue</Text>
+        </Pressable>
       </View>
     </View>
   );
@@ -194,19 +223,33 @@ const styles = StyleSheet.create({
   headerLabel: { ...type.label, color: color.textInverseSecondary, flex: 1 },
   headerRight: { alignItems: 'flex-end' },
 
-  body: {
+  artArea: {
     flex: 1,
-    paddingHorizontal: layout.panelPadding,
+    alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: layout.panelPadding,
+    paddingVertical: space[4],
   },
-  art: { alignSelf: 'center' },
 
-  meta: { flexDirection: 'row', alignItems: 'flex-start', marginTop: space[6] },
+  controls: { paddingHorizontal: layout.panelPadding },
+
+  meta: { flexDirection: 'row', alignItems: 'flex-start' },
   metaText: { flex: 1 },
   title: { ...type.display, color: color.textInverse },
   artist: { ...type.meta, color: color.textInverseSecondary, marginTop: space[1] },
   heart: { marginLeft: space[4], paddingTop: space[1] },
 
-  progress: { marginTop: space[6], marginBottom: space[6] },
+  progress: { marginTop: space[5], marginBottom: space[5] },
+
+  queueButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space[2],
+    marginTop: space[5],
+    paddingVertical: space[2],
+  },
+  queueLabel: { ...type.label, color: color.textInverseSecondary },
+
   pressed: { opacity: 0.6 },
 });

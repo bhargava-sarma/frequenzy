@@ -5,12 +5,12 @@ import { color, hairline, radius, space, type } from '../theme/tokens';
 /**
  * Two-or-three-way mode switch, in the uppercase label style.
  *
- * The selected segment takes the dark panel fill rather than the accent. The
- * accent is reserved for meaning — what's playing, what's favourited — and
- * spending it on "which list am I looking at" would dilute it on a screen
- * that already tints the active row. A panel-filled segment on paper also
- * reads as a physical toggle, which is the language the rest of this design
- * is speaking.
+ * The selected segment carries the accent fill. On the original light palette
+ * a dark panel fill did this job and left the accent free, but with the whole
+ * app on a dark ground the panel colors sit within a few percent of the floor
+ * and a selected segment simply disappeared. Selection is listed as one of the
+ * accent's jobs in the color tokens, so this is spending it where it was
+ * always allowed rather than inventing a second hue.
  */
 export interface SegmentedProps<T extends string> {
   options: readonly { value: T; label: string }[];
@@ -59,8 +59,8 @@ const styles = StyleSheet.create({
     minHeight: 36,
     justifyContent: 'center',
   },
-  segmentSelected: { backgroundColor: color.panel },
+  segmentSelected: { backgroundColor: color.accent },
   pressed: { opacity: 0.6 },
   label: { ...type.label, color: color.textSecondary },
-  labelSelected: { color: color.textInverse },
+  labelSelected: { color: color.accentInk },
 });

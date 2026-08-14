@@ -12,10 +12,10 @@ import { color, hairline, icon, layout, radius, space, type } from '../theme/tok
  * Renders nothing when the queue is empty, so the tab bar sits flush at the
  * bottom until there is something to control.
  *
- * Uses the dark panel surface: this is transport, and the two-zone split
- * assigns transport to the panel regardless of what it sits next to. The
- * contrast against the light tab bar below is the point — it reads as a
- * distinct piece of hardware rather than another row of the list.
+ * Uses the panel surface: this is transport, and the two-zone split assigns
+ * transport to the panel regardless of what it sits next to. Panel sits one
+ * step above the app floor, so it reads as a distinct piece of hardware
+ * rather than another row of the list.
  */
 export function MiniPlayer() {
   const navigation = useNavigation();

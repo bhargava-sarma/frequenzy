@@ -30,6 +30,7 @@ export function AlbumScreen() {
   const { albumId, albumName } = route.params;
 
   const playNow = usePlayerStore((state) => state.playNow);
+  const shufflePlay = usePlayerStore((state) => state.shufflePlay);
   const addToQueue = usePlayerStore((state) => state.addToQueue);
   const client = useServerStore((state) => state.client);
   const activeItem = useActiveMediaItem();
@@ -77,14 +78,13 @@ export function AlbumScreen() {
                     .join(' · ')}
                 </Text>
 
+                {/* Play and Shuffle both replace the queue with the whole
+                    album — that's the collection you asked to hear. Anything
+                    added by hand keeps its place ahead of what's left. */}
                 <View style={styles.actions}>
                   <ButtonRow>
-                    <Button
-                      label="Play"
-                      variant="primary"
-                      onPress={() => void playNow(songs)}
-                    />
-                    <Button label="Add to queue" onPress={() => void addToQueue(songs)} />
+                    <Button label="Play" variant="primary" onPress={() => void playNow(songs)} />
+                    <Button label="Shuffle" onPress={() => void shufflePlay(songs)} />
                   </ButtonRow>
                 </View>
               </View>

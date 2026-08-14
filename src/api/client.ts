@@ -1,4 +1,4 @@
-import { buildAuthParams } from './auth';
+import { buildAuthParams, type AuthParams } from './auth';
 import {
   ConnectionKind,
   ServerConfig,
@@ -102,6 +102,16 @@ export class SubsonicClient {
   /** Dedupes concurrent probes so a cold start doesn't ping N times. */
   private probeInFlight: Promise<ConnectionState> | null = null;
 
+  /**
+   * One salt+token pair for the life of this client.
+   *
+   * Media URLs are cache keys. Cover art is requested through expo-image and
+   * stream URLs through ExoPlayer, both of which key on the URL string, so a
+   * per-request salt made every one of them a miss — the same 40px thumbnail
+   * was refetched from the server on every re-render of its row.
+   */
+  private authParams: AuthParams | null = null;
+
   constructor(options: SubsonicClientOptions) {
     this.config = options.config;
     this.probeTimeoutMs = options.probeTimeoutMs ?? 2000;
@@ -112,6 +122,11 @@ export class SubsonicClient {
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
     this.onConnectionChange = options.onConnectionChange;
     this.log = options.log ?? (() => {});
+  }
+
+  private auth(): AuthParams {
+    this.authParams ??= buildAuthParams(this.config.username, this.config.password);
+    return this.authParams;
   }
 
   // -------------------------------------------------------------------------
@@ -337,8 +352,7 @@ export class SubsonicClient {
       }
     }
 
-    const auth = buildAuthParams(this.config.username, this.config.password);
-    for (const [key, value] of Object.entries(auth)) push(key, value);
+    for (const [key, value] of Object.entries(this.auth())) push(key, value);
 
     return `${baseUrl}/rest/${endpoint}.view?${parts.join('&')}`;
   }

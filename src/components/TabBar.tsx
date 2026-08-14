@@ -4,7 +4,7 @@ import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 
 import { MiniPlayer } from './MiniPlayer';
 import { color, hairline, icon, space } from '../theme/tokens';
-import { IconHome, IconLibrary, IconPlaylist, IconSearch } from './icons';
+import { IconHome, IconLibrary, IconSearch } from './icons';
 
 /**
  * Bottom navigation, per spec 5.4.
@@ -22,7 +22,6 @@ const ICONS = {
   Home: IconHome,
   Search: IconSearch,
   Library: IconLibrary,
-  Queue: IconPlaylist,
 } as const;
 
 export function TabBar({ state, navigation }: BottomTabBarProps) {

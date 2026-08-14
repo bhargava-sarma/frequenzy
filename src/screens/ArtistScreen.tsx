@@ -1,8 +1,10 @@
+import { useState } from 'react';
 import { FlatList, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
+import { Button, ButtonRow } from '../components/Button';
 import { ListRow } from '../components/ListRow';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { SectionHeader } from '../components/SectionHeader';
@@ -10,7 +12,10 @@ import { EmptyState, ErrorState, LoadingState } from '../components/ScreenState'
 import { useArtwork } from '../hooks/useArtwork';
 import { useLibraryData } from '../hooks/useLibraryData';
 import type { LibraryStackParamList } from '../navigation/types';
-import { color, space } from '../theme/tokens';
+import { usePlayerStore } from '../store/usePlayerStore';
+import { useServerStore } from '../store/useServerStore';
+import { color, layout, space } from '../theme/tokens';
+import type { Child } from '../types/subsonic';
 import { formatDuration, pluralize } from '../utils/time';
 
 /** An artist's albums. */
@@ -32,6 +37,39 @@ export function ArtistScreen() {
   // header isn't blank while loading.
   const title = data?.artist.name ?? artistName ?? 'Artist';
 
+  const library = useServerStore((state) => state.library);
+  const playNow = usePlayerStore((state) => state.playNow);
+  const shufflePlay = usePlayerStore((state) => state.shufflePlay);
+  const [gathering, setGathering] = useState(false);
+
+  /**
+   * Every track by this artist, in album order.
+   *
+   * The artist response carries albums but not their tracks, so this fetches
+   * each album. It runs on press rather than on load: an artist with twenty
+   * albums would otherwise fire twenty requests just to render a list of
+   * album names. Reads go through the repository, so a second press and any
+   * album already opened come from cache.
+   */
+  async function gatherSongs(): Promise<Child[]> {
+    if (!library) return [];
+    const details = await Promise.all(albums.map((album) => library.getAlbum(album.id)));
+    return details.flatMap((detail) => detail.songs);
+  }
+
+  async function startPlayback(mode: 'ordered' | 'shuffled') {
+    if (albums.length === 0 || gathering) return;
+    setGathering(true);
+    try {
+      const songs = await gatherSongs();
+      if (songs.length === 0) return;
+      if (mode === 'shuffled') await shufflePlay(songs);
+      else await playNow(songs);
+    } finally {
+      setGathering(false);
+    }
+  }
+
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <ScreenHeader title={title} onBack={() => navigation.goBack()} />
@@ -41,7 +79,24 @@ export function ArtistScreen() {
         keyExtractor={(album) => album.id}
         ListHeaderComponent={
           albums.length > 0 ? (
-            <SectionHeader title="Albums" count={pluralize(albums.length, 'album')} />
+            <View>
+              <View style={styles.actions}>
+                <ButtonRow>
+                  <Button
+                    label="Play"
+                    variant="primary"
+                    busy={gathering}
+                    onPress={() => void startPlayback('ordered')}
+                  />
+                  <Button
+                    label="Shuffle"
+                    busy={gathering}
+                    onPress={() => void startPlayback('shuffled')}
+                  />
+                </ButtonRow>
+              </View>
+              <SectionHeader title="Albums" count={pluralize(albums.length, 'album')} />
+            </View>
           ) : null
         }
         ListEmptyComponent={
@@ -78,5 +133,10 @@ export function ArtistScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: color.paper },
+  actions: {
+    paddingHorizontal: layout.screenPadding,
+    paddingTop: space[5],
+    alignItems: 'center',
+  },
   emptyContainer: { flexGrow: 1, paddingBottom: space[6] },
 });

@@ -15,7 +15,7 @@ import { formatDuration } from '../utils/time';
  * Component showcase — the primitives in isolation, before real screens
  * depend on them.
  *
- * The top block is the dark panel zone and the bottom is light paper, shown
+ * The top block is the raised panel zone and the bottom is the app floor, shown
  * together so the two-zone split can be judged as a whole. This is a
  * development surface and is not part of the shipped navigation.
  */

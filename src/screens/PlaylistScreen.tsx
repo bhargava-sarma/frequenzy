@@ -38,6 +38,7 @@ export function PlaylistScreen() {
 
   const client = useServerStore((state) => state.client);
   const playNow = usePlayerStore((state) => state.playNow);
+  const shufflePlay = usePlayerStore((state) => state.shufflePlay);
   const addToQueue = usePlayerStore((state) => state.addToQueue);
   const activeItem = useActiveMediaItem();
   const activeId = extrasOf(activeItem)?.subsonicId;
@@ -117,12 +118,8 @@ export function PlaylistScreen() {
 
                 <View style={styles.actions}>
                   <ButtonRow>
-                    <Button
-                      label="Play"
-                      variant="primary"
-                      onPress={() => void playNow(songs)}
-                    />
-                    <Button label="Add to queue" onPress={() => void addToQueue(songs)} />
+                    <Button label="Play" variant="primary" onPress={() => void playNow(songs)} />
+                    <Button label="Shuffle" onPress={() => void shufflePlay(songs)} />
                   </ButtonRow>
                 </View>
               </View>

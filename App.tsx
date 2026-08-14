@@ -81,14 +81,14 @@ function AppContent() {
   if (!fontsLoaded || status === 'hydrating') {
     return (
       <View style={styles.blank}>
-        <StatusBar style="dark" />
+        <StatusBar style="light" />
       </View>
     );
   }
 
   return (
     <>
-      <StatusBar style="dark" />
+      <StatusBar style="light" />
       {status === 'needsSetup' ? <SetupScreen /> : <RootNavigator />}
     </>
   );

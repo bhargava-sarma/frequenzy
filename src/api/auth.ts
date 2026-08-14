@@ -68,7 +68,19 @@ export interface AuthParams {
   f: 'json';
 }
 
-/** Builds a fresh salt+token pair. Call per request; never cache the token. */
+/**
+ * Builds a salt+token pair.
+ *
+ * Callers are expected to hold onto the result for the life of a session
+ * rather than calling this per request. A fresh salt per call makes every
+ * generated URL unique, which defeats any cache keyed on the URL — cover art
+ * in particular was refetched on every re-render because of it.
+ *
+ * That costs nothing in security terms. The salt exists so the token can't be
+ * precomputed against a rainbow table, not to make requests unrepeatable: the
+ * pair is already replayable by anyone who can read one URL, so rotating it
+ * per request protects nothing that a single capture doesn't already give up.
+ */
 export function buildAuthParams(username: string, password: string): AuthParams {
   const salt = randomSalt();
   return {

@@ -44,6 +44,7 @@ const screenOptions = { headerShown: false } as const;
 /** Paper is the app's ground; without this, pushes flash white between screens. */
 const navigationTheme: Theme = {
   ...DefaultTheme,
+  dark: true,
   colors: {
     ...DefaultTheme.colors,
     background: color.paper,
@@ -91,7 +92,6 @@ function TabNavigator() {
       <Tabs.Screen name="Home" component={HomeNavigator} />
       <Tabs.Screen name="Search" component={SearchNavigator} />
       <Tabs.Screen name="Library" component={LibraryNavigator} />
-      <Tabs.Screen name="Queue" component={QueueScreen} />
     </Tabs.Navigator>
   );
 }
@@ -104,6 +104,11 @@ export function RootNavigator() {
         <RootStack.Screen
           name="NowPlaying"
           component={NowPlayingScreen}
+          options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+        />
+        <RootStack.Screen
+          name="Queue"
+          component={QueueScreen}
           options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
         />
 
