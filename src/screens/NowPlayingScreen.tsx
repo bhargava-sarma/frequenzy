@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
+import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import TrackPlayer, {
@@ -13,10 +13,19 @@ import { ArtworkWell, FormatBadge } from '../components/ArtworkWell';
 import { ProgressBar } from '../components/ProgressBar';
 import { TransportControls } from '../components/TransportControls';
 import { EmptyState } from '../components/ScreenState';
-import { IconChevronRight, IconHeart, IconHeartFilled, IconPlaylist } from '../components/icons';
+import {
+  IconChevronDown,
+  IconHeart,
+  IconHeartFilled,
+  IconMicrophone2,
+  IconMoon,
+  IconPlaylist,
+} from '../components/icons';
 import { extrasOf } from '../player/trackMapping';
 import { useServerStore } from '../store/useServerStore';
-import { color, icon, layout, space, type } from '../theme/tokens';
+import { icon, layout, space, type } from '../theme/tokens';
+import type { Palette } from '../theme/tokens';
+import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 
 /**
  * Now Playing — full-screen panel, per spec 5.1.
@@ -26,14 +35,20 @@ import { color, icon, layout, space, type } from '../theme/tokens';
  * play button (plus the heart when favourited, which is a state, not
  * decoration) — which is what keeps it meaningful.
  *
- * The artwork is measured rather than given a fixed cap. It used to be capped
- * at 320px, which left a band of dead panel above and below it on a tall
- * phone; it now takes whatever the transport and metadata don't need, so the
- * screen is filled by the one thing worth looking at.
+ * Artwork is 80% of the screen width rather than edge to edge. Full width left
+ * the art touching both sides with no margin to sit in, which reads as a
+ * cropping accident rather than as a deliberate frame.
+ *
+ * The title and artist are links: the album and the artist are the two places
+ * you actually want to go from a track you're listening to, and making you
+ * back out and search for them was the long way round.
  */
 export function NowPlayingScreen() {
+  const color = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
 
   const activeItem = useActiveMediaItem();
   const isPlaying = useIsPlaying();
@@ -42,17 +57,12 @@ export function NowPlayingScreen() {
 
   const [shuffle, setShuffle] = useState(false);
   const [repeat, setRepeat] = useState<RepeatMode>(RepeatMode.Off);
-  /** Edge of the largest square that fits the space left for artwork. */
-  const [artSize, setArtSize] = useState(0);
 
   const extras = extrasOf(activeItem);
   const [starred, setStarred] = useState<boolean | null>(null);
   const isStarred = starred ?? extras?.starred ?? false;
 
-  function measureArtwork(event: LayoutChangeEvent) {
-    const { width, height } = event.nativeEvent.layout;
-    setArtSize(Math.floor(Math.min(width, height)));
-  }
+  const artSize = Math.round(width * layout.artworkWidthRatio);
 
   if (!activeItem) {
     return (
@@ -76,39 +86,69 @@ export function NowPlayingScreen() {
     }
   }
 
+  function openAlbum() {
+    if (!extras?.albumId) return;
+    navigation.goBack();
+    navigation.navigate('Tabs', {
+      screen: 'Library',
+      params: {
+        screen: 'Album',
+        params: { albumId: extras.albumId, albumName: extras.albumTitle },
+      },
+    });
+  }
+
+  function openArtist() {
+    if (!extras?.artistId) return;
+    navigation.goBack();
+    navigation.navigate('Tabs', {
+      screen: 'Library',
+      params: {
+        screen: 'Artist',
+        params: { artistId: extras.artistId, artistName: activeItem?.artist },
+      },
+    });
+  }
+
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-      <Header
-        onClose={() => navigation.goBack()}
-        badge={
-          <FormatBadge
-            suffix={extras?.suffix}
-            bitDepth={extras?.bitDepth}
-            samplingRate={extras?.samplingRate}
-          />
-        }
-      />
+      <Header onClose={() => navigation.goBack()} />
 
-      {/* Absorbs all the slack; the controls below keep their natural height. */}
-      <View style={styles.artArea} onLayout={measureArtwork}>
-        {artSize > 0 && (
-          <ArtworkWell
-            uri={typeof activeItem.artworkUrl === 'string' ? activeItem.artworkUrl : undefined}
-            size={artSize}
-            surface="panel"
-          />
-        )}
+      {/* Absorbs the slack; everything below keeps its natural height. */}
+      <View style={styles.artArea}>
+        <ArtworkWell
+          uri={typeof activeItem.artworkUrl === 'string' ? activeItem.artworkUrl : undefined}
+          size={artSize}
+          surface="panel"
+        />
       </View>
 
-      <View style={[styles.controls, { paddingBottom: insets.bottom + space[4] }]}>
+      <View style={[styles.controls, { paddingBottom: insets.bottom + space[3] }]}>
         <View style={styles.meta}>
           <View style={styles.metaText}>
-            <Text style={styles.title} numberOfLines={2}>
-              {activeItem.title ?? 'Unknown title'}
-            </Text>
-            <Text style={styles.artist} numberOfLines={1}>
-              {activeItem.artist ?? 'Unknown artist'}
-            </Text>
+            <Pressable
+              accessibilityRole="link"
+              accessibilityLabel={`Open album ${extras?.albumTitle ?? ''}`}
+              disabled={!extras?.albumId}
+              onPress={openAlbum}
+              style={({ pressed }) => (pressed ? styles.pressed : null)}
+            >
+              <Text style={styles.title} numberOfLines={2}>
+                {activeItem.title ?? 'Unknown title'}
+              </Text>
+            </Pressable>
+
+            <Pressable
+              accessibilityRole="link"
+              accessibilityLabel={`Open artist ${activeItem.artist ?? ''}`}
+              disabled={!extras?.artistId}
+              onPress={openArtist}
+              style={({ pressed }) => (pressed ? styles.pressed : null)}
+            >
+              <Text style={styles.artist} numberOfLines={1}>
+                {activeItem.artist ?? 'Unknown artist'}
+              </Text>
+            </Pressable>
           </View>
 
           <Pressable
@@ -128,6 +168,17 @@ export function NowPlayingScreen() {
               />
             )}
           </Pressable>
+        </View>
+
+        {/* The format readout sits between the title and the bar. It is a
+            property of the track, so it belongs with the track's name rather
+            than up in the chrome where it read as a screen title. */}
+        <View style={styles.badgeRow}>
+          <FormatBadge
+            suffix={extras?.suffix}
+            bitDepth={extras?.bitDepth}
+            samplingRate={extras?.samplingRate}
+          />
         </View>
 
         <View style={styles.progress}>
@@ -163,93 +214,147 @@ export function NowPlayingScreen() {
           }}
         />
 
-        {/* The queue lives here now rather than in the bottom nav — it belongs
-            to what's playing, not to the library. */}
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Open queue"
-          onPress={() => navigation.navigate('Queue')}
-          style={({ pressed }) => [styles.queueButton, pressed && styles.pressed]}
-        >
-          <IconPlaylist
-            size={icon.sizeSmall}
-            strokeWidth={icon.strokeWidth}
-            color={color.textInverseSecondary}
+        <View style={styles.footer}>
+          <FooterButton
+            label="Queue"
+            icon={
+              <IconPlaylist
+                size={icon.sizeSmall}
+                strokeWidth={icon.strokeWidth}
+                color={color.textInverseSecondary}
+              />
+            }
+            onPress={() => navigation.navigate('Queue')}
           />
-          <Text style={styles.queueLabel}>Queue</Text>
-        </Pressable>
+
+          {/* Not wired up yet — deliberately inert rather than hidden, so the
+              footer keeps its balance while the feature is built. */}
+          <FooterButton
+            label="Lyrics"
+            icon={
+              <IconMicrophone2
+                size={icon.sizeSmall}
+                strokeWidth={icon.strokeWidth}
+                color={color.textInverseSecondary}
+              />
+            }
+          />
+        </View>
       </View>
     </View>
   );
 }
 
-function Header({ onClose, badge }: { onClose: () => void; badge?: React.ReactNode }) {
+/**
+ * Sleep timer on the left, dismiss on the right.
+ *
+ * The screen title is gone: a full-bleed player showing one album cover does
+ * not need a caption telling you it is the player.
+ */
+function Header({ onClose }: { onClose: () => void }) {
+  const color = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   return (
     <View style={styles.header}>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Close player"
+        accessibilityLabel="Sleep timer"
         hitSlop={space[3]}
-        onPress={onClose}
-        style={({ pressed }) => [styles.close, pressed && styles.pressed]}
+        style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}
       >
-        {/* Chevron pointing down — this dismisses rather than navigating back. */}
-        <IconChevronRight
+        <IconMoon
           size={icon.size}
           strokeWidth={icon.strokeWidth}
           color={color.textInverseSecondary}
-          style={styles.closeIcon}
         />
       </Pressable>
 
-      <Text style={styles.headerLabel}>Now playing</Text>
-      <View style={styles.headerRight}>{badge}</View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Minimise player"
+        hitSlop={space[3]}
+        onPress={onClose}
+        style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}
+      >
+        <IconChevronDown
+          size={icon.size}
+          strokeWidth={icon.strokeWidth}
+          color={color.textInverseSecondary}
+        />
+      </Pressable>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  // Full-bleed, no radius: this is the whole screen, not a panel inset in one.
-  root: { flex: 1, backgroundColor: color.panel },
+function FooterButton({
+  label,
+  icon: glyph,
+  onPress,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  onPress?: () => void;
+}) {
+  const styles = useThemedStyles(makeStyles);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={onPress}
+      style={({ pressed }) => [styles.footerButton, pressed && styles.pressed]}
+    >
+      {glyph}
+      <Text style={styles.footerLabel}>{label}</Text>
+    </Pressable>
+  );
+}
 
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: layout.panelPadding,
-    paddingVertical: space[3],
-  },
-  close: { padding: space[1], marginRight: space[2] },
-  closeIcon: { transform: [{ rotate: '90deg' }] },
-  headerLabel: { ...type.label, color: color.textInverseSecondary, flex: 1 },
-  headerRight: { alignItems: 'flex-end' },
+const makeStyles = (color: Palette) =>
+  StyleSheet.create({
+    // Full-bleed, no radius: this is the whole screen, not a panel inset in one.
+    root: { flex: 1, backgroundColor: color.panel },
 
-  artArea: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: layout.panelPadding,
-    paddingVertical: space[4],
-  },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: layout.panelPadding,
+      paddingVertical: space[3],
+    },
+    headerButton: { padding: space[1] },
 
-  controls: { paddingHorizontal: layout.panelPadding },
+    artArea: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: space[4],
+    },
 
-  meta: { flexDirection: 'row', alignItems: 'flex-start' },
-  metaText: { flex: 1 },
-  title: { ...type.display, color: color.textInverse },
-  artist: { ...type.meta, color: color.textInverseSecondary, marginTop: space[1] },
-  heart: { marginLeft: space[4], paddingTop: space[1] },
+    controls: { paddingHorizontal: layout.panelPadding },
 
-  progress: { marginTop: space[5], marginBottom: space[5] },
+    meta: { flexDirection: 'row', alignItems: 'flex-start' },
+    metaText: { flex: 1 },
+    title: { ...type.display, color: color.textInverse },
+    artist: { ...type.meta, color: color.textInverseSecondary, marginTop: space[1] },
+    heart: { marginLeft: space[4], paddingTop: space[1] },
 
-  queueButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: space[2],
-    marginTop: space[5],
-    paddingVertical: space[2],
-  },
-  queueLabel: { ...type.label, color: color.textInverseSecondary },
+    badgeRow: { marginTop: space[3] },
+    progress: { marginTop: space[2], marginBottom: space[5] },
 
-  pressed: { opacity: 0.6 },
-});
+    footer: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      marginTop: space[5],
+    },
+    footerButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: space[2],
+      paddingVertical: space[2],
+      paddingHorizontal: space[2],
+    },
+    footerLabel: { ...type.label, color: color.textInverseSecondary },
+
+    pressed: { opacity: 0.6 },
+  });

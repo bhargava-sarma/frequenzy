@@ -16,7 +16,9 @@ import { ProgressBar } from '../components/ProgressBar';
 import { TransportControls } from '../components/TransportControls';
 import { useServerStore } from '../store/useServerStore';
 import { usePlayerStore } from '../store/usePlayerStore';
-import { color, hairline, icon, layout, radius, space, type } from '../theme/tokens';
+import { hairline, icon, layout, radius, space, type } from '../theme/tokens';
+import type { Palette } from '../theme/tokens';
+import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import type { Child } from '../types/subsonic';
 
 /**
@@ -40,6 +42,8 @@ interface Row {
 }
 
 export function DiagnosticScreen() {
+  const color = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const client = useServerStore((state) => state.client);
@@ -330,7 +334,7 @@ export function DiagnosticScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (color: Palette) => StyleSheet.create({
   root: { flex: 1, backgroundColor: color.paper },
 
   header: {

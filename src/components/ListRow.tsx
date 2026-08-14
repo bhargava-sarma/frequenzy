@@ -1,6 +1,8 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { color, hairline, icon, layout, radius, space, type } from '../theme/tokens';
+import { hairline, icon, layout, radius, space, type } from '../theme/tokens';
+import type { Palette } from '../theme/tokens';
+import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import { ArtworkWell } from './ArtworkWell';
 import { IconHeart, IconHeartFilled, IconPlus } from './icons';
 
@@ -47,6 +49,8 @@ export function ListRow({
   onActionPress,
   last = false,
 }: ListRowProps) {
+  const color = useTheme();
+  const styles = useThemedStyles(makeStyles);
   return (
     <Pressable
       accessibilityRole="button"
@@ -103,7 +107,7 @@ export function ListRow({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (color: Palette) => StyleSheet.create({
   root: {
     flexDirection: 'row',
     alignItems: 'center',

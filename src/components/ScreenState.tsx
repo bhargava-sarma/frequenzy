@@ -1,7 +1,9 @@
 import { StyleSheet, Text, View } from 'react-native';
 
 import { Button } from './Button';
-import { color, layout, space, type } from '../theme/tokens';
+import { layout, space, type } from '../theme/tokens';
+import type { Palette } from '../theme/tokens';
+import { useThemedStyles } from '../theme/ThemeProvider';
 
 /**
  * Loading, empty and error states.
@@ -13,6 +15,7 @@ import { color, layout, space, type } from '../theme/tokens';
  */
 
 export function LoadingState({ label = 'Loading' }: { label?: string }) {
+  const styles = useThemedStyles(makeStyles);
   return (
     <View style={styles.root}>
       <Text style={styles.label}>{label}</Text>
@@ -21,6 +24,7 @@ export function LoadingState({ label = 'Loading' }: { label?: string }) {
 }
 
 export function EmptyState({ label, hint }: { label: string; hint?: string }) {
+  const styles = useThemedStyles(makeStyles);
   return (
     <View style={styles.root}>
       <Text style={styles.label}>{label}</Text>
@@ -30,6 +34,7 @@ export function EmptyState({ label, hint }: { label: string; hint?: string }) {
 }
 
 export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  const styles = useThemedStyles(makeStyles);
   return (
     <View style={styles.root}>
       <Text style={[styles.label, styles.errorLabel]}>Something went wrong</Text>
@@ -43,7 +48,7 @@ export function ErrorState({ message, onRetry }: { message: string; onRetry?: ()
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (color: Palette) => StyleSheet.create({
   root: {
     flex: 1,
     alignItems: 'center',

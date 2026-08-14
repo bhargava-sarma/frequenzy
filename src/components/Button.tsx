@@ -1,6 +1,8 @@
 import { ActivityIndicator, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 
-import { color, hairline, radius, space, type } from '../theme/tokens';
+import { hairline, radius, space, type } from '../theme/tokens';
+import type { Palette } from '../theme/tokens';
+import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 
 /**
  * Buttons, per spec 5.5.
@@ -39,6 +41,8 @@ export function Button({
   fullWidth = false,
   style,
 }: ButtonProps) {
+  const color = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const isPrimary = variant === 'primary';
   const inert = disabled || busy;
 
@@ -81,10 +85,11 @@ export function Button({
  * don't re-derive the spacing every time two buttons sit together.
  */
 export function ButtonRow({ children }: { children: React.ReactNode }) {
+  const styles = useThemedStyles(makeStyles);
   return <View style={styles.row}>{children}</View>;
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (color: Palette) => StyleSheet.create({
   base: {
     height: 48,
     minWidth: 96,

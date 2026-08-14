@@ -1,6 +1,8 @@
 import TrackPlayer, { Event } from '@rntp/player';
 
 import type { SubsonicClient } from '../api/client';
+import { recordPlay } from '../data/playHistory';
+import { extrasOf } from './trackMapping';
 
 /**
  * Reports plays back to Navidrome.
@@ -92,6 +94,21 @@ export function startScrobbler(getClient: () => SubsonicClient | null): () => vo
       // the flag clear would re-fire on every tick for the rest of the track.
       current.submitted = true;
       report(client.scrobble(mediaId, { submission: true, time: current.startedAt }));
+
+      // Logged locally at the same moment, since the server has no endpoint
+      // for "top tracks this week" and cannot answer that question later.
+      const item = TrackPlayer.getActiveMediaItem();
+      const extras = extrasOf(item);
+      report(
+        recordPlay({
+          songId: mediaId,
+          title: item?.title ?? 'Unknown title',
+          artist: item?.artist,
+          albumId: extras?.albumId,
+          coverArt: extras?.coverArt,
+          playedAt: current.startedAt,
+        }),
+      );
     },
   );
 

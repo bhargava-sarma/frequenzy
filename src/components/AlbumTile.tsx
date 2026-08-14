@@ -1,6 +1,8 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { color, space, type } from '../theme/tokens';
+import { space, type } from '../theme/tokens';
+import type { Palette } from '../theme/tokens';
+import { useThemedStyles } from '../theme/ThemeProvider';
 import { ArtworkWell } from './ArtworkWell';
 
 /**
@@ -25,6 +27,7 @@ export interface AlbumTileProps {
 }
 
 export function AlbumTile({ title, subtitle, artworkUri, size, onPress }: AlbumTileProps) {
+  const styles = useThemedStyles(makeStyles);
   return (
     <Pressable
       accessibilityRole="button"
@@ -47,7 +50,7 @@ export function AlbumTile({ title, subtitle, artworkUri, size, onPress }: AlbumT
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (color: Palette) => StyleSheet.create({
   caption: { marginTop: space[2] },
   title: { ...type.body, color: color.textPrimary },
   subtitle: { ...type.meta, color: color.textSecondary, marginTop: 2 },

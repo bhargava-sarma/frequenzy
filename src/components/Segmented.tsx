@@ -1,6 +1,8 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { color, hairline, radius, space, type } from '../theme/tokens';
+import { hairline, radius, space, type } from '../theme/tokens';
+import type { Palette } from '../theme/tokens';
+import { useThemedStyles } from '../theme/ThemeProvider';
 
 /**
  * Two-or-three-way mode switch, in the uppercase label style.
@@ -19,6 +21,7 @@ export interface SegmentedProps<T extends string> {
 }
 
 export function Segmented<T extends string>({ options, value, onChange }: SegmentedProps<T>) {
+  const styles = useThemedStyles(makeStyles);
   return (
     <View style={styles.root}>
       {options.map((option) => {
@@ -43,7 +46,7 @@ export function Segmented<T extends string>({ options, value, onChange }: Segmen
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (color: Palette) => StyleSheet.create({
   root: {
     flexDirection: 'row',
     alignSelf: 'flex-start',

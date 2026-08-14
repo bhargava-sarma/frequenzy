@@ -6,6 +6,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { Button, ButtonRow } from '../components/Button';
 import { ListRow } from '../components/ListRow';
+import { DOCK_CLEARANCE } from '../components/TabBar';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { SectionHeader } from '../components/SectionHeader';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenState';
@@ -14,12 +15,15 @@ import { useLibraryData } from '../hooks/useLibraryData';
 import type { LibraryStackParamList } from '../navigation/types';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { useServerStore } from '../store/useServerStore';
-import { color, layout, space } from '../theme/tokens';
+import { layout, space } from '../theme/tokens';
+import type { Palette } from '../theme/tokens';
+import { useThemedStyles } from '../theme/ThemeProvider';
 import type { Child } from '../types/subsonic';
 import { formatDuration, pluralize } from '../utils/time';
 
 /** An artist's albums. */
 export function ArtistScreen() {
+  const styles = useThemedStyles(makeStyles);
   const navigation = useNavigation<NativeStackNavigationProp<LibraryStackParamList>>();
   const route = useRoute<RouteProp<LibraryStackParamList, 'Artist'>>();
   const insets = useSafeAreaInsets();
@@ -108,7 +112,7 @@ export function ArtistScreen() {
             <EmptyState label="No albums" />
           )
         }
-        contentContainerStyle={albums.length ? undefined : styles.emptyContainer}
+        contentContainerStyle={albums.length ? styles.listContent : styles.emptyContainer}
         renderItem={({ item, index }) => (
           <ListRow
             title={item.name}
@@ -131,12 +135,13 @@ export function ArtistScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (color: Palette) => StyleSheet.create({
   root: { flex: 1, backgroundColor: color.paper },
   actions: {
     paddingHorizontal: layout.screenPadding,
     paddingTop: space[5],
     alignItems: 'center',
   },
-  emptyContainer: { flexGrow: 1, paddingBottom: space[6] },
+  listContent: { paddingBottom: DOCK_CLEARANCE },
+  emptyContainer: { flexGrow: 1, paddingBottom: DOCK_CLEARANCE },
 });

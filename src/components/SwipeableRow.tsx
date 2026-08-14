@@ -9,7 +9,9 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
-import { color, layout, space, type } from '../theme/tokens';
+import { layout, space, type } from '../theme/tokens';
+import type { Palette } from '../theme/tokens';
+import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 
 /**
  * Horizontal swipe actions for a list row, per spec 5.3.
@@ -65,6 +67,8 @@ export function SwipeableRow({
   height = layout.rowHeight,
 }: SwipeableRowProps) {
   const { width } = useWindowDimensions();
+  const color = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const translateX = useSharedValue(0);
 
   const commitDistance = width * COMMIT_RATIO;
@@ -130,13 +134,17 @@ export function SwipeableRow({
   return (
     <View style={[styles.root, { height }]}>
       {rightSwipe && (
-        <Animated.View style={[styles.reveal, styles.revealLeft, toneStyle(rightSwipe), rightRevealStyle]}>
+        <Animated.View
+          style={[styles.reveal, styles.revealLeft, toneStyle(rightSwipe, color), rightRevealStyle]}
+        >
           <Reveal action={rightSwipe} />
         </Animated.View>
       )}
 
       {leftSwipe && (
-        <Animated.View style={[styles.reveal, styles.revealRight, toneStyle(leftSwipe), leftRevealStyle]}>
+        <Animated.View
+          style={[styles.reveal, styles.revealRight, toneStyle(leftSwipe, color), leftRevealStyle]}
+        >
           <Reveal action={leftSwipe} />
         </Animated.View>
       )}
@@ -149,6 +157,8 @@ export function SwipeableRow({
 }
 
 function Reveal({ action }: { action: SwipeAction }) {
+  const color = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const tint = action.tone === 'neutral' ? color.textPrimary : color.accentInk;
   return (
     <View style={styles.revealContent}>
@@ -158,13 +168,14 @@ function Reveal({ action }: { action: SwipeAction }) {
   );
 }
 
-function toneStyle(action: SwipeAction) {
+/** Takes the palette explicitly — it runs outside a component. */
+function toneStyle(action: SwipeAction, color: Palette) {
   return {
     backgroundColor: action.tone === 'neutral' ? color.paperDim : color.accent,
   };
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (color: Palette) => StyleSheet.create({
   root: { position: 'relative', backgroundColor: color.paper },
   row: { flex: 1, backgroundColor: color.paper },
 

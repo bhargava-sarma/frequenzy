@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
+  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
+  Text,
   useWindowDimensions,
   View,
 } from 'react-native';
@@ -11,29 +13,29 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { ListRow } from '../components/ListRow';
+import { ScreenHeader } from '../components/ScreenHeader';
 import { SectionHeader } from '../components/SectionHeader';
+import { Segmented } from '../components/Segmented';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenState';
 import { Shelf } from '../components/Shelf';
+import { DOCK_CLEARANCE } from '../components/TabBar';
+import { IconSettings } from '../components/icons';
+import { getTopTracks, type ChartWindow, type TopTrack } from '../data/playHistory';
 import { useArtwork } from '../hooks/useArtwork';
 import { useLibraryData } from '../hooks/useLibraryData';
-import type { HomeStackParamList } from '../navigation/types';
-import { usePlayerStore } from '../store/usePlayerStore';
-import { useServerStore } from '../store/useServerStore';
-import { color, layout, space } from '../theme/tokens';
-import type { AlbumSummary, Playlist } from '../types/subsonic';
-import { formatDuration, pluralize } from '../utils/time';
+import type { HomeStackParamList, RootStackParamList } from '../navigation/types';
+import { icon, layout, space, type } from '../theme/tokens';
+import type { Palette } from '../theme/tokens';
+import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
+import type { AlbumSummary } from '../types/subsonic';
+import { pluralize } from '../utils/time';
 
 /**
- * Home — playlists and album shelves.
+ * Home — your own charts, then album shelves.
  *
- * This used to list every album in the library as identical 40px rows, which
- * made the one screen you open most a 573-row wall of text. It now shows four
- * short shelves of artwork instead; the complete list lives under Library,
- * where an exhaustive index belongs.
- *
- * Playlists stay here rather than taking a fifth tab: the spec fixes the
- * bottom nav at four icon-only items, and adding one to satisfy a feature
- * would break the thing that makes the nav read as a panel.
+ * Playlists used to live here; they moved to Library, which is where a list
+ * you maintain belongs. What's left is everything you don't maintain: what you
+ * have been playing, what the server added recently, and a random shelf.
  */
 
 /** How many albums each shelf asks for. Enough to scroll, not enough to stall. */
@@ -46,14 +48,23 @@ const SHELF_SIZE = 20;
  */
 const SHELF_TTL_MS = 10 * 60 * 1000;
 
+const WINDOWS = [
+  { value: 'day' as const, label: 'Day' },
+  { value: 'week' as const, label: 'Week' },
+  { value: 'month' as const, label: 'Month' },
+  { value: 'year' as const, label: 'Year' },
+];
+
 export function HomeScreen() {
+  const color = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const navigation = useNavigation<NativeStackNavigationProp<HomeStackParamList>>();
+  // Settings lives on the root stack, two navigators up. navigate() bubbles
+  // to find it, but the Home stack's types don't know the route exists.
+  const rootNavigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const insets = useSafeAreaInsets();
   const artworkUrl = useArtwork();
   const { width } = useWindowDimensions();
-
-  const client = useServerStore((state) => state.client);
-  const addToQueue = usePlayerStore((state) => state.addToQueue);
 
   // Two and a half tiles across, so the cut-off third is visibly a hint that
   // the shelf scrolls rather than looking like a short list that ended.
@@ -71,56 +82,21 @@ export function HomeScreen() {
         library.getAlbumsByType('recent', SHELF_SIZE, { forceRefresh, ttlMs: SHELF_TTL_MS }),
         library.getAlbumsByType('frequent', SHELF_SIZE, { forceRefresh, ttlMs: SHELF_TTL_MS }),
         library.getAlbumsByType('random', SHELF_SIZE, { forceRefresh }),
-      ]).then(([newest, recent, frequent, random]) => ({
-        newest,
-        recent,
-        frequent,
-        random,
-      })),
+      ]).then(([newest, recent, frequent, random]) => ({ newest, recent, frequent, random })),
     [],
   );
 
-  // Playlists aren't cached — they change whenever you edit one, and a stale
-  // playlist is more confusing than a slightly slower load.
-  const [playlists, setPlaylists] = useState<Playlist[]>([]);
-  useEffect(() => {
-    if (!client) return;
-    let cancelled = false;
-    client
-      .getPlaylists()
-      .then((response) => {
-        if (!cancelled) setPlaylists(response.playlists.playlist ?? []);
-      })
-      .catch(() => {
-        // Non-fatal: the shelves below are still worth showing.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [client]);
+  const [chartWindow, setChartWindow] = useState<ChartWindow>('week');
+  const [topTracks, setTopTracks] = useState<TopTrack[]>([]);
 
-  const isEmpty = useMemo(
-    () =>
-      playlists.length === 0 &&
-      (!shelves ||
-        shelves.newest.length + shelves.recent.length + shelves.frequent.length === 0),
-    [playlists, shelves],
-  );
+  const loadCharts = useCallback(() => {
+    void getTopTracks(chartWindow, 5).then(setTopTracks);
+  }, [chartWindow]);
+
+  useEffect(loadCharts, [loadCharts]);
 
   function openAlbum(album: AlbumSummary) {
     navigation.navigate('Album', { albumId: album.id, albumName: album.name });
-  }
-
-  /**
-   * The row itself opens the playlist; only the trailing action queues it.
-   * Tapping a row and having it start playing gives you no way to look at what
-   * is in a playlist before committing to it.
-   */
-  async function queuePlaylist(playlistId: string) {
-    if (!client) return;
-    const response = await client.getPlaylist(playlistId);
-    const songs = response.playlist.entry ?? [];
-    if (songs.length > 0) await addToQueue(songs);
   }
 
   if (loading && !shelves) {
@@ -141,49 +117,67 @@ export function HomeScreen() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
+      <ScreenHeader
+        title="Home"
+        action={
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Settings"
+            hitSlop={space[3]}
+            onPress={() => rootNavigation.navigate('Settings')}
+            style={({ pressed }) => (pressed ? styles.pressed : null)}
+          >
+            <IconSettings
+              size={icon.size}
+              strokeWidth={icon.strokeWidth}
+              color={color.textSecondary}
+            />
+          </Pressable>
+        }
+      />
+
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={
           <RefreshControl
             refreshing={loading && shelves != null}
-            onRefresh={refresh}
+            onRefresh={() => {
+              refresh();
+              loadCharts();
+            }}
             tintColor={color.textSecondary}
           />
         }
       >
-        {isEmpty && (
-          <EmptyState
-            label="Nothing here yet"
-            hint="Check that Navidrome has scanned your library."
-          />
-        )}
+        <SectionHeader title="Your top tracks" />
+        <View style={styles.chartSwitch}>
+          <Segmented options={WINDOWS} value={chartWindow} onChange={setChartWindow} />
+        </View>
 
-        {playlists.length > 0 && (
-          <>
-            <SectionHeader title="Playlists" count={String(playlists.length)} />
-            {playlists.map((playlist, index) => (
-              <ListRow
-                key={playlist.id}
-                title={playlist.name}
-                meta={[
-                  playlist.songCount != null ? pluralize(playlist.songCount, 'track') : null,
-                  playlist.duration ? formatDuration(playlist.duration) : null,
-                ]
-                  .filter(Boolean)
-                  .join(' · ')}
-                artworkUri={artworkUrl(playlist.coverArt)}
-                action="queue"
-                last={index === playlists.length - 1}
-                onPress={() =>
-                  navigation.navigate('Playlist', {
-                    playlistId: playlist.id,
-                    playlistName: playlist.name,
-                  })
-                }
-                onActionPress={() => void queuePlaylist(playlist.id)}
-              />
-            ))}
-          </>
+        {topTracks.length === 0 ? (
+          <View style={styles.chartEmpty}>
+            <Text style={styles.chartHint}>
+              Nothing played in this window yet. Counts build as you listen — they come from this
+              device rather than from the server, which has no notion of a time window.
+            </Text>
+          </View>
+        ) : (
+          topTracks.map((track, index) => (
+            <ListRow
+              key={track.songId}
+              title={track.title}
+              meta={[track.artist, pluralize(track.plays, 'play')].filter(Boolean).join(' · ')}
+              artworkUri={artworkUrl(track.coverArt)}
+              last={index === topTracks.length - 1}
+              // Opens the album rather than playing: a chart is something you
+              // read, and a row that starts music on a glance is hostile.
+              onPress={
+                track.albumId
+                  ? () => navigation.navigate('Album', { albumId: track.albumId! })
+                  : undefined
+              }
+            />
+          ))
         )}
 
         {shelves && (
@@ -223,29 +217,25 @@ export function HomeScreen() {
           </>
         )}
 
-        {/* Development entry points, stripped from release builds. */}
-        {__DEV__ && (
-          <>
-            <SectionHeader title="Developer" />
-            <ListRow
-              title="Diagnostics"
-              showArtwork={false}
-              onPress={() => navigation.getParent()?.navigate('Diagnostics')}
-            />
-            <ListRow
-              title="Components"
-              showArtwork={false}
-              last
-              onPress={() => navigation.getParent()?.navigate('Showcase')}
-            />
-          </>
+        {!shelves && topTracks.length === 0 && (
+          <EmptyState
+            label="Nothing here yet"
+            hint="Check that Navidrome has scanned your library."
+          />
         )}
       </ScrollView>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: color.paper },
-  content: { paddingBottom: space[6] },
-});
+const makeStyles = (color: Palette) =>
+  StyleSheet.create({
+    root: { flex: 1, backgroundColor: color.paper },
+    content: { paddingBottom: DOCK_CLEARANCE },
+
+    chartSwitch: { paddingHorizontal: layout.screenPadding, paddingBottom: space[4] },
+    chartEmpty: { paddingHorizontal: layout.screenPadding, paddingBottom: space[4] },
+    chartHint: { ...type.meta, color: color.textSecondary, lineHeight: 18 },
+
+    pressed: { opacity: 0.6 },
+  });

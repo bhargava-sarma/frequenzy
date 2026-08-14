@@ -8,16 +8,19 @@ import { ArtworkWell } from '../components/ArtworkWell';
 import { Button, ButtonRow } from '../components/Button';
 import { IconHeart, IconHeartFilled, IconPlus } from '../components/icons';
 import { ListRow } from '../components/ListRow';
+import { DOCK_CLEARANCE } from '../components/TabBar';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { SectionHeader } from '../components/SectionHeader';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenState';
 import { SwipeableRow } from '../components/SwipeableRow';
 import { extrasOf } from '../player/trackMapping';
 import { useArtwork } from '../hooks/useArtwork';
-import type { HomeStackParamList } from '../navigation/types';
+import { LIKED_PLAYLIST_ID, type LibraryStackParamList } from '../navigation/types';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { useServerStore } from '../store/useServerStore';
-import { color, icon, layout, space, type } from '../theme/tokens';
+import { icon, layout, space, type } from '../theme/tokens';
+import type { Palette } from '../theme/tokens';
+import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import type { Child, Playlist } from '../types/subsonic';
 import { formatDuration, pluralize } from '../utils/time';
 
@@ -29,12 +32,15 @@ import { formatDuration, pluralize } from '../utils/time';
  * round trip is cheaper than the confusion of a stale track list.
  */
 export function PlaylistScreen() {
+  const color = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const navigation = useNavigation();
-  const route = useRoute<RouteProp<HomeStackParamList, 'Playlist'>>();
+  const route = useRoute<RouteProp<LibraryStackParamList, 'Playlist'>>();
   const insets = useSafeAreaInsets();
   const artworkUrl = useArtwork();
 
   const { playlistId, playlistName } = route.params;
+  const isLiked = playlistId === LIKED_PLAYLIST_ID;
 
   const client = useServerStore((state) => state.client);
   const playNow = usePlayerStore((state) => state.playNow);
@@ -58,12 +64,32 @@ export function PlaylistScreen() {
     let cancelled = false;
 
     setLoading(true);
-    client
-      .getPlaylist(playlistId)
-      .then((response) => {
+
+    // Favourites are not a playlist on the server, so they come from a
+    // different endpoint and get a synthetic header to render against.
+    const load = isLiked
+      ? client.getStarred2().then((response) => {
+          const songs = response.starred2.song ?? [];
+          return {
+            playlist: {
+              id: LIKED_PLAYLIST_ID,
+              name: 'Liked songs',
+              songCount: songs.length,
+              duration: songs.reduce((sum, song) => sum + (song.duration ?? 0), 0),
+            } satisfies Playlist,
+            songs,
+          };
+        })
+      : client.getPlaylist(playlistId).then((response) => ({
+          playlist: response.playlist as Playlist,
+          songs: response.playlist.entry ?? [],
+        }));
+
+    load
+      .then((result) => {
         if (cancelled) return;
-        setPlaylist(response.playlist);
-        setSongs(response.playlist.entry ?? []);
+        setPlaylist(result.playlist);
+        setSongs(result.songs);
         setError(null);
       })
       .catch((cause: unknown) => {
@@ -77,7 +103,7 @@ export function PlaylistScreen() {
     return () => {
       cancelled = true;
     };
-  }, [client, playlistId, reloadToken]);
+  }, [client, playlistId, isLiked, reloadToken]);
 
   const title = playlist?.name ?? playlistName ?? 'Playlist';
   const totalDuration =
@@ -137,7 +163,14 @@ export function PlaylistScreen() {
           ) : error ? (
             <ErrorState message={error} onRetry={refresh} />
           ) : (
-            <EmptyState label="Empty playlist" hint="Add tracks to it in Navidrome." />
+            <EmptyState
+              label={isLiked ? 'No liked songs' : 'Empty playlist'}
+              hint={
+                isLiked
+                  ? 'Tap the heart on a track to add it here.'
+                  : 'Add tracks to it in Navidrome.'
+              }
+            />
           )
         }
         contentContainerStyle={songs.length ? styles.listContent : styles.emptyContainer}
@@ -179,9 +212,9 @@ export function PlaylistScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (color: Palette) => StyleSheet.create({
   root: { flex: 1, backgroundColor: color.paper },
-  listContent: { paddingBottom: space[6] },
+  listContent: { paddingBottom: DOCK_CLEARANCE },
   emptyContainer: { flexGrow: 1 },
 
   hero: { alignItems: 'center', paddingTop: space[5], paddingHorizontal: layout.screenPadding },

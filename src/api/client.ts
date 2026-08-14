@@ -20,6 +20,7 @@ import type {
   Child,
   PlaylistResponse,
   PlaylistsResponse,
+  Starred2Response,
   SearchResult3Response,
   SubsonicEnvelope,
   SubsonicResponseBody,
@@ -503,6 +504,16 @@ export class SubsonicClient {
 
   async getPlaylist(id: string): Promise<PlaylistResponse> {
     return this.request<PlaylistResponse>('getPlaylist', { id });
+  }
+
+  /**
+   * Everything favourited, across artists, albums and tracks.
+   *
+   * Navidrome exposes favourites through this rather than as a playlist, which
+   * is why starred tracks never appeared in getPlaylists.
+   */
+  async getStarred2(): Promise<Starred2Response> {
+    return this.request<Starred2Response>('getStarred2');
   }
 
   // -------------------------------------------------------------------------

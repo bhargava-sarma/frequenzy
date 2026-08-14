@@ -4,20 +4,21 @@ import TrackPlayer, { useActiveMediaItem, useIsPlaying, useProgress } from '@rnt
 
 import { ArtworkWell } from './ArtworkWell';
 import { IconPlayerPauseFilled, IconPlayerPlayFilled } from './icons';
-import { color, hairline, icon, layout, radius, space, type } from '../theme/tokens';
+import { hairline, icon, radius, space, type } from '../theme/tokens';
+import type { Palette } from '../theme/tokens';
+import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 
 /**
- * Persistent mini-player above the tab bar.
+ * The playing half of the floating dock.
  *
- * Renders nothing when the queue is empty, so the tab bar sits flush at the
- * bottom until there is something to control.
- *
- * Uses the panel surface: this is transport, and the two-zone split assigns
- * transport to the panel regardless of what it sits next to. Panel sits one
- * step above the app floor, so it reads as a distinct piece of hardware
- * rather than another row of the list.
+ * Renders nothing when the queue is empty, so the dock collapses to just the
+ * three nav icons until there is something to control, then grows to hold it.
+ * It draws no background of its own — the dock owns the panel fill and the
+ * radius, and a second background here would show as a square inside a curve.
  */
 export function MiniPlayer() {
+  const color = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const navigation = useNavigation();
   const activeItem = useActiveMediaItem();
   const isPlaying = useIsPlaying();
@@ -77,15 +78,16 @@ export function MiniPlayer() {
   );
 }
 
-const styles = StyleSheet.create({
-  root: { backgroundColor: color.panel },
+const makeStyles = (color: Palette) =>
+  StyleSheet.create({
+  root: {},
   progressTrack: { height: 2, backgroundColor: color.panelLine },
   progressFill: { height: '100%', backgroundColor: color.accent },
 
   body: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: layout.screenPadding,
+    paddingHorizontal: space[3],
     paddingVertical: space[2],
     borderBottomWidth: hairline,
     borderBottomColor: color.panelLine,

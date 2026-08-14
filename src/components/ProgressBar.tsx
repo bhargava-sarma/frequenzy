@@ -3,7 +3,9 @@ import { StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS, useSharedValue } from 'react-native-reanimated';
 
-import { color, layout, radius, space, type } from '../theme/tokens';
+import { layout, radius, space, type } from '../theme/tokens';
+import type { Palette } from '../theme/tokens';
+import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import { formatDuration, formatRemaining } from '../utils/time';
 
 /**
@@ -41,6 +43,8 @@ export function ProgressBar({
   surface = 'panel',
   onSeek,
 }: ProgressBarProps) {
+  const color = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const onPanel = surface === 'panel';
   const total = duration && duration > 0 ? duration : 0;
 
@@ -127,7 +131,7 @@ export function ProgressBar({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (color: Palette) => StyleSheet.create({
   hitArea: { paddingVertical: space[5] - layout.progressHeight, justifyContent: 'center' },
   track: {
     height: layout.progressHeight,

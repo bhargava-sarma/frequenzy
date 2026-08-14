@@ -1,6 +1,8 @@
 import { StyleSheet, Text, View } from 'react-native';
 
-import { color, layout, space, type } from '../theme/tokens';
+import { layout, space, type } from '../theme/tokens';
+import type { Palette } from '../theme/tokens';
+import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 
 /**
  * Section header, per spec 5.2 — label left, count right.
@@ -19,6 +21,8 @@ export interface SectionHeaderProps {
 }
 
 export function SectionHeader({ title, count, surface = 'paper' }: SectionHeaderProps) {
+  const color = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const tone = surface === 'panel' ? color.textInverseSecondary : color.textSecondary;
 
   return (
@@ -29,7 +33,7 @@ export function SectionHeader({ title, count, surface = 'paper' }: SectionHeader
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (color: Palette) => StyleSheet.create({
   root: {
     flexDirection: 'row',
     alignItems: 'center',

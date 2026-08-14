@@ -10,7 +10,7 @@ import { startScrobbler } from './src/player/scrobbler';
 import { SetupScreen } from './src/screens/SetupScreen';
 import { usePlayerStore } from './src/store/usePlayerStore';
 import { useServerStore } from './src/store/useServerStore';
-import { color } from './src/theme/tokens';
+import { ThemeProvider, useTheme, useThemeControls } from './src/theme/ThemeProvider';
 
 /**
  * GestureHandlerRootView must wrap everything, and sit above SafeAreaProvider:
@@ -20,14 +20,20 @@ import { color } from './src/theme/tokens';
 export default function App() {
   return (
     <GestureHandlerRootView style={styles.fill}>
-      <SafeAreaProvider>
-        <AppContent />
-      </SafeAreaProvider>
+      <ThemeProvider>
+        <SafeAreaProvider>
+          <AppContent />
+        </SafeAreaProvider>
+      </ThemeProvider>
     </GestureHandlerRootView>
   );
 }
 
 function AppContent() {
+  const color = useTheme();
+  // The status bar's glyphs are drawn by the OS, so they need telling which
+  // way to contrast — they don't inherit anything from the palette.
+  const { resolved } = useThemeControls();
   const status = useServerStore((state) => state.status);
   const hydrate = useServerStore((state) => state.hydrate);
   const refreshConnection = useServerStore((state) => state.refreshConnection);
@@ -80,15 +86,15 @@ function AppContent() {
 
   if (!fontsLoaded || status === 'hydrating') {
     return (
-      <View style={styles.blank}>
-        <StatusBar style="light" />
+      <View style={[styles.blank, { backgroundColor: color.paper }]}>
+        <StatusBar style={resolved === "dark" ? "light" : "dark"} />
       </View>
     );
   }
 
   return (
     <>
-      <StatusBar style="light" />
+      <StatusBar style={resolved === "dark" ? "light" : "dark"} />
       {status === 'needsSetup' ? <SetupScreen /> : <RootNavigator />}
     </>
   );
@@ -96,5 +102,5 @@ function AppContent() {
 
 const styles = StyleSheet.create({
   fill: { flex: 1 },
-  blank: { flex: 1, backgroundColor: color.paper },
+  blank: { flex: 1 },
 });

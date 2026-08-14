@@ -7,6 +7,7 @@ import { ArtworkWell } from '../components/ArtworkWell';
 import { Button, ButtonRow } from '../components/Button';
 import { IconHeart, IconHeartFilled, IconPlus } from '../components/icons';
 import { ListRow } from '../components/ListRow';
+import { DOCK_CLEARANCE } from '../components/TabBar';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { SectionHeader } from '../components/SectionHeader';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenState';
@@ -17,11 +18,15 @@ import { useLibraryData } from '../hooks/useLibraryData';
 import type { LibraryStackParamList } from '../navigation/types';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { useServerStore } from '../store/useServerStore';
-import { color, icon, layout, space, type } from '../theme/tokens';
+import { icon, layout, space, type } from '../theme/tokens';
+import type { Palette } from '../theme/tokens';
+import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import { formatDuration, pluralize } from '../utils/time';
 
 /** Album detail — artwork, actions, and the track list. */
 export function AlbumScreen() {
+  const color = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const navigation = useNavigation();
   const route = useRoute<RouteProp<LibraryStackParamList, 'Album'>>();
   const insets = useSafeAreaInsets();
@@ -145,9 +150,9 @@ export function AlbumScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (color: Palette) => StyleSheet.create({
   root: { flex: 1, backgroundColor: color.paper },
-  listContent: { paddingBottom: space[6] },
+  listContent: { paddingBottom: DOCK_CLEARANCE },
   emptyContainer: { flexGrow: 1 },
 
   hero: { alignItems: 'center', paddingTop: space[5], paddingHorizontal: layout.screenPadding },

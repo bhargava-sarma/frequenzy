@@ -13,7 +13,9 @@ import { EmptyState } from '../components/ScreenState';
 import { SwipeableRow } from '../components/SwipeableRow';
 import { extrasOf } from '../player/trackMapping';
 import { usePlayerStore } from '../store/usePlayerStore';
-import { color, icon, space } from '../theme/tokens';
+import { icon, space } from '../theme/tokens';
+import type { Palette } from '../theme/tokens';
+import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import { formatDuration, pluralize } from '../utils/time';
 
 /**
@@ -34,6 +36,8 @@ type Row =
   | { kind: 'track'; key: string; item: MediaItem; index: number; removable: boolean };
 
 export function QueueScreen() {
+  const color = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const activeItem = useActiveMediaItem();
@@ -161,7 +165,7 @@ export function QueueScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (color: Palette) => StyleSheet.create({
   root: { flex: 1, backgroundColor: color.paper },
   listContent: { paddingBottom: space[6] },
   emptyContainer: { flexGrow: 1 },

@@ -168,5 +168,14 @@ export interface PlaylistResponse {
   playlist: Playlist & { entry?: Child[] };
 }
 
+/** getStarred2 — everything the account has favourited. */
+export interface Starred2Response {
+  starred2: {
+    artist?: ArtistSummary[];
+    album?: AlbumSummary[];
+    song?: Child[];
+  };
+}
+
 /** ping.view returns only the envelope — no additional payload. */
 export type PingResponse = Record<string, never>;

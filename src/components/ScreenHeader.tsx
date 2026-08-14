@@ -1,6 +1,8 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { color, hairline, icon, layout, space, type } from '../theme/tokens';
+import { hairline, icon, layout, space, type } from '../theme/tokens';
+import type { Palette } from '../theme/tokens';
+import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import { IconChevronRight } from './icons';
 
 /**
@@ -21,6 +23,8 @@ export interface ScreenHeaderProps {
 }
 
 export function ScreenHeader({ title, action, onBack }: ScreenHeaderProps) {
+  const color = useTheme();
+  const styles = useThemedStyles(makeStyles);
   return (
     <View style={styles.root}>
       {onBack && (
@@ -51,7 +55,7 @@ export function ScreenHeader({ title, action, onBack }: ScreenHeaderProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (color: Palette) => StyleSheet.create({
   root: {
     flexDirection: 'row',
     alignItems: 'center',

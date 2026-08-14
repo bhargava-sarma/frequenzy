@@ -19,6 +19,16 @@ export interface ArtistRouteParams {
   artistName?: string;
 }
 
+/**
+ * Reserved id for the favourites view.
+ *
+ * Navidrome exposes starred tracks through getStarred2 rather than as a
+ * playlist, so they never appear in getPlaylists. Rather than build a second
+ * near-identical screen, the playlist screen accepts this sentinel and reads
+ * from the other endpoint. Real playlist ids are UUIDs, so it cannot collide.
+ */
+export const LIKED_PLAYLIST_ID = '__liked__';
+
 export interface PlaylistRouteParams {
   playlistId: string;
   playlistName?: string;
@@ -28,6 +38,7 @@ export type LibraryStackParamList = {
   Artists: undefined;
   Artist: ArtistRouteParams;
   Album: AlbumRouteParams;
+  Playlist: PlaylistRouteParams;
 };
 
 export type SearchStackParamList = {
@@ -40,8 +51,6 @@ export type HomeStackParamList = {
   HomeFeed: undefined;
   Artist: ArtistRouteParams;
   Album: AlbumRouteParams;
-  /** Only reachable from Home, which is the only place playlists are listed. */
-  Playlist: PlaylistRouteParams;
 };
 
 /**
@@ -65,6 +74,8 @@ export type RootStackParamList = {
   NowPlaying: undefined;
   /** Reached from the player, presented over it. */
   Queue: undefined;
+  /** Reached from Home. */
+  Settings: undefined;
   /** Development-only surfaces, not part of the shipped app. */
   Diagnostics: undefined;
   Showcase: undefined;

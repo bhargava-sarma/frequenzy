@@ -30,3 +30,8 @@ export { default as IconSearch } from '@tabler/icons-react-native/IconSearch';
 export { default as IconLibrary } from '@tabler/icons-react-native/IconLibrary';
 export { default as IconPlaylist } from '@tabler/icons-react-native/IconPlaylist';
 export { default as IconChevronRight } from '@tabler/icons-react-native/IconChevronRight';
+export { default as IconSettings } from '@tabler/icons-react-native/IconSettings';
+export { default as IconX } from '@tabler/icons-react-native/IconX';
+export { default as IconMoon } from '@tabler/icons-react-native/IconMoon';
+export { default as IconChevronDown } from '@tabler/icons-react-native/IconChevronDown';
+export { default as IconMicrophone2 } from '@tabler/icons-react-native/IconMicrophone2';

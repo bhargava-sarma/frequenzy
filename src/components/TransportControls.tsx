@@ -1,6 +1,8 @@
 import { Pressable, StyleSheet, View } from 'react-native';
 
-import { color, icon, radius, space } from '../theme/tokens';
+import { icon, radius, space } from '../theme/tokens';
+import type { Palette } from '../theme/tokens';
+import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import {
   IconArrowsShuffle,
   IconPlayerPauseFilled,
@@ -53,6 +55,8 @@ export function TransportControls({
   onToggleShuffle,
   onCycleRepeat,
 }: TransportControlsProps) {
+  const color = useTheme();
+  const styles = useThemedStyles(makeStyles);
   return (
     <View style={styles.root}>
       <SecondaryControl
@@ -135,6 +139,8 @@ function SecondaryControl({
   active?: boolean;
   accessibilityLabel: string;
 }) {
+  const color = useTheme();
+  const styles = useThemedStyles(makeStyles);
   return (
     <Pressable
       accessibilityRole="button"
@@ -154,7 +160,7 @@ function SecondaryControl({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (color: Palette) => StyleSheet.create({
   root: {
     flexDirection: 'row',
     alignItems: 'center',

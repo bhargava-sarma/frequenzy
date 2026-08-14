@@ -8,7 +8,9 @@ import { ListRow } from '../components/ListRow';
 import { ProgressBar } from '../components/ProgressBar';
 import { SectionHeader } from '../components/SectionHeader';
 import { TransportControls, type RepeatMode } from '../components/TransportControls';
-import { color, layout, space, type } from '../theme/tokens';
+import { layout, space, type } from '../theme/tokens';
+import type { Palette } from '../theme/tokens';
+import { useThemedStyles } from '../theme/ThemeProvider';
 import { formatDuration } from '../utils/time';
 
 /**
@@ -29,6 +31,7 @@ const DEMO_ROWS = [
 ];
 
 export function ShowcaseScreen() {
+  const styles = useThemedStyles(makeStyles);
   const insets = useSafeAreaInsets();
   const [playing, setPlaying] = useState(true);
   const [shuffle, setShuffle] = useState(false);
@@ -146,7 +149,7 @@ export function ShowcaseScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (color: Palette) => StyleSheet.create({
   root: { flex: 1, backgroundColor: color.paper },
   content: { paddingBottom: space[6] },
 

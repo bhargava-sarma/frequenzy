@@ -1,7 +1,9 @@
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { Image } from 'expo-image';
 
-import { color, hairline, motion, radius, space, type } from '../theme/tokens';
+import { hairline, motion, radius, space, type } from '../theme/tokens';
+import type { Palette } from '../theme/tokens';
+import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import { IconDisc } from './icons';
 
 /**
@@ -24,6 +26,8 @@ export interface ArtworkWellProps {
 }
 
 export function ArtworkWell({ uri, size, surface = 'panel', style }: ArtworkWellProps) {
+  const color = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const onPanel = surface === 'panel';
   const frame = {
     width: size,
@@ -86,6 +90,8 @@ export function FormatBadge({
   samplingRate,
   surface = 'panel',
 }: FormatBadgeProps) {
+  const color = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const parts: string[] = [];
 
   if (suffix) parts.push(suffix.toUpperCase());
@@ -110,7 +116,7 @@ export function FormatBadge({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (color: Palette) => StyleSheet.create({
   well: {
     borderWidth: hairline,
     alignItems: 'center',

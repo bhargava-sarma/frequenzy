@@ -23,7 +23,10 @@ import type { Child } from '../types/subsonic';
 export interface SubsonicExtras extends Record<string, unknown> {
   subsonicId: string;
   albumId?: string;
+  albumTitle?: string;
   artistId?: string;
+  /** Cover art id, so history entries survive a change of base URL. */
+  coverArt?: string;
   suffix?: string;
   bitDepth?: number;
   samplingRate?: number;
@@ -44,7 +47,9 @@ export async function toMediaItem(
   const extras: SubsonicExtras = {
     subsonicId: song.id,
     albumId: song.albumId,
+    albumTitle: song.album,
     artistId: song.artistId,
+    coverArt: song.coverArt,
     suffix: song.suffix,
     bitDepth: song.bitDepth,
     samplingRate: song.samplingRate,

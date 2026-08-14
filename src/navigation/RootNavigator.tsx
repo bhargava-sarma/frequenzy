@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { NavigationContainer, DefaultTheme, type Theme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -12,8 +13,10 @@ import { NowPlayingScreen } from '../screens/NowPlayingScreen';
 import { PlaylistScreen } from '../screens/PlaylistScreen';
 import { QueueScreen } from '../screens/QueueScreen';
 import { SearchScreen } from '../screens/SearchScreen';
+import { SettingsScreen } from '../screens/SettingsScreen';
 import { ShowcaseScreen } from '../screens/ShowcaseScreen';
-import { color } from '../theme/tokens';
+import type { Palette } from '../theme/tokens';
+import { useTheme, useThemeControls } from '../theme/ThemeProvider';
 import type {
   HomeStackParamList,
   LibraryStackParamList,
@@ -41,19 +44,26 @@ const HomeStack = createNativeStackNavigator<HomeStackParamList>();
 
 const screenOptions = { headerShown: false } as const;
 
-/** Paper is the app's ground; without this, pushes flash white between screens. */
-const navigationTheme: Theme = {
-  ...DefaultTheme,
-  dark: true,
-  colors: {
-    ...DefaultTheme.colors,
-    background: color.paper,
-    card: color.paper,
-    text: color.textPrimary,
-    primary: color.accent,
-    border: color.paperLine,
-  },
-};
+/**
+ * Paper is the app's ground; without this, pushes flash white between screens.
+ *
+ * Rebuilt per palette rather than defined once, since the flash it prevents
+ * would otherwise come back inverted the moment the theme is switched.
+ */
+function buildNavigationTheme(color: Palette, dark: boolean): Theme {
+  return {
+    ...DefaultTheme,
+    dark,
+    colors: {
+      ...DefaultTheme.colors,
+      background: color.paper,
+      card: color.paper,
+      text: color.textPrimary,
+      primary: color.accent,
+      border: color.paperLine,
+    },
+  };
+}
 
 function LibraryNavigator() {
   return (
@@ -61,6 +71,7 @@ function LibraryNavigator() {
       <LibraryStack.Screen name="Artists" component={LibraryScreen} />
       <LibraryStack.Screen name="Artist" component={ArtistScreen} />
       <LibraryStack.Screen name="Album" component={AlbumScreen} />
+      <LibraryStack.Screen name="Playlist" component={PlaylistScreen} />
     </LibraryStack.Navigator>
   );
 }
@@ -81,7 +92,6 @@ function HomeNavigator() {
       <HomeStack.Screen name="HomeFeed" component={HomeScreen} />
       <HomeStack.Screen name="Artist" component={ArtistScreen} />
       <HomeStack.Screen name="Album" component={AlbumScreen} />
-      <HomeStack.Screen name="Playlist" component={PlaylistScreen} />
     </HomeStack.Navigator>
   );
 }
@@ -96,20 +106,49 @@ function TabNavigator() {
   );
 }
 
+/**
+ * How long the player takes to rise and fall.
+ *
+ * The default slide runs ~350ms, which on a sheet this large reads as the
+ * screen labouring into place. The spec's motion section asks for mechanical
+ * rather than cinematic, and 200ms is the difference.
+ */
+const SHEET_DURATION_MS = 200;
+
 export function RootNavigator() {
+  const color = useTheme();
+  const { resolved } = useThemeControls();
+  const theme = useMemo(
+    () => buildNavigationTheme(color, resolved === 'dark'),
+    [color, resolved],
+  );
+
   return (
-    <NavigationContainer theme={navigationTheme}>
+    <NavigationContainer theme={theme}>
       <RootStack.Navigator screenOptions={screenOptions}>
         <RootStack.Screen name="Tabs" component={TabNavigator} />
         <RootStack.Screen
           name="NowPlaying"
           component={NowPlayingScreen}
-          options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+          options={{
+            presentation: 'modal',
+            animation: 'slide_from_bottom',
+            animationDuration: SHEET_DURATION_MS,
+          }}
         />
         <RootStack.Screen
           name="Queue"
           component={QueueScreen}
-          options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+          options={{
+            presentation: 'modal',
+            animation: 'slide_from_bottom',
+            animationDuration: SHEET_DURATION_MS,
+          }}
+        />
+        <RootStack.Screen
+          name="Settings"
+          component={SettingsScreen}
+          options={{ presentation: 'modal', animationDuration: SHEET_DURATION_MS }}
         />
 
         {/* Development surfaces. Reachable only from the diagnostics entry

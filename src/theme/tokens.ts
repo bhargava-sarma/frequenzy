@@ -13,49 +13,42 @@
 // ---------------------------------------------------------------------------
 
 /**
- * Two fixed surfaces, both dark.
+ * Two surfaces, in two palettes.
  *
- * The spec's original palette put the library on light paper and the player on
- * a dark panel, and section 8 rules out a light/dark toggle on the grounds
- * that the two-zone split *is* the design. This app is dark throughout by
- * explicit request, so the split is kept and re-grounded rather than dropped:
- * `paper` is the app floor and `panel` sits a step above it, which is what
- * keeps the mini-player and transport reading as separate hardware instead of
- * dissolving into the list behind them.
+ * `paper` and `panel` are structural roles — the ground a screen sits on, and
+ * the raised surface transport lives on — not descriptions of brightness. That
+ * is what lets one set of components serve both palettes: every screen already
+ * says "I am paper" or "I am panel", so switching theme only swaps values.
  *
- * The names stay `paper` and `panel` because they are structural roles — what
- * a surface is for — not descriptions of their brightness. Every component
- * already reasons in those terms, and renaming them would say the design
- * changed when only the values did.
+ * The light palette is the design spec's original: library on paper, player on
+ * a dark panel. The dark palette re-grounds the same split, with paper as the
+ * app floor and panel a step above it. Note that panel is DARKER than paper in
+ * light mode and LIGHTER in dark mode; in both cases it reads as a distinct
+ * piece of hardware, which is the property that matters.
+ *
+ * The accent is identical in both. One hue, by design.
  */
-export const color = {
+export interface Palette {
   /** App floor: library, lists, nav. */
-  paper: '#121211',
+  paper: string;
   /** Artwork placeholders, inactive fills. */
-  paperDim: '#1F1F1D',
+  paperDim: string;
   /** Hairline borders on the floor. */
-  paperLine: '#2B2B27',
-
-  /** Raised surface: now playing, transport, mini-player. */
-  panel: '#1E1E1B',
-  /** Cards and artwork wells on the raised surface. */
-  panelRaised: '#2C2C29',
-  /** Hairline borders on the raised surface. */
-  panelLine: '#3A3A36',
-
+  paperLine: string;
+  /** The other surface: now playing, transport, mini-player. */
+  panel: string;
+  /** Cards and artwork wells on that surface. */
+  panelRaised: string;
+  /** Hairline borders on that surface. */
+  panelLine: string;
   /** On the floor. */
-  textPrimary: '#EFECE4',
+  textPrimary: string;
   /** On the floor, secondary/meta. */
-  textSecondary: '#8C8B84',
-  /**
-   * On the raised surface. Identical to textPrimary now that both surfaces are
-   * dark — kept as a separate token so components kept their surface-aware
-   * wiring and a future light zone would only need this value changed.
-   */
-  textInverse: '#EFECE4',
-  /** On the raised surface, secondary/meta. */
-  textInverseSecondary: '#8C8B84',
-
+  textSecondary: string;
+  /** On the panel. */
+  textInverse: string;
+  /** On the panel, secondary/meta. */
+  textInverseSecondary: string;
   /**
    * Burnt orange. Progress fill, primary action, active/favorited, selection.
    *
@@ -63,10 +56,49 @@ export const color = {
    * it's being overused, and never more than one accent-filled control on
    * screen at a time.
    */
-  accent: '#E8703A',
+  accent: string;
   /** Text/icon color when placed ON an accent fill. */
-  accentInk: '#1A1A18',
-} as const;
+  accentInk: string;
+}
+
+export const palettes: Record<'light' | 'dark', Palette> = {
+  light: {
+    paper: '#EFECE4',
+    paperDim: '#DCD8CB',
+    paperLine: '#D8D5C9',
+    panel: '#1A1A18',
+    panelRaised: '#2C2C29',
+    panelLine: '#3A3A36',
+    textPrimary: '#1A1A18',
+    textSecondary: '#8C8B84',
+    textInverse: '#EFECE4',
+    textInverseSecondary: '#8C8B84',
+    accent: '#E8703A',
+    accentInk: '#1A1A18',
+  },
+  dark: {
+    paper: '#121211',
+    paperDim: '#1F1F1D',
+    paperLine: '#2B2B27',
+    panel: '#1E1E1B',
+    panelRaised: '#2C2C29',
+    panelLine: '#3A3A36',
+    textPrimary: '#EFECE4',
+    textSecondary: '#8C8B84',
+    textInverse: '#EFECE4',
+    textInverseSecondary: '#8C8B84',
+    accent: '#E8703A',
+    accentInk: '#1A1A18',
+  },
+};
+
+/**
+ * Static fallback for the few places that run outside React — the navigation
+ * theme's initial value, and any module-scope default. Anything rendered
+ * inside the app must read the live palette through useTheme() instead, or it
+ * will not follow the toggle.
+ */
+export const color = palettes.dark;
 
 // ---------------------------------------------------------------------------
 // 2. Typography
@@ -161,8 +193,12 @@ export const layout = {
   stackGap: space[3],
   /** Square thumbnail in a library row. */
   thumbSize: 40,
-  /** Progress bar thickness. */
-  progressHeight: 3,
+  /** Progress bar thickness. Nudged up from 3px so it is easier to grab. */
+  progressHeight: 5,
+  /** Fraction of screen width the Now Playing artwork occupies. */
+  artworkWidthRatio: 0.8,
+  /** Corner radius of the floating dock. */
+  dockRadius: 24,
 } as const;
 
 // ---------------------------------------------------------------------------

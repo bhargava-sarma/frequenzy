@@ -15,7 +15,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ApiError, NoReachableServerError } from '../api/errors';
 import { ConfigError, type ServerConfig } from '../api/config';
 import { useServerStore, verifyServerConfig } from '../store/useServerStore';
-import { color, hairline, layout, radius, space, type } from '../theme/tokens';
+import { hairline, layout, radius, space, type } from '../theme/tokens';
+import type { Palette } from '../theme/tokens';
+import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 
 /**
  * First-launch server setup.
@@ -30,6 +32,8 @@ import { color, hairline, layout, radius, space, type } from '../theme/tokens';
  * that cannot load anything.
  */
 export function SetupScreen() {
+  const color = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const insets = useSafeAreaInsets();
   const saveConfig = useServerStore((state) => state.saveConfig);
 
@@ -186,6 +190,8 @@ interface FieldProps extends React.ComponentProps<typeof TextInput> {
 }
 
 function Field({ label, optional, hint, style, ...inputProps }: FieldProps) {
+  const color = useTheme();
+  const styles = useThemedStyles(makeStyles);
   return (
     <View style={styles.field}>
       <View style={styles.fieldHeader}>
@@ -204,7 +210,7 @@ function Field({ label, optional, hint, style, ...inputProps }: FieldProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (color: Palette) => StyleSheet.create({
   root: { flex: 1, backgroundColor: color.paper },
   // Vertical padding is applied inline from safe-area insets.
   content: { paddingHorizontal: layout.screenPadding },
