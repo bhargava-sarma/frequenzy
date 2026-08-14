@@ -49,35 +49,54 @@ async function buildItems(songs: Child[]) {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/** How often to re-check that a queue change has landed. */
+const CONFIRM_INTERVAL_MS = 25;
+/** Grace period before a replace-style change is assumed lost and re-sent. */
+const REFIRE_AFTER_MS = 750;
+
 /**
- * Applies a queue mutation, retrying until the native controller has bound.
+ * Applies a queue change, then waits for the player to confirm it.
  *
- * setupPlayer starts an asynchronous MediaController connection, and until it
- * completes every command hits a null controller and is silently dropped —
- * the native side is a `mc?.send(...)` null-safe call with no queueing. That
- * is why the very first play used to need two taps: the first set the queue
- * and pressed play into the void, and only the second found a live controller.
+ * Writes and reads do not travel the same path. `addMediaItems` and friends
+ * return void, and React Native dispatches void TurboModule methods onto the
+ * native method-call queue; `getQueue` is a blocking synchronous method, which
+ * runs inline on the JS thread. So a read taken straight after a write sees
+ * the queue as it was *before* the write — every time, not intermittently.
  *
- * Queue reads and writes both dispatch through the same main-thread handler,
- * so they run in order: if `verify` still fails right after a mutation, the
- * controller genuinely wasn't up. The player is initialized at app start, so
- * in practice this succeeds on the first attempt and this loop never spins.
+ * That is why this fires the mutation once and polls only the confirmation.
+ * The earlier version re-ran the mutation on each failed check, so its first
+ * check always failed and one swipe reliably queued a track twice.
+ *
+ * `refire` re-sends once after a grace period, and is only for replace-style
+ * changes: setMediaItems overwrites the queue, so a second send cannot
+ * duplicate anything. It exists because commands issued before the
+ * MediaController has bound are dropped silently by the native module — a
+ * `mc?.send(...)` null-safe call with no queueing — which is what made the
+ * very first play need two taps. Never set it for an append.
  */
-async function applyWhenReady(
+async function applyQueueChange(
   mutate: () => void,
-  verify: () => boolean,
-  timeoutMs = 3000,
+  confirm: () => boolean,
+  { refire = false, timeoutMs = 3000 }: { refire?: boolean; timeoutMs?: number } = {},
 ): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
+  mutate();
+
+  const started = Date.now();
+  let refired = false;
 
   for (;;) {
-    mutate();
-    if (verify()) return;
+    if (confirm()) return;
 
-    if (Date.now() >= deadline) {
-      throw new Error('The player did not become ready in time.');
+    const elapsed = Date.now() - started;
+    if (elapsed >= timeoutMs) {
+      throw new Error('The player did not accept the change in time.');
     }
-    await sleep(50);
+    if (refire && !refired && elapsed >= REFIRE_AFTER_MS) {
+      refired = true;
+      mutate();
+    }
+
+    await sleep(CONFIRM_INTERVAL_MS);
   }
 }
 
@@ -103,9 +122,13 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     // queue is left intact rather than cleared into an empty player.
     const items = await buildItems(songs);
 
-    await applyWhenReady(
+    // A non-empty queue is proof the controller is live, which is all this
+    // needs to establish — play() is dispatched on the same native queue as
+    // setMediaItems, so it cannot overtake it.
+    await applyQueueChange(
       () => TrackPlayer.setMediaItems(items, startIndex),
       () => TrackPlayer.getQueue().length > 0,
+      { refire: true },
     );
 
     TrackPlayer.play();
@@ -120,7 +143,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     const activeIndex = TrackPlayer.getActiveMediaItemIndex();
 
     // With nothing playing there is no "next", so this degrades to an append.
-    await applyWhenReady(
+    await applyQueueChange(
       () =>
         activeIndex == null
           ? TrackPlayer.addMediaItems(items)
@@ -136,7 +159,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     const items = await buildItems(songs);
     const before = TrackPlayer.getQueue().length;
 
-    await applyWhenReady(
+    await applyQueueChange(
       () => TrackPlayer.addMediaItems(items),
       () => TrackPlayer.getQueue().length > before,
     );

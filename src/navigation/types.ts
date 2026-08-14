@@ -19,6 +19,11 @@ export interface ArtistRouteParams {
   artistName?: string;
 }
 
+export interface PlaylistRouteParams {
+  playlistId: string;
+  playlistName?: string;
+}
+
 export type LibraryStackParamList = {
   Artists: undefined;
   Artist: ArtistRouteParams;
@@ -35,6 +40,8 @@ export type HomeStackParamList = {
   HomeFeed: undefined;
   Artist: ArtistRouteParams;
   Album: AlbumRouteParams;
+  /** Only reachable from Home, which is the only place playlists are listed. */
+  Playlist: PlaylistRouteParams;
 };
 
 export type TabParamList = {

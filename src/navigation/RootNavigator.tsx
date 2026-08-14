@@ -9,6 +9,7 @@ import { DiagnosticScreen } from '../screens/DiagnosticScreen';
 import { HomeScreen } from '../screens/HomeScreen';
 import { LibraryScreen } from '../screens/LibraryScreen';
 import { NowPlayingScreen } from '../screens/NowPlayingScreen';
+import { PlaylistScreen } from '../screens/PlaylistScreen';
 import { QueueScreen } from '../screens/QueueScreen';
 import { SearchScreen } from '../screens/SearchScreen';
 import { ShowcaseScreen } from '../screens/ShowcaseScreen';
@@ -79,6 +80,7 @@ function HomeNavigator() {
       <HomeStack.Screen name="HomeFeed" component={HomeScreen} />
       <HomeStack.Screen name="Artist" component={ArtistScreen} />
       <HomeStack.Screen name="Album" component={AlbumScreen} />
+      <HomeStack.Screen name="Playlist" component={PlaylistScreen} />
     </HomeStack.Navigator>
   );
 }

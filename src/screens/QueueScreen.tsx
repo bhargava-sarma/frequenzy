@@ -56,13 +56,11 @@ export function QueueScreen() {
         title="Queue"
         action={
           queue.length > 0 ? (
-            <Button
-              label="Clear"
-              onPress={() => {
-                clearQueue();
-                syncQueue();
-              }}
-            />
+            // No manual resync: reading the queue straight after a write
+            // returns the pre-write state, since the write is dispatched to
+            // the native queue while the read runs inline. QueueChanged
+            // arrives once the change has actually landed.
+            <Button label="Clear" onPress={clearQueue} />
           ) : undefined
         }
       />
@@ -82,10 +80,7 @@ export function QueueScreen() {
             leftSwipe={{
               icon: <IconTrash size={icon.size} color={color.accentInk} strokeWidth={2} />,
               label: 'Remove',
-              onAction: () => {
-                removeFromQueue(index);
-                syncQueue();
-              },
+              onAction: () => removeFromQueue(index),
             }}
           >
             <ListRow

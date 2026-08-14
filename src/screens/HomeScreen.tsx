@@ -36,7 +36,7 @@ export function HomeScreen() {
   const artworkUrl = useArtwork();
 
   const client = useServerStore((state) => state.client);
-  const playNow = usePlayerStore((state) => state.playNow);
+  const addToQueue = usePlayerStore((state) => state.addToQueue);
 
   const { data: albums, loading, error, refresh } = useLibraryData(
     (library, forceRefresh) => library.getAllAlbums({ forceRefresh }),
@@ -91,11 +91,16 @@ export function HomeScreen() {
     return out;
   }, [playlists, albums]);
 
-  async function playPlaylist(playlistId: string) {
+  /**
+   * The row itself opens the playlist; only the trailing action queues it.
+   * Tapping a row and having it start playing gives you no way to look at what
+   * is in a playlist before committing to it.
+   */
+  async function queuePlaylist(playlistId: string) {
     if (!client) return;
     const response = await client.getPlaylist(playlistId);
     const songs = response.playlist.entry ?? [];
-    if (songs.length > 0) await playNow(songs);
+    if (songs.length > 0) await addToQueue(songs);
   }
 
   return (
@@ -142,8 +147,13 @@ export function HomeScreen() {
                   .join(' · ')}
                 artworkUri={artworkUrl(item.value.coverArt)}
                 action="queue"
-                onPress={() => void playPlaylist(item.value.id)}
-                onActionPress={() => void playPlaylist(item.value.id)}
+                onPress={() =>
+                  navigation.navigate('Playlist', {
+                    playlistId: item.value.id,
+                    playlistName: item.value.name,
+                  })
+                }
+                onActionPress={() => void queuePlaylist(item.value.id)}
               />
             );
           }
