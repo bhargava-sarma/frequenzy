@@ -1,9 +1,10 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { LinearTransition } from 'react-native-reanimated';
 
-import { hairline, layout, motion, space, type, withAlpha } from '../theme/tokens';
+import { hairline, layout, motion, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useThemedStyles } from '../theme/ThemeProvider';
+import { Frosted } from './Frosted';
 
 /**
  * Mode switch, in the uppercase label style.
@@ -37,7 +38,9 @@ export function Segmented<T extends string>({
   const onPanel = surface === 'panel';
 
   return (
-    <View style={[styles.root, onPanel && styles.rootPanel]}>
+    // Frosted rather than a flat tint: this is one of the floating surfaces,
+    // and it sits directly over a scrolling list on the library screen.
+    <Frosted surface="panel" style={[styles.root, onPanel && styles.rootPanel]}>
       {options.map((option) => {
         const selected = option.value === value;
         return (
@@ -71,7 +74,7 @@ export function Segmented<T extends string>({
           </Pressable>
         );
       })}
-    </View>
+    </Frosted>
   );
 }
 
@@ -83,8 +86,7 @@ const makeStyles = (color: Palette) =>
       borderWidth: hairline,
       borderColor: color.paperLine,
       borderRadius: layout.dockRadius,
-      backgroundColor: withAlpha(color.panel, layout.floatingOpacity),
-      // Clips the selected fill to the outer radius so the corners stay tight.
+      // Clips the selected fill and the blur to the outer radius.
       overflow: 'hidden',
     },
     segment: {
