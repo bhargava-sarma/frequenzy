@@ -13,9 +13,11 @@ import { ScreenHeader } from '../components/ScreenHeader';
 import { SectionHeader } from '../components/SectionHeader';
 import { EmptyState } from '../components/ScreenState';
 import { SwipeableRow } from '../components/SwipeableRow';
+import { DOCK_CLEARANCE } from '../components/TabBar';
+import { HEAVY_LIST_PROPS, usePagedList } from '../hooks/usePagedList';
 import { extrasOf } from '../player/trackMapping';
 import { usePlayerStore } from '../store/usePlayerStore';
-import { icon, space } from '../theme/tokens';
+import { icon, layout, space } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import { formatDuration, pluralize } from '../utils/time';
@@ -94,6 +96,7 @@ export function QueueScreen() {
     return out;
   }, [queue, activeIndex, priorityCount]);
 
+  const paged = usePagedList(rows);
   const activeId = extrasOf(activeItem)?.subsonicId;
   const totalDuration = queue.reduce((sum, item) => sum + (item.duration ?? 0), 0);
 
@@ -111,7 +114,8 @@ export function QueueScreen() {
       />
 
       <FlatList
-        data={rows}
+        data={paged.visible}
+        {...HEAVY_LIST_PROPS}
         keyExtractor={(row) => row.key}
         ListEmptyComponent={
           <EmptyState
@@ -161,6 +165,11 @@ export function QueueScreen() {
         ListFooterComponent={
           queue.length > 0 ? (
             <View style={styles.footer}>
+              {paged.hasMore && (
+                <View style={styles.loadMore}>
+                  <Button label={`Load ${paged.nextCount} more`} fullWidth onPress={paged.loadMore} />
+                </View>
+              )}
               <EmptyState
                 label={`${pluralize(queue.length, 'track')} · ${formatDuration(totalDuration)}`}
               />
@@ -176,5 +185,6 @@ const makeStyles = (color: Palette) => StyleSheet.create({
   root: { flex: 1, backgroundColor: color.paper },
   listContent: { paddingBottom: space[6] },
   emptyContainer: { flexGrow: 1 },
-  footer: { height: 80 },
+  footer: { paddingBottom: DOCK_CLEARANCE },
+  loadMore: { paddingHorizontal: layout.screenPadding, paddingTop: space[5] },
 });

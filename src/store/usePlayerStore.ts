@@ -66,6 +66,14 @@ interface PlayerStore {
   setShuffled: (shuffled: boolean) => Promise<void>;
   /** Inserts at the front of the hand-picked region — plays next. */
   playNext: (songs: Child[]) => Promise<void>;
+  /**
+   * Plays one track immediately without disturbing the rest of the queue.
+   *
+   * For picking a single track out of search or a list: replacing the queue
+   * there threw away whatever was already lined up, which is never what
+   * tapping one result means.
+   */
+  playTrackNow: (song: Child) => Promise<void>;
   /** Inserts at the end of the hand-picked region. */
   addToQueue: (songs: Child[]) => Promise<void>;
 
@@ -248,36 +256,67 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
     },
 
     setShuffled: async (next) => {
-      if (source.length === 0) {
-        set({ shuffled: next });
+      set({ shuffled: next });
+
+      if (source.length === 0) return;
+
+      const activeIndex = TrackPlayer.getActiveMediaItemIndex();
+      const currentId = TrackPlayer.getActiveMediaItem()?.mediaId;
+      if (activeIndex == null) return;
+
+      /**
+       * Only what comes after the current track is rebuilt.
+       *
+       * Replacing the whole queue reloaded the playing item, which stopped the
+       * music and reset it to zero every time shuffle was toggled. Removing
+       * and re-adding just the tail leaves the active item untouched, so
+       * playback carries on through the reorder without noticing.
+       */
+      const rest = source.filter((song) => song.id !== currentId);
+      const tail = next ? shuffleList(rest) : rest;
+      if (tail.length === 0) return;
+
+      const items = await buildItems(tail);
+      const queueLength = TrackPlayer.getQueue().length;
+
+      await applyQueueChange(
+        () => {
+          if (queueLength > activeIndex + 1) {
+            TrackPlayer.removeMediaItems(activeIndex + 1, queueLength);
+          }
+          TrackPlayer.addMediaItems(items);
+        },
+        () => TrackPlayer.getQueue().length === activeIndex + 1 + items.length,
+      );
+
+      lastActiveIndex = activeIndex;
+      // The hand-picked region was part of the tail that just got rebuilt.
+      set({ priorityCount: 0 });
+    },
+
+    playTrackNow: async (song) => {
+      get().init();
+
+      const activeIndex = TrackPlayer.getActiveMediaItemIndex();
+      if (activeIndex == null) {
+        await get().playNow([song]);
         return;
       }
 
-      const activeIndex = TrackPlayer.getActiveMediaItemIndex();
-      const current = TrackPlayer.getActiveMediaItem();
-      const currentId = current?.mediaId;
+      const items = await buildItems([song]);
+      const before = TrackPlayer.getQueue().length;
+      const insertAt = activeIndex + 1;
 
-      // Keep playing what's playing. Rebuilding the queue around the current
-      // track means shuffle never interrupts the song you are listening to.
-      const rest = source.filter((song) => song.id !== currentId);
-      const ordered = next ? shuffleList(rest) : rest;
-
-      const currentSong = source.find((song) => song.id === currentId);
-      const queue = currentSong ? [currentSong, ...ordered] : ordered;
-
-      set({ shuffled: next });
-
-      if (queue.length === 0 || activeIndex == null) return;
-
-      const items = await buildItems(queue);
       await applyQueueChange(
-        () => TrackPlayer.setMediaItems(items, 0),
-        () => TrackPlayer.getQueue().length > 0,
-        { refire: true },
+        () => TrackPlayer.insertMediaItems(insertAt, items),
+        () => TrackPlayer.getQueue().length > before,
       );
 
-      lastActiveIndex = 0;
-      set({ priorityCount: 0 });
+      // Skipping into it moves the active index forward, and the hand-picked
+      // region shifts with it rather than being consumed.
+      TrackPlayer.skipToIndex(insertAt);
+      TrackPlayer.play();
+      lastActiveIndex = insertAt;
     },
 
     playNext: async (songs) => {

@@ -16,6 +16,7 @@ import { EmptyState, ErrorState, LoadingState } from '../components/ScreenState'
 import { SwipeableRow } from '../components/SwipeableRow';
 import { extrasOf } from '../player/trackMapping';
 import { useArtwork } from '../hooks/useArtwork';
+import { HEAVY_LIST_PROPS, usePagedList } from '../hooks/usePagedList';
 import { LIKED_PLAYLIST_ID, type LibraryStackParamList } from '../navigation/types';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { useServerStore } from '../store/useServerStore';
@@ -109,6 +110,7 @@ export function PlaylistScreen() {
     };
   }, [client, playlistId, isLiked, reloadToken]);
 
+  const paged = usePagedList(songs);
   const title = playlist?.name ?? playlistName ?? 'Playlist';
   const totalDuration =
     playlist?.duration ?? songs.reduce((sum, song) => sum + (song.duration ?? 0), 0);
@@ -128,7 +130,8 @@ export function PlaylistScreen() {
       <ScreenHeader title={title} onBack={() => navigation.goBack()} />
 
       <FlatList
-        data={songs}
+        data={paged.visible}
+        {...HEAVY_LIST_PROPS}
         keyExtractor={(song, index) => `${song.id}-${index}`}
         ListHeaderComponent={
           playlist ? (
@@ -180,6 +183,17 @@ export function PlaylistScreen() {
           )
         }
         contentContainerStyle={songs.length ? styles.listContent : styles.emptyContainer}
+        ListFooterComponent={
+          paged.hasMore ? (
+            <View style={styles.loadMore}>
+              <Button
+                label={`Load ${paged.nextCount} more`}
+                fullWidth
+                onPress={paged.loadMore}
+              />
+            </View>
+          ) : null
+        }
         renderItem={({ item, index }) => (
           <SwipeableRow
             rightSwipe={{
@@ -206,7 +220,7 @@ export function PlaylistScreen() {
               action="favorite"
               favorited={Boolean(item.starred)}
               active={item.id === activeId}
-              last={index === songs.length - 1}
+              last={index === paged.visible.length - 1}
               // Starting mid-playlist queues the rest of it from that point.
               onPress={() => void playNow(songs, index)}
               onActionPress={() => void toggleStar(item.id, Boolean(item.starred))}
@@ -221,6 +235,7 @@ export function PlaylistScreen() {
 const makeStyles = (color: Palette) => StyleSheet.create({
   root: { flex: 1, backgroundColor: color.paper },
   listContent: { paddingBottom: DOCK_CLEARANCE },
+  loadMore: { paddingHorizontal: layout.screenPadding, paddingTop: space[5] },
   emptyContainer: { flexGrow: 1 },
 
   hero: { alignItems: 'center', paddingTop: space[5], paddingHorizontal: layout.screenPadding },

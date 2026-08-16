@@ -132,9 +132,11 @@ export function SwipeableRow({
    */
   const rightRevealStyle = useAnimatedStyle(() => ({
     width: Math.max(0, translateX.value),
+    opacity: translateX.value > 0 ? 1 : 0,
   }));
   const leftRevealStyle = useAnimatedStyle(() => ({
     width: Math.max(0, -translateX.value),
+    opacity: translateX.value < 0 ? 1 : 0,
   }));
 
   return (
@@ -194,6 +196,16 @@ const makeStyles = (color: Palette) => StyleSheet.create({
     // Clipped so the label and icon disappear with the strip rather than
     // spilling past its edge as it narrows.
     overflow: 'hidden',
+    /**
+     * Zero here as well as in the animated style.
+     *
+     * An absolutely positioned box with only one horizontal edge pinned takes
+     * its content's width, so on any frame before the animated style lands it
+     * drew as a full accent chip behind every row at rest. The opacity is the
+     * same belt-and-braces: at rest neither reveal should be able to paint.
+     */
+    width: 0,
+    opacity: 0,
   },
   revealLeft: { left: 0, alignItems: 'flex-start' },
   revealRight: { right: 0, alignItems: 'flex-end' },

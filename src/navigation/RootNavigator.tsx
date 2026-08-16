@@ -105,16 +105,17 @@ function HomeNavigator() {
 }
 
 /**
- * Tabs cross-fade instead of cutting.
+ * Tabs shift rather than cutting.
  *
  * Switching tabs was the one navigation in the app with no transition at all,
- * which made it the one that felt like a page reload. A fade at the same
- * duration as everything else makes the three tabs read as one surface
- * changing rather than three screens being swapped.
+ * which made it the one that felt like a page reload. `shift` moves the
+ * outgoing and incoming screens laterally; `fade` was tried first and left a
+ * tab sitting at zero opacity when a modal was dismissed back over it, which
+ * showed as a black screen.
  */
 const tabScreenOptions = {
   ...screenOptions,
-  animation: 'fade' as const,
+  animation: 'shift' as const,
   transitionSpec: {
     animation: 'timing' as const,
     config: { duration: motion.durationBase },

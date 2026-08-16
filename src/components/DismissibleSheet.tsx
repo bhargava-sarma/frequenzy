@@ -48,6 +48,17 @@ export function DismissibleSheet({ onDismiss, children, style }: DismissibleShee
       // Either far enough or fast enough — a quick flick should not have to
       // cover the same distance as a slow drag.
       if (dragY.value > DISMISS_DISTANCE || event.velocityY > DISMISS_VELOCITY) {
+        /**
+         * Snap back to rest *before* leaving, and let the navigator play its
+         * own slide-down from there.
+         *
+         * Leaving the sheet translated meant the screen stayed pushed down
+         * while the navigator dismissed it, showing the empty ground above it
+         * as a black band — and the offset was still applied the next time the
+         * screen mounted. Handing a screen back in the position the navigator
+         * expects avoids both.
+         */
+        dragY.value = 0;
         runOnJS(onDismiss)();
         return;
       }

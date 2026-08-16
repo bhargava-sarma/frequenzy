@@ -3,8 +3,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { StackActions } from '@react-navigation/native';
 
+import { Frosted } from './Frosted';
 import { MiniPlayer } from './MiniPlayer';
-import { hairline, icon, layout, space, withAlpha } from '../theme/tokens';
+import { hairline, icon, layout, space } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import { emitSearchRequested } from '../utils/tabEvents';
@@ -55,7 +56,7 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
       // scrollable rather than being swallowed by a full-width container.
       pointerEvents="box-none"
     >
-      <View style={styles.dock}>
+      <Frosted style={styles.dock}>
         <MiniPlayer />
 
         <View style={styles.bar}>
@@ -110,7 +111,7 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
             );
           })}
         </View>
-      </View>
+      </Frosted>
     </View>
   );
 }
@@ -123,7 +124,7 @@ const makeStyles = (color: Palette) =>
       right: DOCK_MARGIN,
     },
     dock: {
-      backgroundColor: withAlpha(color.panel, layout.floatingOpacity),
+      // Fill comes from Frosted, which picks blur or a tint per build.
       borderRadius: layout.dockRadius,
       borderWidth: hairline,
       borderColor: color.panelLine,

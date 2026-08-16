@@ -15,6 +15,7 @@ import { EmptyState, ErrorState, LoadingState } from '../components/ScreenState'
 import { SwipeableRow } from '../components/SwipeableRow';
 import { extrasOf } from '../player/trackMapping';
 import { useArtwork } from '../hooks/useArtwork';
+import { HEAVY_LIST_PROPS } from '../hooks/usePagedList';
 import { useLibraryData } from '../hooks/useLibraryData';
 import type { LibraryStackParamList } from '../navigation/types';
 import { usePlayerStore } from '../store/usePlayerStore';
@@ -71,6 +72,7 @@ export function AlbumScreen() {
 
       <FlatList
         data={songs}
+        {...HEAVY_LIST_PROPS}
         keyExtractor={(song) => song.id}
         ListHeaderComponent={
           album ? (

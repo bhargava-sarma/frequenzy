@@ -8,16 +8,19 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { AmbientBackground } from '../components/AmbientBackground';
 import { Button } from '../components/Button';
 import { ListRow } from '../components/ListRow';
+import { SectionHeader } from '../components/SectionHeader';
 import { Segmented } from '../components/Segmented';
+import { Frosted } from '../components/Frosted';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenState';
 import { DOCK_CLEARANCE } from '../components/TabBar';
 import { SwipeableRow } from '../components/SwipeableRow';
 import { IconHeart, IconHeartFilled, IconPlus, IconX } from '../components/icons';
+import { clearRecentSearches, getRecentSearches, recordSearch } from '../data/recentSearches';
 import { useArtwork } from '../hooks/useArtwork';
 import type { SearchStackParamList } from '../navigation/types';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { useServerStore } from '../store/useServerStore';
-import { hairline, icon, layout, motion, space, type, withAlpha } from '../theme/tokens';
+import { hairline, icon, layout, motion, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import type { AlbumSummary, ArtistSummary, Child } from '../types/subsonic';
@@ -65,7 +68,7 @@ export function SearchScreen() {
   const artworkUrl = useArtwork();
 
   const client = useServerStore((state) => state.client);
-  const playNow = usePlayerStore((state) => state.playNow);
+  const playTrackNow = usePlayerStore((state) => state.playTrackNow);
   const addToQueue = usePlayerStore((state) => state.addToQueue);
 
   const inputRef = useRef<TextInput>(null);
@@ -83,6 +86,11 @@ export function SearchScreen() {
   } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [recent, setRecent] = useState<string[]>([]);
+
+  useEffect(() => {
+    void getRecentSearches().then(setRecent);
+  }, []);
 
   useEffect(() => {
     const trimmed = query.trim();
@@ -115,6 +123,9 @@ export function SearchScreen() {
             songs: response.searchResult3.song ?? [],
           });
           setError(null);
+          // Recorded on a result rather than on a keystroke, so the history
+          // holds queries that actually went somewhere.
+          void recordSearch(trimmed).then(setRecent);
         })
         .catch((err: unknown) => {
           if (!cancelled) setError(err instanceof Error ? err.message : String(err));
@@ -186,7 +197,7 @@ export function SearchScreen() {
       {/* Field and scopes share one card, the way the dock joins the
           mini-player to the nav — they are one control for one job. */}
       <View style={styles.searchBar}>
-        <View style={styles.card}>
+        <Frosted style={styles.card}>
           <View style={styles.inputWrap}>
             <TextInput
               ref={inputRef}
@@ -222,7 +233,7 @@ export function SearchScreen() {
           <View style={styles.scopes}>
             <Segmented options={SCOPES} value={scope} onChange={switchScope} surface="panel" />
           </View>
-        </View>
+        </Frosted>
       </View>
 
       {/* Keyed on the scope so switching tabs crossfades the results. */}
@@ -240,6 +251,26 @@ export function SearchScreen() {
             <LoadingState label="Searching" />
           ) : hasQuery ? (
             <EmptyState label="No results" hint={`Nothing matched "${query.trim()}".`} />
+          ) : recent.length > 0 ? (
+            <View>
+              <SectionHeader
+                title="Recent"
+                count={recent.length > 1 ? 'Clear' : undefined}
+                onCountPress={() => {
+                  void clearRecentSearches();
+                  setRecent([]);
+                }}
+              />
+              {recent.map((entry, index) => (
+                <ListRow
+                  key={entry}
+                  title={entry}
+                  showArtwork={false}
+                  last={index === recent.length - 1}
+                  onPress={() => setQuery(entry)}
+                />
+              ))}
+            </View>
           ) : (
             <EmptyState label="Search your library" />
           )
@@ -315,7 +346,8 @@ export function SearchScreen() {
                 artworkUri={artworkUrl(song.coverArt)}
                 action="queue"
                 last={index === shown.length - 1}
-                onPress={() => void playNow([song])}
+                // Plays this one without discarding whatever is queued.
+                onPress={() => void playTrackNow(song)}
                 // The trailing action queues rather than plays, matching the
                 // icon and matching what it does everywhere else.
                 onActionPress={() => void addToQueue([song])}
@@ -336,7 +368,6 @@ const makeStyles = (color: Palette) =>
 
     searchBar: { paddingHorizontal: layout.screenPadding, paddingBottom: space[4] },
     card: {
-      backgroundColor: withAlpha(color.panel, layout.floatingOpacity),
       borderRadius: layout.dockRadius,
       borderWidth: hairline,
       borderColor: color.panelLine,
@@ -368,5 +399,5 @@ const makeStyles = (color: Palette) =>
       paddingBottom: DOCK_CLEARANCE,
     },
     listEnd: { height: DOCK_CLEARANCE },
-    emptyContainer: { flexGrow: 1 },
+    emptyContainer: { flexGrow: 1, paddingBottom: DOCK_CLEARANCE },
   });

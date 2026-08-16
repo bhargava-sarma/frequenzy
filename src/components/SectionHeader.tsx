@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { layout, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
@@ -18,9 +18,16 @@ export interface SectionHeaderProps {
   /** Right-aligned count, e.g. "128 albums". Rendered uppercase. */
   count?: string;
   surface?: 'paper' | 'panel';
+  /** Makes the count a control — used where it reads as an action. */
+  onCountPress?: () => void;
 }
 
-export function SectionHeader({ title, count, surface = 'paper' }: SectionHeaderProps) {
+export function SectionHeader({
+  title,
+  count,
+  surface = 'paper',
+  onCountPress,
+}: SectionHeaderProps) {
   const color = useTheme();
   const styles = useThemedStyles(makeStyles);
   const tone = surface === 'panel' ? color.textInverseSecondary : color.textSecondary;
@@ -28,7 +35,14 @@ export function SectionHeader({ title, count, surface = 'paper' }: SectionHeader
   return (
     <View style={styles.root}>
       <Text style={[styles.label, { color: tone }]}>{title}</Text>
-      {count != null && <Text style={[styles.label, { color: tone }]}>{count}</Text>}
+      {count != null &&
+        (onCountPress ? (
+          <Pressable accessibilityRole="button" hitSlop={space[3]} onPress={onCountPress}>
+            <Text style={[styles.label, { color: tone }]}>{count}</Text>
+          </Pressable>
+        ) : (
+          <Text style={[styles.label, { color: tone }]}>{count}</Text>
+        ))}
     </View>
   );
 }
