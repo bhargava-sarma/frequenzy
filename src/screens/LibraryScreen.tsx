@@ -5,6 +5,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { AlbumTile } from '../components/AlbumTile';
+import { AmbientBackground } from '../components/AmbientBackground';
 import { Button } from '../components/Button';
 import { ListRow } from '../components/ListRow';
 import { ScreenHeader } from '../components/ScreenHeader';
@@ -34,12 +35,12 @@ import { formatDuration, pluralize } from '../utils/time';
  * there is no reason to build rows nobody has scrolled to.
  */
 
-type Mode = 'artists' | 'albums' | 'playlists';
+type Mode = 'playlists' | 'albums' | 'artists';
 
 const MODES = [
-  { value: 'artists' as const, label: 'Artists' },
+  { value: 'playlists' as const, label: 'Playlists' },
   { value: 'albums' as const, label: 'Albums' },
-  { value: 'playlists' as const, label: 'Lists' },
+  { value: 'artists' as const, label: 'Artists' },
 ];
 
 const GRID_COLUMNS = 2;
@@ -58,7 +59,7 @@ export function LibraryScreen() {
   const { width } = useWindowDimensions();
 
   const client = useServerStore((state) => state.client);
-  const [mode, setMode] = useState<Mode>('artists');
+  const [mode, setMode] = useState<Mode>('playlists');
   const [visible, setVisible] = useState(FIRST_PAGE);
 
   /**
@@ -69,9 +70,9 @@ export function LibraryScreen() {
    * not open isn't worth it; paying it once, on the visit that needs it, is.
    */
   const [requested, setRequested] = useState<Record<Mode, boolean>>({
-    artists: true,
+    playlists: true,
     albums: false,
-    playlists: false,
+    artists: false,
   });
 
   const tileSize = Math.floor(
@@ -79,8 +80,9 @@ export function LibraryScreen() {
   );
 
   const artists = useLibraryData(
-    (library, forceRefresh) => library.getArtists({ forceRefresh }),
-    [],
+    (library, forceRefresh) =>
+      requested.artists ? library.getArtists({ forceRefresh }) : Promise.resolve([]),
+    [requested.artists],
   );
   const albums = useLibraryData(
     (library, forceRefresh) =>
@@ -95,14 +97,25 @@ export function LibraryScreen() {
 
   const loadPlaylists = useCallback(() => {
     if (!client) return;
-    void client
-      .getPlaylists()
-      .then((response) => {
-        // Favourites are not a playlist on the server — Navidrome keeps them
-        // behind getStarred2 — so they're prepended here rather than being
-        // absent from the one screen you'd look for them on.
-        const liked: Playlist = { id: LIKED_PLAYLIST_ID, name: 'Liked songs' };
-        setPlaylists([liked, ...(response.playlists.playlist ?? [])]);
+
+    // Favourites are not a playlist on the server — Navidrome keeps them behind
+    // getStarred2 — so they are fetched alongside and prepended. Reading the
+    // starred list here rather than synthesising a bare row is what gives the
+    // entry a count, a duration and a cover like every other row has.
+    void Promise.all([client.getPlaylists(), client.getStarred2()])
+      .then(([lists, starred]) => {
+        const songs = starred.starred2.song ?? [];
+        const liked: Playlist = {
+          id: LIKED_PLAYLIST_ID,
+          name: 'Liked songs',
+          songCount: songs.length,
+          duration: songs.reduce((sum, song) => sum + (song.duration ?? 0), 0),
+          // Borrows the newest favourite's cover, since the set has none of
+          // its own. Better a real cover than a permanent placeholder.
+          coverArt: songs[0]?.coverArt,
+        };
+
+        setPlaylists([liked, ...(lists.playlists.playlist ?? [])]);
         setPlaylistError(null);
       })
       .catch((cause: unknown) => {
@@ -147,12 +160,6 @@ export function LibraryScreen() {
   const shownAlbums = useMemo(() => (albums.data ?? []).slice(0, visible), [albums.data, visible]);
   const shownPlaylists = useMemo(() => (playlists ?? []).slice(0, visible), [playlists, visible]);
 
-  const header = (
-    <View style={styles.switch}>
-      <Segmented options={MODES} value={mode} onChange={switchMode} />
-    </View>
-  );
-
   const footer =
     visible < total ? (
       <View style={styles.loadMore}>
@@ -182,9 +189,21 @@ export function LibraryScreen() {
     />
   );
 
+  /**
+   * The switch lives outside the list rather than in its header.
+   *
+   * Inside, it inherited whichever contentContainerStyle the active mode used
+   * — and the album grid adds horizontal padding the row lists don't — so the
+   * tabs visibly changed width every time you switched. Out here its geometry
+   * is the screen's, which is fixed.
+   */
   const shell = (children: React.ReactNode) => (
     <View style={[styles.root, { paddingTop: insets.top }]}>
+      <AmbientBackground intensity={0.5} />
       <ScreenHeader title="Library" />
+      <View style={styles.switch}>
+        <Segmented options={MODES} value={mode} onChange={switchMode} />
+      </View>
       {children}
     </View>
   );
@@ -198,7 +217,6 @@ export function LibraryScreen() {
         key="albums"
         numColumns={GRID_COLUMNS}
         keyExtractor={(album) => album.id}
-        ListHeaderComponent={header}
         ListEmptyComponent={renderEmpty}
         ListFooterComponent={footer}
         columnWrapperStyle={styles.column}
@@ -225,7 +243,6 @@ export function LibraryScreen() {
         data={shownPlaylists}
         key="playlists"
         keyExtractor={(playlist) => playlist.id}
-        ListHeaderComponent={header}
         ListEmptyComponent={renderEmpty}
         ListFooterComponent={footer}
         contentContainerStyle={shownPlaylists.length ? styles.listContent : styles.emptyContainer}
@@ -258,7 +275,6 @@ export function LibraryScreen() {
       data={shownArtists}
       key="artists"
       keyExtractor={(artist) => artist.id}
-      ListHeaderComponent={header}
       ListEmptyComponent={renderEmpty}
       ListFooterComponent={footer}
       contentContainerStyle={shownArtists.length ? styles.listContent : styles.emptyContainer}

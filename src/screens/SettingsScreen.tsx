@@ -3,6 +3,7 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 
+import { AmbientBackground } from '../components/AmbientBackground';
 import { Button } from '../components/Button';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { SectionHeader } from '../components/SectionHeader';
@@ -60,6 +61,8 @@ export function SettingsScreen() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
+      <AmbientBackground intensity={0.5} />
+
       <ScreenHeader title="Settings" onBack={() => navigation.goBack()} />
 
       <ScrollView contentContainerStyle={styles.content}>

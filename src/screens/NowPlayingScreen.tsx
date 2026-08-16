@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, {
+  Easing,
+  cancelAnimation,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import TrackPlayer, {
@@ -25,7 +35,7 @@ import {
 } from '../components/icons';
 import { extrasOf } from '../player/trackMapping';
 import { useServerStore } from '../store/useServerStore';
-import { icon, layout, space, type } from '../theme/tokens';
+import { hairline, icon, layout, motion, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 
@@ -45,6 +55,15 @@ import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
  * you actually want to go from a track you're listening to, and making you
  * back out and search for them was the long way round.
  */
+/** How far the sheet must travel before releasing dismisses it. */
+const DISMISS_DISTANCE = 120;
+/** ...or how fast it must be moving, for a flick. */
+const DISMISS_VELOCITY = 800;
+
+/** Peak of the artwork swell, and how long one breath takes. */
+const BREATH_SCALE = 1.015;
+const BREATH_PERIOD_MS = 2600;
+
 export function NowPlayingScreen() {
   const color = useTheme();
   const styles = useThemedStyles(makeStyles);
@@ -86,6 +105,43 @@ export function NowPlayingScreen() {
   const isStarred = starred ?? extras?.starred ?? false;
 
   const artSize = Math.round(width * layout.artworkWidthRatio);
+
+  /**
+   * Drag the sheet down to dismiss.
+   *
+   * The native stack has no swipe-to-dismiss for modals on Android, so the
+   * only way off this screen was the chevron. This moves the whole screen with
+   * the finger and hands back to the navigator once it has travelled far
+   * enough, which is the gesture every other player has.
+   */
+  const dragY = useSharedValue(0);
+
+  const dismiss = useCallback(() => navigation.goBack(), [navigation]);
+
+  const swipeDown = Gesture.Pan()
+    // Vertical only, and only downward: an upward drag should do nothing
+    // rather than lift the screen off its own top edge.
+    .activeOffsetY(24)
+    .failOffsetX([-20, 20])
+    .onUpdate((event) => {
+      dragY.value = Math.max(0, event.translationY);
+    })
+    .onEnd((event) => {
+      // Either far enough or fast enough — a quick flick should not have to
+      // cover the same distance as a slow drag.
+      if (dragY.value > DISMISS_DISTANCE || event.velocityY > DISMISS_VELOCITY) {
+        runOnJS(dismiss)();
+        return;
+      }
+      dragY.value = withTiming(0, {
+        duration: motion.durationBase,
+        easing: Easing.bezier(...motion.easing),
+      });
+    });
+
+  const sheetStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: dragY.value }],
+  }));
 
   if (!activeItem) {
     return (
@@ -134,151 +190,205 @@ export function NowPlayingScreen() {
   }
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top }]}>
-      {/* Behind everything, tinted by the current cover. */}
-      <AmbientBackground />
+    <GestureDetector gesture={swipeDown}>
+      <Animated.View style={[styles.root, { paddingTop: insets.top }, sheetStyle]}>
+        {/* Behind everything, tinted by the current cover. */}
+        <AmbientBackground />
 
-      <Header
-        onClose={() => navigation.goBack()}
-        onSleepTimer={() => setTimerOpen(true)}
-        timerActive={sleepRemaining != null}
-      />
-
-      {/* Absorbs the slack; everything below keeps its natural height. */}
-      <View style={styles.artArea}>
-        <ArtworkWell
-          uri={typeof activeItem.artworkUrl === 'string' ? activeItem.artworkUrl : undefined}
-          size={artSize}
-          surface="panel"
+        <Header
+          onClose={() => navigation.goBack()}
+          onSleepTimer={() => setTimerOpen(true)}
+          timerActive={sleepRemaining != null}
         />
-      </View>
 
-      <View style={[styles.controls, { paddingBottom: insets.bottom + space[3] }]}>
-        <View style={styles.meta}>
-          <View style={styles.metaText}>
-            <Pressable
-              accessibilityRole="link"
-              accessibilityLabel={`Open album ${extras?.albumTitle ?? ''}`}
-              disabled={!extras?.albumId}
-              onPress={openAlbum}
-              style={({ pressed }) => (pressed ? styles.pressed : null)}
-            >
-              <Text style={styles.title} numberOfLines={2}>
-                {activeItem.title ?? 'Unknown title'}
-              </Text>
-            </Pressable>
+        {/* Absorbs the slack; everything below keeps its natural height. */}
+        <View style={styles.artArea}>
+          <BreathingArtwork
+            uri={typeof activeItem.artworkUrl === 'string' ? activeItem.artworkUrl : undefined}
+            size={artSize}
+            playing={isPlaying}
+          />
+        </View>
+
+        <View style={[styles.controls, { paddingBottom: insets.bottom + space[3] }]}>
+          <View style={styles.meta}>
+            <View style={styles.metaText}>
+              <Pressable
+                accessibilityRole="link"
+                accessibilityLabel={`Open album ${extras?.albumTitle ?? ''}`}
+                disabled={!extras?.albumId}
+                onPress={openAlbum}
+                style={({ pressed }) => (pressed ? styles.pressed : null)}
+              >
+                <Text style={styles.title} numberOfLines={2}>
+                  {activeItem.title ?? 'Unknown title'}
+                </Text>
+              </Pressable>
+
+              <Pressable
+                accessibilityRole="link"
+                accessibilityLabel={`Open artist ${activeItem.artist ?? ''}`}
+                disabled={!extras?.artistId}
+                onPress={openArtist}
+                style={({ pressed }) => (pressed ? styles.pressed : null)}
+              >
+                <Text style={styles.artist} numberOfLines={1}>
+                  {activeItem.artist ?? 'Unknown artist'}
+                </Text>
+              </Pressable>
+            </View>
 
             <Pressable
-              accessibilityRole="link"
-              accessibilityLabel={`Open artist ${activeItem.artist ?? ''}`}
-              disabled={!extras?.artistId}
-              onPress={openArtist}
-              style={({ pressed }) => (pressed ? styles.pressed : null)}
+              accessibilityRole="button"
+              accessibilityLabel={isStarred ? 'Remove favourite' : 'Favourite'}
+              hitSlop={space[3]}
+              onPress={() => void toggleStar()}
+              style={({ pressed }) => [styles.heart, pressed && styles.pressed]}
             >
-              <Text style={styles.artist} numberOfLines={1}>
-                {activeItem.artist ?? 'Unknown artist'}
-              </Text>
+              {isStarred ? (
+                <IconHeartFilled size={icon.size} color={color.accent} />
+              ) : (
+                <IconHeart
+                  size={icon.size}
+                  strokeWidth={icon.strokeWidth}
+                  color={color.textInverseSecondary}
+                />
+              )}
             </Pressable>
           </View>
 
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={isStarred ? 'Remove favourite' : 'Favourite'}
-            hitSlop={space[3]}
-            onPress={() => void toggleStar()}
-            style={({ pressed }) => [styles.heart, pressed && styles.pressed]}
-          >
-            {isStarred ? (
-              <IconHeartFilled size={icon.size} color={color.accent} />
-            ) : (
-              <IconHeart
-                size={icon.size}
-                strokeWidth={icon.strokeWidth}
-                color={color.textInverseSecondary}
-              />
-            )}
-          </Pressable>
-        </View>
-
-        {/* The format readout sits between the title and the bar. It is a
+          {/* The format readout sits between the title and the bar. It is a
             property of the track, so it belongs with the track's name rather
             than up in the chrome where it read as a screen title. */}
-        <View style={styles.badgeRow}>
-          <FormatBadge
-            suffix={extras?.suffix}
-            bitDepth={extras?.bitDepth}
-            samplingRate={extras?.samplingRate}
-          />
-        </View>
-
-        <View style={styles.progress}>
-          <ProgressBar
-            position={progress.position}
-            duration={progress.duration || activeItem.duration}
-            surface="panel"
-            onSeek={(seconds) => TrackPlayer.seekTo(seconds)}
-          />
-        </View>
-
-        <TransportControls
-          playing={isPlaying}
-          shuffle={shuffle}
-          repeat={repeat === RepeatMode.One ? 'one' : repeat === RepeatMode.All ? 'all' : 'off'}
-          onPlayPause={() => (isPlaying ? TrackPlayer.pause() : TrackPlayer.play())}
-          onPrevious={() => TrackPlayer.skipToPrevious()}
-          onNext={() => TrackPlayer.skipToNext()}
-          onToggleShuffle={() => {
-            const next = !shuffle;
-            TrackPlayer.setShuffleEnabled(next);
-            setShuffle(next);
-          }}
-          onCycleRepeat={() => {
-            const next =
-              repeat === RepeatMode.Off
-                ? RepeatMode.All
-                : repeat === RepeatMode.All
-                  ? RepeatMode.One
-                  : RepeatMode.Off;
-            TrackPlayer.setRepeatMode(next);
-            setRepeat(next);
-          }}
-        />
-
-        <View style={styles.footer}>
-          <FooterButton
-            label="Queue"
-            icon={
-              <IconPlaylist
-                size={icon.sizeSmall}
-                strokeWidth={icon.strokeWidth}
-                color={color.textInverseSecondary}
+          <View style={styles.badgeRow}>
+            <View style={styles.badgeCapsule}>
+              <FormatBadge
+                suffix={extras?.suffix}
+                bitDepth={extras?.bitDepth}
+                samplingRate={extras?.samplingRate}
               />
+            </View>
+          </View>
+
+          <View style={styles.progress}>
+            <ProgressBar
+              position={progress.position}
+              duration={progress.duration || activeItem.duration}
+              surface="panel"
+              onSeek={(seconds) => TrackPlayer.seekTo(seconds)}
+            />
+          </View>
+
+          <TransportControls
+            playing={isPlaying}
+            shuffle={shuffle}
+            repeat={
+              repeat === RepeatMode.One ? 'one' : repeat === RepeatMode.All ? 'all' : 'off'
             }
-            onPress={() => navigation.navigate('Queue')}
+            onPlayPause={() => (isPlaying ? TrackPlayer.pause() : TrackPlayer.play())}
+            onPrevious={() => TrackPlayer.skipToPrevious()}
+            onNext={() => TrackPlayer.skipToNext()}
+            onToggleShuffle={() => {
+              const next = !shuffle;
+              TrackPlayer.setShuffleEnabled(next);
+              setShuffle(next);
+            }}
+            onCycleRepeat={() => {
+              const next =
+                repeat === RepeatMode.Off
+                  ? RepeatMode.All
+                  : repeat === RepeatMode.All
+                    ? RepeatMode.One
+                    : RepeatMode.Off;
+              TrackPlayer.setRepeatMode(next);
+              setRepeat(next);
+            }}
           />
 
-          {/* Not wired up yet — deliberately inert rather than hidden, so the
+          <View style={styles.footer}>
+            <FooterButton
+              label="Queue"
+              icon={
+                <IconPlaylist
+                  size={icon.sizeSmall}
+                  strokeWidth={icon.strokeWidth}
+                  color={color.textInverseSecondary}
+                />
+              }
+              onPress={() => navigation.navigate('Queue')}
+            />
+
+            {/* Not wired up yet — deliberately inert rather than hidden, so the
               footer keeps its balance while the feature is built. */}
-          <FooterButton
-            label="Lyrics"
-            icon={
-              <IconMicrophone2
-                size={icon.sizeSmall}
-                strokeWidth={icon.strokeWidth}
-                color={color.textInverseSecondary}
-              />
-            }
-          />
+            <FooterButton
+              label="Lyrics"
+              icon={
+                <IconMicrophone2
+                  size={icon.sizeSmall}
+                  strokeWidth={icon.strokeWidth}
+                  color={color.textInverseSecondary}
+                />
+              }
+            />
+          </View>
         </View>
-      </View>
 
-      <SleepTimerSheet
-        visible={timerOpen}
-        onClose={() => setTimerOpen(false)}
-        remainingSeconds={sleepRemaining}
-        onChanged={readSleepTimer}
-      />
-    </View>
+        <SleepTimerSheet
+          visible={timerOpen}
+          onClose={() => setTimerOpen(false)}
+          remainingSeconds={sleepRemaining}
+          onChanged={readSleepTimer}
+        />
+      </Animated.View>
+    </GestureDetector>
+  );
+}
+
+/**
+ * Artwork that breathes while the music plays.
+ *
+ * Not beat-synced — nothing here knows where the beats are, and guessing would
+ * be worse than not trying. This is a slow swell on a fixed cycle, about one
+ * and a half percent, which reads as the screen being alive rather than as an
+ * effect. It settles back to rest on pause rather than freezing mid-swell,
+ * so a paused player looks deliberately still.
+ */
+function BreathingArtwork({
+  uri,
+  size,
+  playing,
+}: {
+  uri?: string;
+  size: number;
+  playing: boolean;
+}) {
+  const scale = useSharedValue(1);
+
+  useEffect(() => {
+    if (!playing) {
+      cancelAnimation(scale);
+      scale.value = withTiming(1, { duration: motion.durationScreen });
+      return;
+    }
+
+    scale.value = withRepeat(
+      withTiming(BREATH_SCALE, {
+        duration: BREATH_PERIOD_MS,
+        easing: Easing.inOut(Easing.sin),
+      }),
+      -1,
+      true,
+    );
+
+    return () => cancelAnimation(scale);
+  }, [playing, scale]);
+
+  const style = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+
+  return (
+    <Animated.View style={style}>
+      <ArtworkWell uri={uri} size={size} surface="panel" />
+    </Animated.View>
   );
 }
 
@@ -386,7 +496,22 @@ const makeStyles = (color: Palette) =>
     artist: { ...type.meta, color: color.textInverseSecondary, marginTop: space[1] },
     heart: { marginLeft: space[4], paddingTop: space[1] },
 
-    badgeRow: { marginTop: space[3] },
+    badgeRow: { marginTop: space[4], alignItems: 'center' },
+    /**
+     * A capsule around the format readout, at the dock's radius.
+     *
+     * Left bare and left-aligned it read as a stray line of metadata. Centred
+     * in a faint chip it reads as a spec plate, which is what it is — kept to
+     * a low-contrast fill so it never competes with the track title above it.
+     */
+    badgeCapsule: {
+      paddingHorizontal: space[3],
+      paddingVertical: space[1],
+      borderRadius: layout.dockRadius,
+      borderWidth: hairline,
+      borderColor: color.panelLine,
+      backgroundColor: color.panelRaised,
+    },
     progress: { marginTop: space[2], marginBottom: space[5] },
 
     footer: {

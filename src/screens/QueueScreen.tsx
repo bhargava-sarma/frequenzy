@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import TrackPlayer, { Event, useActiveMediaItem, type MediaItem } from '@rntp/player';
 
+import { AmbientBackground } from '../components/AmbientBackground';
 import { Button } from '../components/Button';
 import { IconTrash } from '../components/icons';
 import { ListRow } from '../components/ListRow';
@@ -97,6 +98,8 @@ export function QueueScreen() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
+      <AmbientBackground intensity={0.5} />
+
       <ScreenHeader
         title="Queue"
         onBack={() => navigation.goBack()}

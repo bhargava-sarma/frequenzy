@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import TrackPlayer, { useActiveMediaItem, useIsPlaying, useProgress } from '@rntp/player';
@@ -26,6 +27,11 @@ import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
  * it; between the two halves it reads as what it is — the state of the thing
  * directly above it.
  */
+/** Diameter of the position knob. */
+const KNOB_SIZE = 8;
+/** Thickness of the readout, sized so the knob sits proud of it. */
+const TRACK_HEIGHT = 4;
+
 export function MiniPlayer() {
   const color = useTheme();
   const styles = useThemedStyles(makeStyles);
@@ -33,6 +39,7 @@ export function MiniPlayer() {
   const activeItem = useActiveMediaItem();
   const isPlaying = useIsPlaying();
   const progress = useProgress(1);
+  const [trackWidth, setTrackWidth] = useState(0);
 
   if (!activeItem) return null;
 
@@ -105,9 +112,30 @@ export function MiniPlayer() {
         </View>
       </Pressable>
 
-      {/* A readout, not a control. Seeking belongs on the full player. */}
-      <View style={styles.progressTrack}>
+      {/* A readout, not a control. Seeking belongs on the full player.
+          The knob rides the fill and hollows out when paused, so the dock says
+          whether music is running without needing the play icon read. */}
+      <View
+        style={styles.progressTrack}
+        onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)}
+      >
         <View style={[styles.progressFill, { width: `${ratio * 100}%` }]} />
+        {trackWidth > 0 && (
+          <View
+            style={[
+              styles.knob,
+              isPlaying ? styles.knobPlaying : styles.knobPaused,
+              // Centred on the fill's leading edge, and clamped so it never
+              // hangs off either end of the dock.
+              {
+                left: Math.min(
+                  trackWidth - KNOB_SIZE,
+                  Math.max(0, ratio * trackWidth - KNOB_SIZE / 2),
+                ),
+              },
+            ]}
+          />
+        )}
       </View>
     </View>
   );
@@ -165,10 +193,22 @@ const makeStyles = (color: Palette) =>
     },
 
     progressTrack: {
-      height: 2,
+      height: TRACK_HEIGHT,
       backgroundColor: color.panelLine,
       borderBottomWidth: hairline,
       borderBottomColor: color.panelLine,
+      justifyContent: 'center',
     },
     progressFill: { height: '100%', backgroundColor: color.accent },
+    knob: {
+      position: 'absolute',
+      width: KNOB_SIZE,
+      height: KNOB_SIZE,
+      borderRadius: KNOB_SIZE / 2,
+      borderWidth: 1.5,
+      borderColor: color.accent,
+    },
+    knobPlaying: { backgroundColor: color.accent },
+    // Hollow: the dock's own surface shows through the ring.
+    knobPaused: { backgroundColor: color.panel },
   });

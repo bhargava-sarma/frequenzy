@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import { useActiveMediaItem } from '@rntp/player';
 
+import { AmbientBackground } from '../components/AmbientBackground';
 import { ArtworkWell } from '../components/ArtworkWell';
 import { Button, ButtonRow } from '../components/Button';
 import { IconHeart, IconHeartFilled, IconPlus } from '../components/icons';
@@ -76,6 +77,9 @@ export function PlaylistScreen() {
               name: 'Liked songs',
               songCount: songs.length,
               duration: songs.reduce((sum, song) => sum + (song.duration ?? 0), 0),
+              // The set has no cover of its own, so it borrows the newest
+              // favourite's — the same one the library row shows.
+              coverArt: songs[0]?.coverArt,
             } satisfies Playlist,
             songs,
           };
@@ -119,6 +123,8 @@ export function PlaylistScreen() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
+      <AmbientBackground intensity={0.5} />
+
       <ScreenHeader title={title} onBack={() => navigation.goBack()} />
 
       <FlatList

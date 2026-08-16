@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
+import { AmbientBackground } from '../components/AmbientBackground';
 import { Button } from '../components/Button';
 import { ListRow } from '../components/ListRow';
 import { Segmented } from '../components/Segmented';
@@ -18,6 +19,7 @@ import { hairline, icon, layout, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import type { AlbumSummary, ArtistSummary, Child } from '../types/subsonic';
+import { onSearchRequested } from '../utils/tabEvents';
 import { formatDuration } from '../utils/time';
 
 /**
@@ -63,6 +65,11 @@ export function SearchScreen() {
   const client = useServerStore((state) => state.client);
   const playNow = usePlayerStore((state) => state.playNow);
   const addToQueue = usePlayerStore((state) => state.addToQueue);
+
+  const inputRef = useRef<TextInput>(null);
+
+  // Raised when the Search tab is tapped while already active.
+  useEffect(() => onSearchRequested(() => inputRef.current?.focus()), []);
 
   const [query, setQuery] = useState('');
   const [scope, setScope] = useState<Scope>('songs');
@@ -136,12 +143,15 @@ export function SearchScreen() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top + space[3] }]}>
+      <AmbientBackground intensity={0.5} />
+
       {/* Field and scopes share one card, the way the dock joins the
           mini-player to the nav — they are one control for one job. */}
       <View style={styles.searchBar}>
         <View style={styles.card}>
           <View style={styles.inputWrap}>
             <TextInput
+              ref={inputRef}
               style={styles.input}
               value={query}
               onChangeText={setQuery}

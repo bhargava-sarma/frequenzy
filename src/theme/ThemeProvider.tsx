@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -30,6 +31,49 @@ export type ThemePreference = 'system' | 'light' | 'dark';
 
 const STORAGE_KEY = 'settings.theme';
 const ACCENT_KEY = 'settings.artworkAccent';
+
+/**
+ * How long the accent takes to travel from one track's colour to the next.
+ *
+ * Long on purpose. A cut reads as the UI glitching on every track change; over
+ * five seconds the colour arrives without ever drawing attention to the moment
+ * it moved.
+ */
+const ACCENT_FADE_MS = 5000;
+
+/**
+ * Steps in that fade.
+ *
+ * Each step is a new palette object, which re-renders every themed component,
+ * so this is not free — but twenty steps over five seconds is one every 250ms,
+ * which is imperceptible as stepping at this rate of change and costs four
+ * re-renders a second for five seconds.
+ */
+const ACCENT_FADE_STEPS = 20;
+
+function parseHex(hex: string): [number, number, number] {
+  return [
+    parseInt(hex.slice(1, 3), 16),
+    parseInt(hex.slice(3, 5), 16),
+    parseInt(hex.slice(5, 7), 16),
+  ];
+}
+
+function toHex([r, g, b]: [number, number, number]): string {
+  const byte = (v: number) => Math.round(Math.min(255, Math.max(0, v))).toString(16).padStart(2, '0');
+  return `#${byte(r)}${byte(g)}${byte(b)}`;
+}
+
+/** Straight RGB interpolation. Between two washed-out tints it stays clean. */
+function mixHex(from: string, to: string, t: number): string {
+  const a = parseHex(from);
+  const b = parseHex(to);
+  return toHex([
+    a[0] + (b[0] - a[0]) * t,
+    a[1] + (b[1] - a[1]) * t,
+    a[2] + (b[2] - a[2]) * t,
+  ]);
+}
 
 interface ThemeContextValue {
   palette: Palette;
@@ -65,7 +109,62 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const systemScheme = useColorScheme();
   const [preference, setPreferenceState] = useState<ThemePreference>('dark');
   const [artworkAccentEnabled, setArtworkAccentEnabledState] = useState(true);
-  const [artworkAccent, setArtworkAccent] = useState<ArtworkAccent | null>(null);
+  /** What is on screen right now, mid-fade included. */
+  const [artworkAccent, setArtworkAccentState] = useState<ArtworkAccent | null>(null);
+  const fadeTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  /**
+   * Eases to a new accent instead of cutting to it.
+   *
+   * The ink colour swaps at the halfway point rather than being interpolated:
+   * it is only ever near-black or near-white, and a blend of the two is grey,
+   * which is unreadable on both.
+   */
+  const setArtworkAccent = useCallback((next: ArtworkAccent | null) => {
+    if (fadeTimer.current) {
+      clearInterval(fadeTimer.current);
+      fadeTimer.current = null;
+    }
+
+    if (!next) {
+      setArtworkAccentState(null);
+      return;
+    }
+
+    setArtworkAccentState((current) => {
+      if (!current) return next;
+      if (current.accent === next.accent) return current;
+
+      const from = current.accent;
+      let step = 0;
+
+      fadeTimer.current = setInterval(() => {
+        step += 1;
+        const t = step / ACCENT_FADE_STEPS;
+
+        if (t >= 1) {
+          if (fadeTimer.current) clearInterval(fadeTimer.current);
+          fadeTimer.current = null;
+          setArtworkAccentState(next);
+          return;
+        }
+
+        setArtworkAccentState({
+          accent: mixHex(from, next.accent, t),
+          accentInk: t < 0.5 ? current.accentInk : next.accentInk,
+        });
+      }, ACCENT_FADE_MS / ACCENT_FADE_STEPS);
+
+      return current;
+    });
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (fadeTimer.current) clearInterval(fadeTimer.current);
+    },
+    [],
+  );
 
   // Read the stored choice once. Until it lands the app renders dark, which
   // is the default anyway, so there is no flash to guard against.
@@ -94,7 +193,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const setArtworkAccentEnabled = useCallback((enabled: boolean) => {
     setArtworkAccentEnabledState(enabled);
-    if (!enabled) setArtworkAccent(null);
+    if (!enabled) setArtworkAccentState(null);
     void AsyncStorage.setItem(ACCENT_KEY, String(enabled));
   }, []);
 
@@ -117,7 +216,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       setArtworkAccentEnabled,
       setArtworkAccent,
     }),
-    [palette, preference, resolved, setPreference, artworkAccentEnabled, setArtworkAccentEnabled],
+    [
+      palette,
+      preference,
+      resolved,
+      setPreference,
+      artworkAccentEnabled,
+      setArtworkAccentEnabled,
+      setArtworkAccent,
+    ],
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

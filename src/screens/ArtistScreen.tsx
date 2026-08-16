@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
+import { AmbientBackground } from '../components/AmbientBackground';
 import { Button, ButtonRow } from '../components/Button';
 import { ListRow } from '../components/ListRow';
 import { DOCK_CLEARANCE } from '../components/TabBar';
@@ -76,6 +77,8 @@ export function ArtistScreen() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
+      <AmbientBackground intensity={0.5} />
+
       <ScreenHeader title={title} onBack={() => navigation.goBack()} />
 
       <FlatList

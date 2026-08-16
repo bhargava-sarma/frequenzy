@@ -1,11 +1,13 @@
 import { Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
+import { StackActions } from '@react-navigation/native';
 
 import { MiniPlayer } from './MiniPlayer';
 import { hairline, icon, layout, space } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
+import { emitSearchRequested } from '../utils/tabEvents';
 import { IconHome, IconLibrary, IconSearch } from './icons';
 
 /**
@@ -75,9 +77,28 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
                     target: route.key,
                     canPreventDefault: true,
                   });
-                  if (!focused && !event.defaultPrevented) {
+                  if (event.defaultPrevented) return;
+
+                  if (!focused) {
                     navigation.navigate(route.name);
+                    return;
                   }
+
+                  /**
+                   * Tapping the tab you are already on returns you to its top
+                   * level — the standard shortcut out of a drill-down. The
+                   * dispatch is targeted at the tab's own stack, since the tab
+                   * navigator itself has nothing to pop.
+                   */
+                  const stackKey = route.state?.key;
+                  if (stackKey) {
+                    navigation.dispatch({ ...StackActions.popToTop(), target: stackKey });
+                  }
+
+                  // Search additionally raises the keyboard: coming back to a
+                  // search screen almost always means searching for something
+                  // else, and the field is what you came for.
+                  if (route.name === 'Search') emitSearchRequested();
                 }}
               >
                 <Icon

@@ -177,7 +177,9 @@ export function HomeScreen() {
             <ListRow
               key={track.songId}
               title={track.title}
-              meta={[track.artist, pluralize(track.plays, 'play')].filter(Boolean).join(' · ')}
+              // Plays only. The artist is already on the cover beside it, and
+              // the one thing a chart row has to say is how often you played it.
+              meta={pluralize(track.plays, 'play')}
               artworkUri={artworkUrl(track.coverArt)}
               last={index === topTracks.length - 1}
               // Opens the album rather than playing: a chart is something you

@@ -2,11 +2,14 @@ import { useEffect } from 'react';
 import { StyleSheet, useWindowDimensions, View } from 'react-native';
 import Animated, {
   Easing,
+  cancelAnimation,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
   withTiming,
 } from 'react-native-reanimated';
+
+import { useIsFocused } from '@react-navigation/native';
 
 import { useTheme, useThemeControls } from '../theme/ThemeProvider';
 
@@ -60,6 +63,12 @@ export function AmbientBackground({ intensity = 1 }: { intensity?: number }) {
   const color = useTheme();
   const { resolved } = useThemeControls();
   const { width, height } = useWindowDimensions();
+  /**
+   * Tab screens stay mounted when you navigate away, so without this every
+   * screen you have ever opened keeps three animations running on the UI
+   * thread forever — for a wash nobody can see.
+   */
+  const focused = useIsFocused();
 
   // The same alpha that whispers on true black stains paper, so light mode
   // gets roughly a third of it.
@@ -75,6 +84,7 @@ export function AmbientBackground({ intensity = 1 }: { intensity?: number }) {
           height={height}
           color={color.accent}
           intensity={scale}
+          active={focused}
         />
       ))}
     </View>
@@ -87,16 +97,25 @@ function Drift({
   height,
   color,
   intensity,
+  active,
 }: {
   blob: Blob;
   width: number;
   height: number;
   color: string;
   intensity: number;
+  active: boolean;
 }) {
   const progress = useSharedValue(0);
 
   useEffect(() => {
+    if (!active) {
+      // Left where it stopped rather than reset: returning to a screen should
+      // resume the drift, not snap it back to the start.
+      cancelAnimation(progress);
+      return;
+    }
+
     // Linear rather than eased: an eased loop pauses at each end, which reads
     // as a pulse. A constant drift reads as nothing at all, which is the point.
     progress.value = withRepeat(
@@ -104,7 +123,9 @@ function Drift({
       -1,
       true,
     );
-  }, [blob.period, progress]);
+
+    return () => cancelAnimation(progress);
+  }, [active, blob.period, progress]);
 
   const size = width * blob.size;
 
