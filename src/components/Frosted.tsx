@@ -2,7 +2,7 @@ import React, { type ReactNode } from 'react';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { requireOptionalNativeModule } from 'expo-modules-core';
 
-import { layout, withAlpha } from '../theme/tokens';
+import { withAlpha } from '../theme/tokens';
 import { useTheme, useThemeControls } from '../theme/ThemeProvider';
 
 /**
@@ -43,12 +43,15 @@ const BlurView: React.ComponentType<{
     (require('expo-blur').BlurView as never)
   : null;
 
-/** How hard to blur. Enough to abstract the content, not to frost it opaque. */
-const BLUR_INTENSITY = 40;
-
-/** Tint over the blur, and the heavier tint used when there is no blur. */
-const TINT_WITH_BLUR = layout.floatingOpacity;
-const TINT_WITHOUT_BLUR = 0.94;
+/**
+ * How much extra tint a surface takes when it can't blur.
+ *
+ * Blur is what separates a floating surface from what passes behind it.
+ * Without it only opacity can do that job, so an unblurred surface is pushed
+ * most of the way to solid rather than left at the user's setting, where it
+ * reads as a rendering fault rather than as glass.
+ */
+const OPAQUE_FALLBACK = 0.94;
 
 export interface FrostedProps {
   children?: ReactNode;
@@ -59,13 +62,16 @@ export interface FrostedProps {
 
 export function Frosted({ children, style, surface = 'panel' }: FrostedProps) {
   const color = useTheme();
-  const { resolved, blurEnabled } = useThemeControls();
+  const { resolved, blurIntensity, surfaceOpacity } = useThemeControls();
 
   const base = surface === 'panel' ? color.panel : color.paper;
+  const blurring = BlurView != null && blurIntensity > 0;
 
-  if (!BlurView || !blurEnabled) {
+  if (!blurring) {
     return (
-      <View style={[style, { backgroundColor: withAlpha(base, TINT_WITHOUT_BLUR) }]}>
+      <View
+        style={[style, { backgroundColor: withAlpha(base, Math.max(surfaceOpacity, OPAQUE_FALLBACK)) }]}
+      >
         {children}
       </View>
     );
@@ -76,12 +82,12 @@ export function Frosted({ children, style, surface = 'panel' }: FrostedProps) {
       {/* The blur sits behind the tint rather than carrying it, so the tint
           colour stays a palette token instead of expo-blur's fixed presets. */}
       <BlurView
-        intensity={BLUR_INTENSITY}
+        intensity={blurIntensity}
         tint={resolved === 'dark' ? 'dark' : 'light'}
         style={StyleSheet.absoluteFill}
       />
       <View
-        style={[StyleSheet.absoluteFill, { backgroundColor: withAlpha(base, TINT_WITH_BLUR) }]}
+        style={[StyleSheet.absoluteFill, { backgroundColor: withAlpha(base, surfaceOpacity) }]}
       />
       {children}
     </View>

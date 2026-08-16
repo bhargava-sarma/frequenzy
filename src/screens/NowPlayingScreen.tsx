@@ -9,7 +9,6 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
 import TrackPlayer, {
   RepeatMode,
   useActiveMediaItem,
@@ -18,7 +17,6 @@ import TrackPlayer, {
 } from '@rntp/player';
 
 import { AmbientBackground } from '../components/AmbientBackground';
-import { DismissibleSheet } from '../components/DismissibleSheet';
 import { ArtworkWell, FormatBadge } from '../components/ArtworkWell';
 import { SleepTimerSheet } from '../components/SleepTimerSheet';
 import { ProgressBar } from '../components/ProgressBar';
@@ -32,8 +30,10 @@ import {
   IconMoon,
   IconPlaylist,
 } from '../components/icons';
+import { navigateToAlbum, navigateToArtist } from '../navigation/ref';
 import { extrasOf } from '../player/trackMapping';
 import { usePlayerStore } from '../store/usePlayerStore';
+import { usePlayerUiStore } from '../store/usePlayerUiStore';
 import { useServerStore } from '../store/useServerStore';
 import { hairline, icon, layout, motion, space, type, withAlpha } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
@@ -65,8 +65,9 @@ const BREATH_PERIOD_MS = 2600;
 export function NowPlayingScreen() {
   const color = useTheme();
   const styles = useThemedStyles(makeStyles);
-  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const closePlayer = usePlayerUiStore((state) => state.closePlayer);
+  const openQueue = usePlayerUiStore((state) => state.openQueue);
   const { width } = useWindowDimensions();
 
   const activeItem = useActiveMediaItem();
@@ -109,7 +110,7 @@ export function NowPlayingScreen() {
   if (!activeItem) {
     return (
       <View style={[styles.root, { paddingTop: insets.top }]}>
-        <Header onClose={() => navigation.goBack()} onSleepTimer={() => setTimerOpen(true)} />
+        <Header onClose={closePlayer} onSleepTimer={() => setTimerOpen(true)} />
         <EmptyState label="Nothing playing" hint="Pick something from your library." />
       </View>
     );
@@ -130,35 +131,23 @@ export function NowPlayingScreen() {
 
   function openAlbum() {
     if (!extras?.albumId) return;
-    navigation.goBack();
-    navigation.navigate('Tabs', {
-      screen: 'Library',
-      params: {
-        screen: 'Album',
-        params: { albumId: extras.albumId, albumName: extras.albumTitle },
-      },
-    });
+    closePlayer();
+    navigateToAlbum(extras.albumId, extras.albumTitle);
   }
 
   function openArtist() {
     if (!extras?.artistId) return;
-    navigation.goBack();
-    navigation.navigate('Tabs', {
-      screen: 'Library',
-      params: {
-        screen: 'Artist',
-        params: { artistId: extras.artistId, artistName: activeItem?.artist },
-      },
-    });
+    closePlayer();
+    navigateToArtist(extras.artistId, activeItem?.artist);
   }
 
   return (
-    <DismissibleSheet onDismiss={() => navigation.goBack()} style={[styles.root, { paddingTop: insets.top }]}>
+    <View style={[styles.root, { paddingTop: insets.top }]}>
         {/* Behind everything, tinted by the current cover. */}
         <AmbientBackground />
 
         <Header
-          onClose={() => navigation.goBack()}
+          onClose={closePlayer}
           onSleepTimer={() => setTimerOpen(true)}
           timerActive={sleepRemaining != null}
         />
@@ -276,7 +265,7 @@ export function NowPlayingScreen() {
                   color={color.textInverseSecondary}
                 />
               }
-              onPress={() => navigation.navigate('Queue')}
+              onPress={openQueue}
             />
 
             {/* Not wired up yet — deliberately inert rather than hidden, so the
@@ -300,7 +289,7 @@ export function NowPlayingScreen() {
           remainingSeconds={sleepRemaining}
           onChanged={readSleepTimer}
         />
-    </DismissibleSheet>
+    </View>
   );
 }
 

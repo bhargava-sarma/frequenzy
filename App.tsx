@@ -6,6 +6,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Inter_400Regular, Inter_500Medium, useFonts } from '@expo-google-fonts/inter';
 
 import { ArtworkAccentBridge } from './src/components/ArtworkAccentBridge';
+import { PlayerOverlay } from './src/components/PlayerOverlay';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { startScrobbler } from './src/player/scrobbler';
 import { SetupScreen } from './src/screens/SetupScreen';
@@ -103,6 +104,8 @@ function AppContent() {
           {/* Renders nothing; keeps the accent in step with what's playing. */}
           <ArtworkAccentBridge />
           <RootNavigator />
+          {/* Above the navigator, so opening the player detaches nothing. */}
+          <PlayerOverlay />
         </>
       )}
     </>

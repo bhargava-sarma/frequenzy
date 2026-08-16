@@ -2,11 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FlatList, StyleSheet, View } from 'react-native';
 import Animated, { LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
 import TrackPlayer, { Event, useActiveMediaItem, type MediaItem } from '@rntp/player';
 
 import { AmbientBackground } from '../components/AmbientBackground';
-import { DismissibleSheet } from '../components/DismissibleSheet';
 import { Button } from '../components/Button';
 import { IconTrash } from '../components/icons';
 import { ListRow } from '../components/ListRow';
@@ -18,6 +16,7 @@ import { DOCK_CLEARANCE } from '../components/TabBar';
 import { HEAVY_LIST_PROPS, usePagedList } from '../hooks/usePagedList';
 import { extrasOf } from '../player/trackMapping';
 import { usePlayerStore } from '../store/usePlayerStore';
+import { usePlayerUiStore } from '../store/usePlayerUiStore';
 import { icon, layout, motion, space } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
@@ -43,8 +42,8 @@ type Row =
 export function QueueScreen() {
   const color = useTheme();
   const styles = useThemedStyles(makeStyles);
-  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const closeQueue = usePlayerUiStore((state) => state.closeQueue);
   const activeItem = useActiveMediaItem();
   const removeFromQueue = usePlayerStore((state) => state.removeFromQueue);
   const clearQueue = usePlayerStore((state) => state.clearQueue);
@@ -102,15 +101,12 @@ export function QueueScreen() {
   const totalDuration = queue.reduce((sum, item) => sum + (item.duration ?? 0), 0);
 
   return (
-    <DismissibleSheet
-      onDismiss={() => navigation.goBack()}
-      style={[styles.root, { paddingTop: insets.top }]}
-    >
+    <View style={[styles.root, { paddingTop: insets.top }]}>
       <AmbientBackground />
 
       <ScreenHeader
         title="Queue"
-        onBack={() => navigation.goBack()}
+        onBack={closeQueue}
         action={queue.length > 0 ? <Button label="Clear" onPress={clearQueue} /> : undefined}
       />
 
@@ -189,7 +185,7 @@ export function QueueScreen() {
           ) : null
         }
       />
-    </DismissibleSheet>
+    </View>
   );
 }
 

@@ -1,6 +1,5 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
 import TrackPlayer, { useActiveMediaItem, useIsPlaying, useProgress } from '@rntp/player';
 
 import { ArtworkWell } from './ArtworkWell';
@@ -10,6 +9,7 @@ import {
   IconPlayerSkipBack,
   IconPlayerSkipForward,
 } from './icons';
+import { usePlayerUiStore } from '../store/usePlayerUiStore';
 import { hairline, icon, radius, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
@@ -35,7 +35,8 @@ const TRACK_HEIGHT = 4;
 export function MiniPlayer() {
   const color = useTheme();
   const styles = useThemedStyles(makeStyles);
-  const navigation = useNavigation();
+  const openPlayer = usePlayerUiStore((state) => state.openPlayer);
+  const bodyRef = useRef<View>(null);
   const activeItem = useActiveMediaItem();
   const isPlaying = useIsPlaying();
   const progress = useProgress(1);
@@ -49,8 +50,15 @@ export function MiniPlayer() {
   return (
     <View style={styles.root}>
       <Pressable
+        ref={bodyRef}
         style={({ pressed }) => [styles.body, pressed && styles.pressed]}
-        onPress={() => navigation.navigate('NowPlaying')}
+        // Measured on press so the player knows where to grow from. Window
+        // coordinates, since the overlay sits above the whole app.
+        onPress={() =>
+          bodyRef.current?.measureInWindow((x, y, width, height) =>
+            openPlayer({ x, y, width, height }),
+          )
+        }
         accessibilityRole="button"
         accessibilityLabel={`Now playing: ${activeItem.title ?? 'track'}. Open player.`}
       >

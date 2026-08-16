@@ -33,6 +33,8 @@ const STORAGE_KEY = 'settings.theme';
 const ACCENT_KEY = 'settings.artworkAccent';
 const AMBIENT_KEY = 'settings.ambient';
 const BLUR_KEY = 'settings.blur';
+const BLUR_INTENSITY_KEY = 'settings.blurIntensity';
+const SURFACE_OPACITY_KEY = 'settings.surfaceOpacity';
 
 /**
  * How long the accent takes to travel from one track's colour to the next.
@@ -90,9 +92,12 @@ interface ThemeContextValue {
   /** Strength of the drifting background wash. 0 turns it off entirely. */
   ambientIntensity: number;
   setAmbientIntensity: (intensity: number) => void;
-  /** Whether floating surfaces blur. Ignored on a build without the module. */
-  blurEnabled: boolean;
-  setBlurEnabled: (enabled: boolean) => void;
+  /** How hard floating surfaces blur, 0-100. Zero is the same as off. */
+  blurIntensity: number;
+  setBlurIntensity: (intensity: number) => void;
+  /** How opaque the tint over them is, 0-1. */
+  surfaceOpacity: number;
+  setSurfaceOpacity: (opacity: number) => void;
   /**
    * Pushed in by the bridge that watches what's playing.
    *
@@ -112,8 +117,10 @@ const ThemeContext = createContext<ThemeContextValue>({
   setArtworkAccentEnabled: () => {},
   ambientIntensity: 1,
   setAmbientIntensity: () => {},
-  blurEnabled: true,
-  setBlurEnabled: () => {},
+  blurIntensity: 40,
+  setBlurIntensity: () => {},
+  surfaceOpacity: 0.75,
+  setSurfaceOpacity: () => {},
   setArtworkAccent: () => {},
 });
 
@@ -122,7 +129,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [preference, setPreferenceState] = useState<ThemePreference>('dark');
   const [artworkAccentEnabled, setArtworkAccentEnabledState] = useState(true);
   const [ambientIntensity, setAmbientIntensityState] = useState(1);
-  const [blurEnabled, setBlurEnabledState] = useState(true);
+  const [blurIntensity, setBlurIntensityState] = useState(40);
+  const [surfaceOpacity, setSurfaceOpacityState] = useState(0.75);
   /** What is on screen right now, mid-fade included. */
   const [artworkAccent, setArtworkAccentState] = useState<ArtworkAccent | null>(null);
   const fadeTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -197,8 +205,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       const parsed = stored != null ? Number(stored) : NaN;
       if (!cancelled && Number.isFinite(parsed)) setAmbientIntensityState(parsed);
     });
-    void AsyncStorage.getItem(BLUR_KEY).then((stored) => {
-      if (!cancelled && stored != null) setBlurEnabledState(stored === 'true');
+    void AsyncStorage.getItem(BLUR_INTENSITY_KEY).then((stored) => {
+      const parsed = stored != null ? Number(stored) : NaN;
+      if (!cancelled && Number.isFinite(parsed)) setBlurIntensityState(parsed);
+    });
+    void AsyncStorage.getItem(SURFACE_OPACITY_KEY).then((stored) => {
+      const parsed = stored != null ? Number(stored) : NaN;
+      if (!cancelled && Number.isFinite(parsed)) setSurfaceOpacityState(parsed);
     });
     return () => {
       cancelled = true;
@@ -223,9 +236,14 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     void AsyncStorage.setItem(AMBIENT_KEY, String(intensity));
   }, []);
 
-  const setBlurEnabled = useCallback((enabled: boolean) => {
-    setBlurEnabledState(enabled);
-    void AsyncStorage.setItem(BLUR_KEY, String(enabled));
+  const setBlurIntensity = useCallback((intensity: number) => {
+    setBlurIntensityState(intensity);
+    void AsyncStorage.setItem(BLUR_INTENSITY_KEY, String(intensity));
+  }, []);
+
+  const setSurfaceOpacity = useCallback((opacity: number) => {
+    setSurfaceOpacityState(opacity);
+    void AsyncStorage.setItem(SURFACE_OPACITY_KEY, String(opacity));
   }, []);
 
   const resolved: 'light' | 'dark' =
@@ -247,8 +265,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       setArtworkAccentEnabled,
       ambientIntensity,
       setAmbientIntensity,
-      blurEnabled,
-      setBlurEnabled,
+      blurIntensity,
+      setBlurIntensity,
+      surfaceOpacity,
+      setSurfaceOpacity,
       setArtworkAccent,
     }),
     [
@@ -260,8 +280,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       setArtworkAccentEnabled,
       ambientIntensity,
       setAmbientIntensity,
-      blurEnabled,
-      setBlurEnabled,
+      blurIntensity,
+      setBlurIntensity,
+      surfaceOpacity,
+      setSurfaceOpacity,
       setArtworkAccent,
     ],
   );

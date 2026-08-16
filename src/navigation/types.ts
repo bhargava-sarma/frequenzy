@@ -70,10 +70,6 @@ export type TabParamList = {
 
 export type RootStackParamList = {
   Tabs: NavigatorScreenParams<TabParamList>;
-  /** Full-screen player, presented over the tabs. */
-  NowPlaying: undefined;
-  /** Reached from the player, presented over it. */
-  Queue: undefined;
   /** Reached from Home. */
   Settings: undefined;
   /** Development-only surfaces, not part of the shipped app. */

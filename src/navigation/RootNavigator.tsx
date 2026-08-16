@@ -9,12 +9,11 @@ import { ArtistScreen } from '../screens/ArtistScreen';
 import { DiagnosticScreen } from '../screens/DiagnosticScreen';
 import { HomeScreen } from '../screens/HomeScreen';
 import { LibraryScreen } from '../screens/LibraryScreen';
-import { NowPlayingScreen } from '../screens/NowPlayingScreen';
 import { PlaylistScreen } from '../screens/PlaylistScreen';
-import { QueueScreen } from '../screens/QueueScreen';
 import { SearchScreen } from '../screens/SearchScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { ShowcaseScreen } from '../screens/ShowcaseScreen';
+import { navigationRef } from './ref';
 import { motion } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemeControls } from '../theme/ThemeProvider';
@@ -150,24 +149,22 @@ export function RootNavigator() {
   );
 
   return (
-    <NavigationContainer theme={theme}>
+    <NavigationContainer theme={theme} ref={navigationRef}>
       <RootStack.Navigator screenOptions={screenOptions}>
         <RootStack.Screen name="Tabs" component={TabNavigator} />
         {/**
-         * Sheets are ordinary pushed screens that happen to slide up, not
-         * `presentation: 'modal'`.
+         * The player and the queue are not here.
          *
-         * Android's modal presentation hands the screen to a separate native
-         * container, and dismissing one left the screen underneath unpainted —
-         * which is the black screen that appeared after swiping down. A plain
-         * push keeps the previous screen mounted and drawn the whole time, and
-         * looks identical going up.
+         * They live in PlayerOverlay, above the navigator. A stack detaches
+         * the screen underneath on Android, which left a black rectangle
+         * behind on dismissal, and a stack can only slide a screen in from an
+         * edge when the player should expand out of the dock you pressed.
          */}
-        <RootStack.Group screenOptions={{ animation: 'slide_from_bottom' }}>
-          <RootStack.Screen name="NowPlaying" component={NowPlayingScreen} />
-          <RootStack.Screen name="Queue" component={QueueScreen} />
-          <RootStack.Screen name="Settings" component={SettingsScreen} />
-        </RootStack.Group>
+        <RootStack.Screen
+          name="Settings"
+          component={SettingsScreen}
+          options={{ animation: 'slide_from_bottom' }}
+        />
 
         {/* Development surfaces. Reachable only from the diagnostics entry
             point and excluded from release builds. */}

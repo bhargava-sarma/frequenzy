@@ -9,8 +9,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
-import { useIsFocused } from '@react-navigation/native';
-
+import { useScreenFocused } from '../hooks/useScreenFocused';
 import { useTheme, useThemeControls } from '../theme/ThemeProvider';
 
 /**
@@ -68,7 +67,7 @@ export function AmbientBackground({ intensity = 1 }: { intensity?: number }) {
    * screen you have ever opened keeps three animations running on the UI
    * thread forever — for a wash nobody can see.
    */
-  const focused = useIsFocused();
+  const focused = useScreenFocused();
 
   // Turned off entirely rather than rendered at zero: eighteen views and three
   // UI-thread animations per screen are not worth mounting to be invisible.

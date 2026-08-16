@@ -222,12 +222,8 @@ export const layout = {
   /** Corner radius of the floating dock and the cards that echo it. */
   dockRadius: 16,
   /**
-   * Opacity of the floating surfaces — dock, search card, tab strips, the
-   * format capsule.
-   *
-   * Real blur needs expo-blur, which is a native module and therefore a new
-   * build; until then these are translucent only. Kept high enough that text
-   * on them stays readable over a moving list underneath.
+   * Default opacity of the floating surfaces — dock, search card, tab strips,
+   * the format capsule. Adjustable in settings.
    */
   floatingOpacity: 0.75,
 } as const;

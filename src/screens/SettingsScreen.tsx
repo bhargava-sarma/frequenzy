@@ -5,6 +5,7 @@ import { useNavigation } from '@react-navigation/native';
 
 import { AmbientBackground } from '../components/AmbientBackground';
 import { blurAvailable } from '../components/Frosted';
+import { Slider } from '../components/Slider';
 import { Button } from '../components/Button';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { SectionHeader } from '../components/SectionHeader';
@@ -34,27 +35,8 @@ const ACCENT_OPTIONS = [
   { value: 'fixed' as const, label: 'Fixed' },
 ];
 
-const AMBIENT_OPTIONS = [
-  { value: 'off' as const, label: 'Off' },
-  { value: 'subtle' as const, label: 'Subtle' },
-  { value: 'full' as const, label: 'Full' },
-];
 
-const AMBIENT_VALUES: Record<'off' | 'subtle' | 'full', number> = {
-  off: 0,
-  subtle: 0.5,
-  full: 1,
-};
 
-function ambientChoice(intensity: number): 'off' | 'subtle' | 'full' {
-  if (intensity <= 0) return 'off';
-  return intensity < 0.8 ? 'subtle' : 'full';
-}
-
-const BLUR_OPTIONS = [
-  { value: 'on' as const, label: 'Blurred' },
-  { value: 'off' as const, label: 'Solid' },
-];
 
 export function SettingsScreen() {
   const color = useTheme();
@@ -70,8 +52,10 @@ export function SettingsScreen() {
     setArtworkAccentEnabled,
     ambientIntensity,
     setAmbientIntensity,
-    blurEnabled,
-    setBlurEnabled,
+    blurIntensity,
+    setBlurIntensity,
+    surfaceOpacity,
+    setSurfaceOpacity,
   } = useThemeControls();
 
   const config = useServerStore((state) => state.config);
@@ -124,28 +108,46 @@ export function SettingsScreen() {
 
         <SectionHeader title="Background" />
         <View style={styles.block}>
-          <Segmented
-            options={AMBIENT_OPTIONS}
-            value={ambientChoice(ambientIntensity)}
-            onChange={(next) => setAmbientIntensity(AMBIENT_VALUES[next])}
+          <Slider
+            label="Ambient wash"
+            value={ambientIntensity}
+            onChange={setAmbientIntensity}
+            min={0}
+            max={1}
+            step={0.05}
+            readout={ambientIntensity <= 0 ? 'Off' : `${Math.round(ambientIntensity * 100)}%`}
           />
           <Text style={styles.hint}>
-            A slow drift of the current track&apos;s colour behind every screen. Off removes it
-            entirely rather than hiding it, so nothing is left animating.
+            A slow drift of the current track&apos;s colour behind every screen. At zero it is
+            removed rather than hidden, so nothing is left animating.
           </Text>
         </View>
 
         <SectionHeader title="Surfaces" />
         <View style={styles.block}>
-          <Segmented
-            options={BLUR_OPTIONS}
-            value={blurEnabled && blurAvailable ? 'on' : 'off'}
-            onChange={(next) => setBlurEnabled(next === 'on')}
+          <Slider
+            label="Blur"
+            value={blurIntensity}
+            onChange={setBlurIntensity}
+            min={0}
+            max={100}
+            step={5}
+            disabled={!blurAvailable}
+            readout={blurAvailable ? `${Math.round(blurIntensity)}` : 'Unavailable'}
+          />
+          <Slider
+            label="Tint"
+            value={surfaceOpacity}
+            onChange={setSurfaceOpacity}
+            min={0}
+            max={1}
+            step={0.05}
+            readout={`${Math.round(surfaceOpacity * 100)}%`}
           />
           <Text style={styles.hint}>
             {blurAvailable
-              ? 'The dock, the search field and the tab strips blur what passes behind them.'
-              : 'This build has no blur module, so these surfaces are solid regardless. Installing a newer build enables the choice.'}
+              ? 'The dock, the search field and the tab strips blur what passes behind them, under a tint of the surface colour. Blur at zero makes them solid.'
+              : 'This build has no blur module, so these surfaces stay solid and the blur slider does nothing. A newer build enables it.'}
           </Text>
         </View>
 
