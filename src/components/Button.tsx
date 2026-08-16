@@ -1,4 +1,6 @@
-import { ActivityIndicator, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View, type ViewStyle } from 'react-native';
+
+import { PressScale } from './Pressable';
 
 import { hairline, radius, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
@@ -53,19 +55,16 @@ export function Button({
       : color.textPrimary;
 
   return (
-    <Pressable
+    <PressScale
       accessibilityRole="button"
       accessibilityState={{ disabled: inert, busy }}
       onPress={onPress}
       disabled={inert}
-      style={({ pressed }) => [
+      style={[
         styles.base,
         isPrimary ? styles.primary : surface === 'panel' ? styles.outlinePanel : styles.outlinePaper,
         fullWidth && styles.fullWidth,
         inert && (isPrimary ? styles.primaryInert : styles.outlineInert),
-        // Opacity rather than a color shift: the palette has no "pressed"
-        // token, and inventing one would mean a value the spec doesn't define.
-        pressed && !inert && styles.pressed,
         style,
       ]}
     >
@@ -76,7 +75,7 @@ export function Button({
           {label}
         </Text>
       )}
-    </Pressable>
+    </PressScale>
   );
 }
 
@@ -115,7 +114,6 @@ const makeStyles = (color: Palette) => StyleSheet.create({
   },
   outlineInert: { opacity: 0.4 },
 
-  pressed: { opacity: 0.7 },
   label: { ...type.body },
 
   row: { flexDirection: 'row', gap: space[3] },

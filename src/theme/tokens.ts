@@ -109,6 +109,19 @@ export const palettes: Record<'light' | 'dark', Palette> = {
  */
 export const color = palettes.dark;
 
+/**
+ * Applies an alpha to a #rrggbb token.
+ *
+ * React Native accepts #rrggbbaa, so this stays a plain string rather than
+ * needing rgba() plumbing through every style.
+ */
+export function withAlpha(hex: string, alpha: number): string {
+  const byte = Math.round(Math.min(1, Math.max(0, alpha)) * 255)
+    .toString(16)
+    .padStart(2, '0');
+  return `${hex}${byte}`;
+}
+
 // ---------------------------------------------------------------------------
 // 2. Typography
 // ---------------------------------------------------------------------------
@@ -208,6 +221,15 @@ export const layout = {
   artworkWidthRatio: 0.8,
   /** Corner radius of the floating dock and the cards that echo it. */
   dockRadius: 16,
+  /**
+   * Opacity of the floating surfaces — dock, search card, tab strips, the
+   * format capsule.
+   *
+   * Real blur needs expo-blur, which is a native module and therefore a new
+   * build; until then these are translucent only. Kept high enough that text
+   * on them stays readable over a moving list underneath.
+   */
+  floatingOpacity: 0.75,
 } as const;
 
 // ---------------------------------------------------------------------------

@@ -5,6 +5,7 @@ import { useNavigation } from '@react-navigation/native';
 import TrackPlayer, { Event, useActiveMediaItem, type MediaItem } from '@rntp/player';
 
 import { AmbientBackground } from '../components/AmbientBackground';
+import { DismissibleSheet } from '../components/DismissibleSheet';
 import { Button } from '../components/Button';
 import { IconTrash } from '../components/icons';
 import { ListRow } from '../components/ListRow';
@@ -97,7 +98,10 @@ export function QueueScreen() {
   const totalDuration = queue.reduce((sum, item) => sum + (item.duration ?? 0), 0);
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top }]}>
+    <DismissibleSheet
+      onDismiss={() => navigation.goBack()}
+      style={[styles.root, { paddingTop: insets.top }]}
+    >
       <AmbientBackground intensity={0.5} />
 
       <ScreenHeader
@@ -164,7 +168,7 @@ export function QueueScreen() {
           ) : null
         }
       />
-    </View>
+    </DismissibleSheet>
   );
 }
 

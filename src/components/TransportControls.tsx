@@ -69,6 +69,9 @@ export function TransportControls({
           color={shuffle ? color.textInverse : color.textInverseSecondary}
           strokeWidth={icon.strokeWidth}
         />
+        {/* Lit and dotted when on, matching how repeat reports itself — the
+            icon tint alone was too easy to miss at 18px. */}
+        {shuffle && <View style={styles.activeDot} />}
       </SecondaryControl>
 
       <SecondaryControl
@@ -120,7 +123,7 @@ export function TransportControls({
         />
         {/* "Repeat one" needs distinguishing from "repeat all" without a
             second icon or hue, so it gets a small accent dot. */}
-        {repeat === 'one' && <View style={styles.repeatDot} />}
+        {repeat === 'one' && <View style={styles.activeDot} />}
       </SecondaryControl>
     </View>
   );
@@ -182,7 +185,7 @@ const makeStyles = (color: Palette) => StyleSheet.create({
   },
   disabled: { opacity: 0.3 },
   pressed: { opacity: 0.7 },
-  repeatDot: {
+  activeDot: {
     position: 'absolute',
     bottom: 8,
     width: 3,

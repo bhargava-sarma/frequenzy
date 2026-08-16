@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   Easing,
   cancelAnimation,
-  runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
@@ -20,6 +18,7 @@ import TrackPlayer, {
 } from '@rntp/player';
 
 import { AmbientBackground } from '../components/AmbientBackground';
+import { DismissibleSheet } from '../components/DismissibleSheet';
 import { ArtworkWell, FormatBadge } from '../components/ArtworkWell';
 import { SleepTimerSheet } from '../components/SleepTimerSheet';
 import { ProgressBar } from '../components/ProgressBar';
@@ -34,8 +33,9 @@ import {
   IconPlaylist,
 } from '../components/icons';
 import { extrasOf } from '../player/trackMapping';
+import { usePlayerStore } from '../store/usePlayerStore';
 import { useServerStore } from '../store/useServerStore';
-import { hairline, icon, layout, motion, space, type } from '../theme/tokens';
+import { hairline, icon, layout, motion, space, type, withAlpha } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 
@@ -55,11 +55,6 @@ import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
  * you actually want to go from a track you're listening to, and making you
  * back out and search for them was the long way round.
  */
-/** How far the sheet must travel before releasing dismisses it. */
-const DISMISS_DISTANCE = 120;
-/** ...or how fast it must be moving, for a flick. */
-const DISMISS_VELOCITY = 800;
-
 /** Peak of the artwork swell, and how long one breath takes. */
 const BREATH_SCALE = 1.015;
 const BREATH_PERIOD_MS = 2600;
@@ -76,7 +71,8 @@ export function NowPlayingScreen() {
   const progress = useProgress(1);
   const client = useServerStore((state) => state.client);
 
-  const [shuffle, setShuffle] = useState(false);
+  const shuffled = usePlayerStore((state) => state.shuffled);
+  const setShuffled = usePlayerStore((state) => state.setShuffled);
   const [repeat, setRepeat] = useState<RepeatMode>(RepeatMode.Off);
   const [timerOpen, setTimerOpen] = useState(false);
   const [sleepRemaining, setSleepRemaining] = useState<number | null>(null);
@@ -106,42 +102,6 @@ export function NowPlayingScreen() {
 
   const artSize = Math.round(width * layout.artworkWidthRatio);
 
-  /**
-   * Drag the sheet down to dismiss.
-   *
-   * The native stack has no swipe-to-dismiss for modals on Android, so the
-   * only way off this screen was the chevron. This moves the whole screen with
-   * the finger and hands back to the navigator once it has travelled far
-   * enough, which is the gesture every other player has.
-   */
-  const dragY = useSharedValue(0);
-
-  const dismiss = useCallback(() => navigation.goBack(), [navigation]);
-
-  const swipeDown = Gesture.Pan()
-    // Vertical only, and only downward: an upward drag should do nothing
-    // rather than lift the screen off its own top edge.
-    .activeOffsetY(24)
-    .failOffsetX([-20, 20])
-    .onUpdate((event) => {
-      dragY.value = Math.max(0, event.translationY);
-    })
-    .onEnd((event) => {
-      // Either far enough or fast enough — a quick flick should not have to
-      // cover the same distance as a slow drag.
-      if (dragY.value > DISMISS_DISTANCE || event.velocityY > DISMISS_VELOCITY) {
-        runOnJS(dismiss)();
-        return;
-      }
-      dragY.value = withTiming(0, {
-        duration: motion.durationBase,
-        easing: Easing.bezier(...motion.easing),
-      });
-    });
-
-  const sheetStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: dragY.value }],
-  }));
 
   if (!activeItem) {
     return (
@@ -190,8 +150,7 @@ export function NowPlayingScreen() {
   }
 
   return (
-    <GestureDetector gesture={swipeDown}>
-      <Animated.View style={[styles.root, { paddingTop: insets.top }, sheetStyle]}>
+    <DismissibleSheet onDismiss={() => navigation.goBack()} style={[styles.root, { paddingTop: insets.top }]}>
         {/* Behind everything, tinted by the current cover. */}
         <AmbientBackground />
 
@@ -281,18 +240,16 @@ export function NowPlayingScreen() {
 
           <TransportControls
             playing={isPlaying}
-            shuffle={shuffle}
+            shuffle={shuffled}
             repeat={
               repeat === RepeatMode.One ? 'one' : repeat === RepeatMode.All ? 'all' : 'off'
             }
             onPlayPause={() => (isPlaying ? TrackPlayer.pause() : TrackPlayer.play())}
             onPrevious={() => TrackPlayer.skipToPrevious()}
             onNext={() => TrackPlayer.skipToNext()}
-            onToggleShuffle={() => {
-              const next = !shuffle;
-              TrackPlayer.setShuffleEnabled(next);
-              setShuffle(next);
-            }}
+            // Reorders the real queue rather than flipping the player's own
+            // shuffle mode, so what the queue screen shows stays true.
+            onToggleShuffle={() => void setShuffled(!shuffled)}
             onCycleRepeat={() => {
               const next =
                 repeat === RepeatMode.Off
@@ -339,8 +296,7 @@ export function NowPlayingScreen() {
           remainingSeconds={sleepRemaining}
           onChanged={readSleepTimer}
         />
-      </Animated.View>
-    </GestureDetector>
+    </DismissibleSheet>
   );
 }
 
@@ -510,7 +466,7 @@ const makeStyles = (color: Palette) =>
       borderRadius: layout.dockRadius,
       borderWidth: hairline,
       borderColor: color.panelLine,
-      backgroundColor: color.panelRaised,
+      backgroundColor: withAlpha(color.panelRaised, layout.floatingOpacity),
     },
     progress: { marginTop: space[2], marginBottom: space[5] },
 

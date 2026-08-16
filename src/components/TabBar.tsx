@@ -4,7 +4,7 @@ import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { StackActions } from '@react-navigation/native';
 
 import { MiniPlayer } from './MiniPlayer';
-import { hairline, icon, layout, space } from '../theme/tokens';
+import { hairline, icon, layout, space, withAlpha } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import { emitSearchRequested } from '../utils/tabEvents';
@@ -123,7 +123,7 @@ const makeStyles = (color: Palette) =>
       right: DOCK_MARGIN,
     },
     dock: {
-      backgroundColor: color.panel,
+      backgroundColor: withAlpha(color.panel, layout.floatingOpacity),
       borderRadius: layout.dockRadius,
       borderWidth: hairline,
       borderColor: color.panelLine,

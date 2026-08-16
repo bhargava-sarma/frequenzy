@@ -104,9 +104,26 @@ function HomeNavigator() {
   );
 }
 
+/**
+ * Tabs cross-fade instead of cutting.
+ *
+ * Switching tabs was the one navigation in the app with no transition at all,
+ * which made it the one that felt like a page reload. A fade at the same
+ * duration as everything else makes the three tabs read as one surface
+ * changing rather than three screens being swapped.
+ */
+const tabScreenOptions = {
+  ...screenOptions,
+  animation: 'fade' as const,
+  transitionSpec: {
+    animation: 'timing' as const,
+    config: { duration: motion.durationBase },
+  },
+};
+
 function TabNavigator() {
   return (
-    <Tabs.Navigator screenOptions={screenOptions} tabBar={(props) => <TabBar {...props} />}>
+    <Tabs.Navigator screenOptions={tabScreenOptions} tabBar={(props) => <TabBar {...props} />}>
       <Tabs.Screen name="Home" component={HomeNavigator} />
       <Tabs.Screen name="Search" component={SearchNavigator} />
       <Tabs.Screen name="Library" component={LibraryNavigator} />

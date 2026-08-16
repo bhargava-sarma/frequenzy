@@ -1,6 +1,7 @@
 import { FlatList, StyleSheet } from 'react-native';
+import Animated, { FadeIn } from 'react-native-reanimated';
 
-import { layout, space } from '../theme/tokens';
+import { layout, motion, space } from '../theme/tokens';
 import { AlbumTile } from './AlbumTile';
 import { SectionHeader } from './SectionHeader';
 import type { AlbumSummary } from '../types/subsonic';
@@ -30,7 +31,7 @@ export function Shelf({ title, albums, tileSize, artworkUri, onSelect }: ShelfPr
   if (albums.length === 0) return null;
 
   return (
-    <>
+    <Animated.View entering={FadeIn.duration(motion.durationBase)}>
       <SectionHeader title={title} />
       <FlatList
         data={albums}
@@ -48,7 +49,7 @@ export function Shelf({ title, albums, tileSize, artworkUri, onSelect }: ShelfPr
           />
         )}
       />
-    </>
+    </Animated.View>
   );
 }
 

@@ -41,6 +41,15 @@ interface PlayerStore {
    * "Playing next" grouping on the queue screen.
    */
   priorityCount: number;
+  /**
+   * Whether the queue is shuffled.
+   *
+   * Lives here rather than in the Now Playing screen because shuffle is
+   * started from albums, playlists and artists too — held locally, the
+   * player's own shuffle indicator stayed dark after pressing Shuffle
+   * anywhere else, which is exactly what it is there to report.
+   */
+  shuffled: boolean;
 
   init: () => void;
 
@@ -48,6 +57,13 @@ interface PlayerStore {
   playNow: (songs: Child[], startIndex?: number) => Promise<void>;
   /** Replaces the queue with a shuffled copy and plays from the top. */
   shufflePlay: (songs: Child[]) => Promise<void>;
+  /**
+   * Reshuffles what's left, or restores the running order.
+   *
+   * Turning shuffle on always produces a new order, so toggling it off and on
+   * again gives a different sequence rather than the one you just rejected.
+   */
+  setShuffled: (shuffled: boolean) => Promise<void>;
   /** Inserts at the front of the hand-picked region — plays next. */
   playNext: (songs: Child[]) => Promise<void>;
   /** Inserts at the end of the hand-picked region. */
@@ -130,7 +146,7 @@ async function applyQueueChange(
  * hand-picked region point at the wrong tracks and the queue screen lie about
  * what comes next.
  */
-function shuffled<T>(items: T[]): T[] {
+function shuffleList<T>(items: T[]): T[] {
   const out = [...items];
   for (let i = out.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -171,10 +187,20 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
     return activeIndex + 1 + get().priorityCount;
   }
 
+  /**
+   * The collection currently playing, in the order it was given.
+   *
+   * Kept so turning shuffle off can restore the running order — the player's
+   * queue only holds whatever order is playing now, and an album put back in
+   * a random order is not "shuffle off".
+   */
+  let source: Child[] = [];
+
   return {
     ready: false,
     error: null,
     priorityCount: 0,
+    shuffled: false,
 
     init: () => {
       if (get().ready) return;
@@ -194,6 +220,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
       // Build before touching the queue: if URL construction fails, the current
       // queue is left intact rather than cleared into an empty player.
       const items = await buildItems(songs);
+      source = songs;
 
       // A non-empty queue is proof the controller is live, which is all this
       // needs to establish — play() is dispatched on the same native queue as
@@ -212,7 +239,45 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
     },
 
     shufflePlay: async (songs) => {
-      await get().playNow(shuffled(songs));
+      const order = shuffleList(songs);
+      await get().playNow(order);
+      // playNow records the shuffled order as the source, so put the original
+      // back — that is what "shuffle off" has to restore.
+      source = songs;
+      set({ shuffled: true });
+    },
+
+    setShuffled: async (next) => {
+      if (source.length === 0) {
+        set({ shuffled: next });
+        return;
+      }
+
+      const activeIndex = TrackPlayer.getActiveMediaItemIndex();
+      const current = TrackPlayer.getActiveMediaItem();
+      const currentId = current?.mediaId;
+
+      // Keep playing what's playing. Rebuilding the queue around the current
+      // track means shuffle never interrupts the song you are listening to.
+      const rest = source.filter((song) => song.id !== currentId);
+      const ordered = next ? shuffleList(rest) : rest;
+
+      const currentSong = source.find((song) => song.id === currentId);
+      const queue = currentSong ? [currentSong, ...ordered] : ordered;
+
+      set({ shuffled: next });
+
+      if (queue.length === 0 || activeIndex == null) return;
+
+      const items = await buildItems(queue);
+      await applyQueueChange(
+        () => TrackPlayer.setMediaItems(items, 0),
+        () => TrackPlayer.getQueue().length > 0,
+        { refire: true },
+      );
+
+      lastActiveIndex = 0;
+      set({ priorityCount: 0 });
     },
 
     playNext: async (songs) => {
@@ -278,7 +343,8 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
 
     clearQueue: () => {
       lastActiveIndex = -1;
-      set({ priorityCount: 0 });
+      source = [];
+      set({ priorityCount: 0, shuffled: false });
       TrackPlayer.clear();
     },
   };

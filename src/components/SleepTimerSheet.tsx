@@ -1,4 +1,4 @@
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Modal, Pressable, StyleSheet, Text } from 'react-native';
 import TrackPlayer from '@rntp/player';
 
 import { SectionHeader } from './SectionHeader';

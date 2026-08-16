@@ -122,13 +122,19 @@ export function SwipeableRow({
     transform: [{ translateX: translateX.value }],
   }));
 
-  // Each reveal is only visible while the drag is heading its way, so the two
-  // never show at once.
+  /**
+   * Each reveal is exactly as wide as the strip the row has uncovered.
+   *
+   * It used to be a full-width panel behind an opaque row, which worked but
+   * forced the row to paint the ground — and that painted over the ambient
+   * wash on every list in the app. Sizing the reveal to the gap instead means
+   * the row can be transparent, because there is nothing behind it to hide.
+   */
   const rightRevealStyle = useAnimatedStyle(() => ({
-    opacity: translateX.value > 0 ? 1 : 0,
+    width: Math.max(0, translateX.value),
   }));
   const leftRevealStyle = useAnimatedStyle(() => ({
-    opacity: translateX.value < 0 ? 1 : 0,
+    width: Math.max(0, -translateX.value),
   }));
 
   return (
@@ -176,20 +182,21 @@ function toneStyle(action: SwipeAction, color: Palette) {
 }
 
 const makeStyles = (color: Palette) => StyleSheet.create({
-  root: { position: 'relative', backgroundColor: color.paper },
-  row: { flex: 1, backgroundColor: color.paper },
+  root: { position: 'relative' },
+  row: { flex: 1 },
 
   reveal: {
     position: 'absolute',
     top: 0,
-    left: 0,
-    right: 0,
     bottom: 0,
     justifyContent: 'center',
     paddingHorizontal: layout.screenPadding,
+    // Clipped so the label and icon disappear with the strip rather than
+    // spilling past its edge as it narrows.
+    overflow: 'hidden',
   },
-  revealLeft: { alignItems: 'flex-start' },
-  revealRight: { alignItems: 'flex-end' },
+  revealLeft: { left: 0, alignItems: 'flex-start' },
+  revealRight: { right: 0, alignItems: 'flex-end' },
   revealContent: { flexDirection: 'row', alignItems: 'center', gap: space[2] },
   revealLabel: { ...type.label },
 });

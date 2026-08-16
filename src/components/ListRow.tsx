@@ -113,7 +113,8 @@ const makeStyles = (color: Palette) => StyleSheet.create({
     alignItems: 'center',
     height: layout.rowHeight,
     paddingHorizontal: layout.screenPadding,
-    backgroundColor: color.paper,
+    // No fill: an opaque row would paint over the ambient wash behind it, and
+    // there is nothing underneath a row that needs hiding.
   },
   separator: {
     borderBottomWidth: hairline,

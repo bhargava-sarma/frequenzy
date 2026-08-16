@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -10,12 +11,13 @@ import { ListRow } from '../components/ListRow';
 import { Segmented } from '../components/Segmented';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenState';
 import { DOCK_CLEARANCE } from '../components/TabBar';
-import { IconX } from '../components/icons';
+import { SwipeableRow } from '../components/SwipeableRow';
+import { IconHeart, IconHeartFilled, IconPlus, IconX } from '../components/icons';
 import { useArtwork } from '../hooks/useArtwork';
 import type { SearchStackParamList } from '../navigation/types';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { useServerStore } from '../store/useServerStore';
-import { hairline, icon, layout, space, type } from '../theme/tokens';
+import { hairline, icon, layout, motion, space, type, withAlpha } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import type { AlbumSummary, ArtistSummary, Child } from '../types/subsonic';
@@ -141,6 +143,42 @@ export function SearchScreen() {
 
   const hasQuery = query.trim().length > 0;
 
+  /**
+   * Favourites are server-side truth, so this writes through and patches the
+   * local copy rather than refetching — a search result set is a query, and
+   * re-running it to learn one boolean would reshuffle the list under you.
+   */
+  async function toggleStar(song: Child) {
+    if (!client) return;
+    const next = song.starred ? undefined : new Date().toISOString();
+
+    setResults((current) =>
+      current
+        ? {
+            ...current,
+            songs: current.songs.map((s) => (s.id === song.id ? { ...s, starred: next } : s)),
+          }
+        : current,
+    );
+
+    try {
+      if (song.starred) await client.unstar({ id: song.id });
+      else await client.star({ id: song.id });
+    } catch {
+      // Put it back: the row should not claim a favourite the server refused.
+      setResults((current) =>
+        current
+          ? {
+              ...current,
+              songs: current.songs.map((s) =>
+                s.id === song.id ? { ...s, starred: song.starred } : s,
+              ),
+            }
+          : current,
+      );
+    }
+  }
+
   return (
     <View style={[styles.root, { paddingTop: insets.top + space[3] }]}>
       <AmbientBackground intensity={0.5} />
@@ -187,9 +225,10 @@ export function SearchScreen() {
         </View>
       </View>
 
+      {/* Keyed on the scope so switching tabs crossfades the results. */}
+      <Animated.View key={scope} style={styles.list} entering={FadeIn.duration(motion.durationBase)}>
       <FlatList
         data={shown}
-        key={scope}
         keyExtractor={(item) => item.id}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
@@ -250,22 +289,42 @@ export function SearchScreen() {
 
           const song = item as Child;
           return (
-            <ListRow
-              title={song.title}
-              meta={[song.artist, song.duration ? formatDuration(song.duration) : null]
-                .filter(Boolean)
-                .join(' · ')}
-              artworkUri={artworkUrl(song.coverArt)}
-              action="queue"
-              last={index === shown.length - 1}
-              onPress={() => void playNow([song])}
-              // The trailing action queues rather than plays, matching the
-              // icon and matching what it does everywhere else.
-              onActionPress={() => void addToQueue([song])}
-            />
+            // Swipeable like every other track row in the app — search results
+            // were the one place a track couldn't be queued by gesture.
+            <SwipeableRow
+              rightSwipe={{
+                icon: <IconPlus size={icon.size} color={color.accentInk} strokeWidth={2} />,
+                label: 'Queue',
+                onAction: () => void addToQueue([song]),
+              }}
+              leftSwipe={{
+                icon: song.starred ? (
+                  <IconHeartFilled size={icon.size} color={color.accentInk} />
+                ) : (
+                  <IconHeart size={icon.size} color={color.accentInk} strokeWidth={2} />
+                ),
+                label: song.starred ? 'Unstar' : 'Star',
+                onAction: () => void toggleStar(song),
+              }}
+            >
+              <ListRow
+                title={song.title}
+                meta={[song.artist, song.duration ? formatDuration(song.duration) : null]
+                  .filter(Boolean)
+                  .join(' · ')}
+                artworkUri={artworkUrl(song.coverArt)}
+                action="queue"
+                last={index === shown.length - 1}
+                onPress={() => void playNow([song])}
+                // The trailing action queues rather than plays, matching the
+                // icon and matching what it does everywhere else.
+                onActionPress={() => void addToQueue([song])}
+              />
+            </SwipeableRow>
           );
         }}
       />
+      </Animated.View>
     </View>
   );
 }
@@ -273,10 +332,11 @@ export function SearchScreen() {
 const makeStyles = (color: Palette) =>
   StyleSheet.create({
     root: { flex: 1, backgroundColor: color.paper },
+    list: { flex: 1 },
 
     searchBar: { paddingHorizontal: layout.screenPadding, paddingBottom: space[4] },
     card: {
-      backgroundColor: color.panel,
+      backgroundColor: withAlpha(color.panel, layout.floatingOpacity),
       borderRadius: layout.dockRadius,
       borderWidth: hairline,
       borderColor: color.panelLine,

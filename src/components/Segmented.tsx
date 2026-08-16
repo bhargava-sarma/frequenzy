@@ -1,7 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { LinearTransition } from 'react-native-reanimated';
 
-import { hairline, layout, motion, space, type } from '../theme/tokens';
+import { hairline, layout, motion, space, type, withAlpha } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useThemedStyles } from '../theme/ThemeProvider';
 
@@ -83,6 +83,7 @@ const makeStyles = (color: Palette) =>
       borderWidth: hairline,
       borderColor: color.paperLine,
       borderRadius: layout.dockRadius,
+      backgroundColor: withAlpha(color.panel, layout.floatingOpacity),
       // Clips the selected fill to the outer radius so the corners stay tight.
       overflow: 'hidden',
     },

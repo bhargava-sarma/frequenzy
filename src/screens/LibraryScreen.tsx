@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FlatList, RefreshControl, StyleSheet, useWindowDimensions, View } from 'react-native';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -16,7 +17,7 @@ import { useArtwork } from '../hooks/useArtwork';
 import { useLibraryData } from '../hooks/useLibraryData';
 import { LIKED_PLAYLIST_ID, type LibraryStackParamList } from '../navigation/types';
 import { useServerStore } from '../store/useServerStore';
-import { layout, space } from '../theme/tokens';
+import { layout, motion, space } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import type { Playlist } from '../types/subsonic';
@@ -204,7 +205,15 @@ export function LibraryScreen() {
       <View style={styles.switch}>
         <Segmented options={MODES} value={mode} onChange={switchMode} />
       </View>
-      {children}
+      {/* Keyed on the mode so switching crossfades the list rather than
+          swapping it in a single frame. */}
+      <Animated.View
+        key={mode}
+        style={styles.list}
+        entering={FadeIn.duration(motion.durationBase)}
+      >
+        {children}
+      </Animated.View>
     </View>
   );
 
@@ -298,6 +307,7 @@ export function LibraryScreen() {
 const makeStyles = (color: Palette) =>
   StyleSheet.create({
     root: { flex: 1, backgroundColor: color.paper },
+    list: { flex: 1 },
     switch: {
       paddingHorizontal: layout.screenPadding,
       paddingTop: space[4],

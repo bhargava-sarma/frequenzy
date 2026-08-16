@@ -1,7 +1,8 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text } from 'react-native';
+import Animated, { FadeIn } from 'react-native-reanimated';
 
 import { Button } from './Button';
-import { layout, space, type } from '../theme/tokens';
+import { layout, motion, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useThemedStyles } from '../theme/ThemeProvider';
 
@@ -17,34 +18,34 @@ import { useThemedStyles } from '../theme/ThemeProvider';
 export function LoadingState({ label = 'Loading' }: { label?: string }) {
   const styles = useThemedStyles(makeStyles);
   return (
-    <View style={styles.root}>
+    <Animated.View style={styles.root} entering={FadeIn.duration(motion.durationBase)}>
       <Text style={styles.label}>{label}</Text>
-    </View>
+    </Animated.View>
   );
 }
 
 export function EmptyState({ label, hint }: { label: string; hint?: string }) {
   const styles = useThemedStyles(makeStyles);
   return (
-    <View style={styles.root}>
+    <Animated.View style={styles.root} entering={FadeIn.duration(motion.durationBase)}>
       <Text style={styles.label}>{label}</Text>
       {hint != null && <Text style={styles.hint}>{hint}</Text>}
-    </View>
+    </Animated.View>
   );
 }
 
 export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
   const styles = useThemedStyles(makeStyles);
   return (
-    <View style={styles.root}>
+    <Animated.View style={styles.root} entering={FadeIn.duration(motion.durationBase)}>
       <Text style={[styles.label, styles.errorLabel]}>Something went wrong</Text>
       <Text style={styles.hint}>{message}</Text>
       {onRetry && (
-        <View style={styles.action}>
+        <Animated.View style={styles.action}>
           <Button label="Try again" onPress={onRetry} />
-        </View>
+        </Animated.View>
       )}
-    </View>
+    </Animated.View>
   );
 }
 
