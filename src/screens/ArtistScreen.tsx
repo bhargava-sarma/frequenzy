@@ -5,6 +5,7 @@ import { useNavigation, useRoute, type RouteProp } from '@react-navigation/nativ
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { AmbientBackground } from '../components/AmbientBackground';
+import { ExpandFrom } from '../components/ExpandFrom';
 import { Button, ButtonRow } from '../components/Button';
 import { ListRow } from '../components/ListRow';
 import { DOCK_CLEARANCE } from '../components/TabBar';
@@ -76,75 +77,78 @@ export function ArtistScreen() {
   }
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top }]}>
-      <AmbientBackground />
+    <ExpandFrom>
+      <View style={[styles.root, { paddingTop: insets.top }]}>
+        <AmbientBackground />
 
-      <ScreenHeader title={title} onBack={() => navigation.goBack()} />
+        <ScreenHeader title={title} onBack={() => navigation.goBack()} />
 
-      <FlatList
-        data={albums}
-        keyExtractor={(album) => album.id}
-        ListHeaderComponent={
-          albums.length > 0 ? (
-            <View>
-              <View style={styles.actions}>
-                <ButtonRow>
-                  <Button
-                    label="Play"
-                    variant="primary"
-                    busy={gathering}
-                    onPress={() => void startPlayback('ordered')}
-                  />
-                  <Button
-                    label="Shuffle"
-                    busy={gathering}
-                    onPress={() => void startPlayback('shuffled')}
-                  />
-                </ButtonRow>
+        <FlatList
+          data={albums}
+          keyExtractor={(album) => album.id}
+          ListHeaderComponent={
+            albums.length > 0 ? (
+              <View>
+                <View style={styles.actions}>
+                  <ButtonRow>
+                    <Button
+                      label="Play"
+                      variant="primary"
+                      busy={gathering}
+                      onPress={() => void startPlayback('ordered')}
+                    />
+                    <Button
+                      label="Shuffle"
+                      busy={gathering}
+                      onPress={() => void startPlayback('shuffled')}
+                    />
+                  </ButtonRow>
+                </View>
+                <SectionHeader title="Albums" count={pluralize(albums.length, 'album')} />
               </View>
-              <SectionHeader title="Albums" count={pluralize(albums.length, 'album')} />
-            </View>
-          ) : null
-        }
-        ListEmptyComponent={
-          loading ? (
-            <LoadingState />
-          ) : error ? (
-            <ErrorState message={error} onRetry={refresh} />
-          ) : (
-            <EmptyState label="No albums" />
-          )
-        }
-        contentContainerStyle={albums.length ? styles.listContent : styles.emptyContainer}
-        renderItem={({ item, index }) => (
-          <ListRow
-            title={item.name}
-            meta={[
-              item.year ? String(item.year) : null,
-              item.songCount != null ? pluralize(item.songCount, 'track') : null,
-              item.duration ? formatDuration(item.duration) : null,
-            ]
-              .filter(Boolean)
-              .join(' · ')}
-            artworkUri={artworkUrl(item.coverArt)}
-            last={index === albums.length - 1}
-            onPress={() =>
-              navigation.navigate('Album', { albumId: item.id, albumName: item.name })
-            }
-          />
-        )}
-      />
-    </View>
+            ) : null
+          }
+          ListEmptyComponent={
+            loading ? (
+              <LoadingState />
+            ) : error ? (
+              <ErrorState message={error} onRetry={refresh} />
+            ) : (
+              <EmptyState label="No albums" />
+            )
+          }
+          contentContainerStyle={albums.length ? styles.listContent : styles.emptyContainer}
+          renderItem={({ item, index }) => (
+            <ListRow
+              title={item.name}
+              meta={[
+                item.year ? String(item.year) : null,
+                item.songCount != null ? pluralize(item.songCount, 'track') : null,
+                item.duration ? formatDuration(item.duration) : null,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+              artworkUri={artworkUrl(item.coverArt)}
+              last={index === albums.length - 1}
+              onPress={() =>
+                navigation.navigate('Album', { albumId: item.id, albumName: item.name })
+              }
+            />
+          )}
+        />
+      </View>
+    </ExpandFrom>
   );
 }
 
-const makeStyles = (color: Palette) => StyleSheet.create({
-  root: { flex: 1, backgroundColor: color.paper },
-  actions: {
-    paddingHorizontal: layout.screenPadding,
-    paddingTop: space[5],
-    alignItems: 'center',
-  },
-  listContent: { paddingBottom: DOCK_CLEARANCE },
-  emptyContainer: { flexGrow: 1, paddingBottom: DOCK_CLEARANCE },
-});
+const makeStyles = (color: Palette) =>
+  StyleSheet.create({
+    root: { flex: 1, backgroundColor: color.paper },
+    actions: {
+      paddingHorizontal: layout.screenPadding,
+      paddingTop: space[5],
+      alignItems: 'center',
+    },
+    listContent: { paddingBottom: DOCK_CLEARANCE },
+    emptyContainer: { flexGrow: 1, paddingBottom: DOCK_CLEARANCE },
+  });

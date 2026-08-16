@@ -6,6 +6,7 @@ import { useActiveMediaItem } from '@rntp/player';
 
 import { AddToPlaylistSheet } from '../components/AddToPlaylistSheet';
 import { AmbientBackground } from '../components/AmbientBackground';
+import { ExpandFrom } from '../components/ExpandFrom';
 import { ArtworkWell } from '../components/ArtworkWell';
 import { Button, ButtonRow } from '../components/Button';
 import { IconHeart, IconHeartFilled, IconPlus } from '../components/icons';
@@ -70,117 +71,132 @@ export function AlbumScreen() {
   }
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top }]}>
-      <AmbientBackground />
+    <ExpandFrom>
+      <View style={[styles.root, { paddingTop: insets.top }]}>
+        <AmbientBackground />
 
-      <ScreenHeader title={title} onBack={() => navigation.goBack()} />
+        <ScreenHeader title={title} onBack={() => navigation.goBack()} />
 
-      <FlatList
-        data={songs}
-        {...HEAVY_LIST_PROPS}
-        keyExtractor={(song) => song.id}
-        ListHeaderComponent={
-          album ? (
-            <View>
-              <View style={styles.hero}>
-                <ArtworkWell uri={artworkUrl(album.coverArt, 600)} size={180} surface="paper" />
-                <Text style={styles.albumTitle} numberOfLines={2}>
-                  {album.name}
-                </Text>
-                <Text style={styles.albumMeta} numberOfLines={1}>
-                  {[album.artist, album.year ? String(album.year) : null]
-                    .filter(Boolean)
-                    .join(' · ')}
-                </Text>
+        <FlatList
+          data={songs}
+          {...HEAVY_LIST_PROPS}
+          keyExtractor={(song) => song.id}
+          ListHeaderComponent={
+            album ? (
+              <View>
+                <View style={styles.hero}>
+                  <ArtworkWell
+                    uri={artworkUrl(album.coverArt, 600)}
+                    size={180}
+                    surface="paper"
+                  />
+                  <Text style={styles.albumTitle} numberOfLines={2}>
+                    {album.name}
+                  </Text>
+                  <Text style={styles.albumMeta} numberOfLines={1}>
+                    {[album.artist, album.year ? String(album.year) : null]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </Text>
 
-                {/* Play and Shuffle both replace the queue with the whole
+                  {/* Play and Shuffle both replace the queue with the whole
                     album — that's the collection you asked to hear. Anything
                     added by hand keeps its place ahead of what's left. */}
-                <View style={styles.actions}>
-                  <ButtonRow>
-                    <Button label="Play" variant="primary" onPress={() => void playNow(songs)} />
-                    <Button label="Shuffle" onPress={() => void shufflePlay(songs)} />
-                  </ButtonRow>
+                  <View style={styles.actions}>
+                    <ButtonRow>
+                      <Button
+                        label="Play"
+                        variant="primary"
+                        onPress={() => void playNow(songs)}
+                      />
+                      <Button label="Shuffle" onPress={() => void shufflePlay(songs)} />
+                    </ButtonRow>
+                  </View>
                 </View>
+
+                <SectionHeader
+                  title="Tracks"
+                  count={`${pluralize(songs.length, 'track')} · ${formatDuration(totalDuration)}`}
+                />
               </View>
-
-              <SectionHeader
-                title="Tracks"
-                count={`${pluralize(songs.length, 'track')} · ${formatDuration(totalDuration)}`}
+            ) : null
+          }
+          ListEmptyComponent={
+            loading ? (
+              <LoadingState />
+            ) : error ? (
+              <ErrorState message={error} onRetry={refresh} />
+            ) : (
+              <EmptyState label="No tracks" />
+            )
+          }
+          contentContainerStyle={songs.length ? styles.listContent : styles.emptyContainer}
+          renderItem={({ item, index }) => (
+            <SwipeableRow
+              rightSwipe={{
+                icon: <IconPlus size={icon.size} color={color.accentInk} strokeWidth={2} />,
+                label: 'Queue',
+                onAction: () => void addToQueue([item]),
+              }}
+              leftSwipe={{
+                icon: item.starred ? (
+                  <IconHeartFilled size={icon.size} color={color.accentInk} />
+                ) : (
+                  <IconHeart size={icon.size} color={color.accentInk} strokeWidth={2} />
+                ),
+                label: item.starred ? 'Unstar' : 'Star',
+                onAction: () => void toggleStar(item.id, Boolean(item.starred)),
+              }}
+            >
+              <ListRow
+                title={item.title}
+                meta={[item.artist, item.duration ? formatDuration(item.duration) : null]
+                  .filter(Boolean)
+                  .join(' · ')}
+                showArtwork={false}
+                action="favorite"
+                favorited={Boolean(item.starred)}
+                active={item.id === activeId}
+                last={index === songs.length - 1}
+                // Starting mid-album queues the whole album from that point,
+                // rather than the single track — the queue is the point.
+                onPress={() => void playNow(songs, index)}
+                // Long-press is the app-wide gesture for "do something else
+                // with this track".
+                onLongPress={() => setAddTargets([item.id])}
+                onActionPress={() => void toggleStar(item.id, Boolean(item.starred))}
               />
-            </View>
-          ) : null
-        }
-        ListEmptyComponent={
-          loading ? (
-            <LoadingState />
-          ) : error ? (
-            <ErrorState message={error} onRetry={refresh} />
-          ) : (
-            <EmptyState label="No tracks" />
-          )
-        }
-        contentContainerStyle={songs.length ? styles.listContent : styles.emptyContainer}
-        renderItem={({ item, index }) => (
-          <SwipeableRow
-            rightSwipe={{
-              icon: <IconPlus size={icon.size} color={color.accentInk} strokeWidth={2} />,
-              label: 'Queue',
-              onAction: () => void addToQueue([item]),
-            }}
-            leftSwipe={{
-              icon: item.starred ? (
-                <IconHeartFilled size={icon.size} color={color.accentInk} />
-              ) : (
-                <IconHeart size={icon.size} color={color.accentInk} strokeWidth={2} />
-              ),
-              label: item.starred ? 'Unstar' : 'Star',
-              onAction: () => void toggleStar(item.id, Boolean(item.starred)),
-            }}
-          >
-            <ListRow
-              title={item.title}
-              meta={[item.artist, item.duration ? formatDuration(item.duration) : null]
-                .filter(Boolean)
-                .join(' · ')}
-              showArtwork={false}
-              action="favorite"
-              favorited={Boolean(item.starred)}
-              active={item.id === activeId}
-              last={index === songs.length - 1}
-              // Starting mid-album queues the whole album from that point,
-              // rather than the single track — the queue is the point.
-              onPress={() => void playNow(songs, index)}
-              // Long-press is the app-wide gesture for "do something else
-              // with this track".
-              onLongPress={() => setAddTargets([item.id])}
-              onActionPress={() => void toggleStar(item.id, Boolean(item.starred))}
-            />
-          </SwipeableRow>
-        )}
-      />
+            </SwipeableRow>
+          )}
+        />
 
-      <AddToPlaylistSheet
-        visible={addTargets != null}
-        onClose={() => setAddTargets(null)}
-        songIds={addTargets ?? []}
-      />
-    </View>
+        <AddToPlaylistSheet
+          visible={addTargets != null}
+          onClose={() => setAddTargets(null)}
+          songIds={addTargets ?? []}
+        />
+      </View>
+    </ExpandFrom>
   );
 }
 
-const makeStyles = (color: Palette) => StyleSheet.create({
-  root: { flex: 1, backgroundColor: color.paper },
-  listContent: { paddingBottom: DOCK_CLEARANCE },
-  emptyContainer: { flexGrow: 1 },
+const makeStyles = (color: Palette) =>
+  StyleSheet.create({
+    root: { flex: 1, backgroundColor: color.paper },
+    listContent: { paddingBottom: DOCK_CLEARANCE },
+    emptyContainer: { flexGrow: 1 },
 
-  hero: { alignItems: 'center', paddingTop: space[5], paddingHorizontal: layout.screenPadding },
-  albumTitle: {
-    ...type.display,
-    color: color.textPrimary,
-    marginTop: space[4],
-    textAlign: 'center',
-  },
-  albumMeta: { ...type.meta, color: color.textSecondary, marginTop: space[1] },
-  actions: { marginTop: space[5], alignSelf: 'stretch', alignItems: 'center' },
-});
+    hero: {
+      alignItems: 'center',
+      paddingTop: space[5],
+      paddingHorizontal: layout.screenPadding,
+    },
+    albumTitle: {
+      ...type.display,
+      color: color.textPrimary,
+      marginTop: space[4],
+      textAlign: 'center',
+    },
+    albumMeta: { ...type.meta, color: color.textSecondary, marginTop: space[1] },
+    actions: { marginTop: space[5], alignSelf: 'stretch', alignItems: 'center' },
+  });

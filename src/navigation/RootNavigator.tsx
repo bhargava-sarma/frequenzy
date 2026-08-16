@@ -43,11 +43,17 @@ const SearchStack = createNativeStackNavigator<SearchStackParamList>();
 const HomeStack = createNativeStackNavigator<HomeStackParamList>();
 
 /**
- * Pushes are snappier than the platform default too — the same argument as the
- * sheets, applied to every drill-down in the library.
+ * Pushes cross-fade; the screen supplies the rest of the transition.
+ *
+ * The platform's lateral slide fought the expansion — content growing out of
+ * a row while the whole screen travelled in from the right reads as two
+ * animations disagreeing. A fade leaves the movement to ExpandFrom, which is
+ * the part anchored to what you actually pressed, and still gives the pop a
+ * transition rather than a cut.
  */
 const screenOptions = {
   headerShown: false,
+  animation: 'fade' as const,
   animationDuration: motion.durationScreen,
 } as const;
 
@@ -131,15 +137,6 @@ function TabNavigator() {
   );
 }
 
-/**
- * How long a sheet takes to rise and fall.
- *
- * The platform default runs ~350ms, which on a sheet this large reads as the
- * screen labouring into place. The spec's motion section asks for mechanical
- * rather than cinematic, and this is the difference.
- */
-const SHEET_DURATION_MS = motion.durationScreen;
-
 export function RootNavigator() {
   const color = useTheme();
   const { resolved } = useThemeControls();
@@ -160,11 +157,7 @@ export function RootNavigator() {
          * behind on dismissal, and a stack can only slide a screen in from an
          * edge when the player should expand out of the dock you pressed.
          */}
-        <RootStack.Screen
-          name="Settings"
-          component={SettingsScreen}
-          options={{ animation: 'slide_from_bottom' }}
-        />
+        <RootStack.Screen name="Settings" component={SettingsScreen} />
 
         {/* Development surfaces. Reachable only from the diagnostics entry
             point and excluded from release builds. */}

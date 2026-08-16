@@ -57,6 +57,8 @@ export function Button({
   return (
     <PressScale
       accessibilityRole="button"
+      // A button acts on the screen it is on; nothing grows out of it.
+      noOrigin
       accessibilityState={{ disabled: inert, busy }}
       onPress={onPress}
       disabled={inert}

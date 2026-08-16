@@ -6,6 +6,7 @@ import { useActiveMediaItem } from '@rntp/player';
 
 import { AddToPlaylistSheet } from '../components/AddToPlaylistSheet';
 import { AmbientBackground } from '../components/AmbientBackground';
+import { ExpandFrom } from '../components/ExpandFrom';
 import { ArtworkWell } from '../components/ArtworkWell';
 import { Button, ButtonRow } from '../components/Button';
 import { IconDots, IconHeartFilled, IconPlus, IconX } from '../components/icons';
@@ -137,244 +138,255 @@ export function PlaylistScreen() {
   }
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top }]}>
-      <AmbientBackground />
+    <ExpandFrom>
+      <View style={[styles.root, { paddingTop: insets.top }]}>
+        <AmbientBackground />
 
-      <ScreenHeader
-        title={title}
-        onBack={() => navigation.goBack()}
-        action={
-          // Favourites are the server's, not a playlist — there is nothing
-          // here that editing could legitimately change.
-          isLiked ? undefined : (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Playlist options"
-              hitSlop={space[3]}
-              onPress={() => setMenuOpen(true)}
-            >
-              <IconDots
-                size={icon.size}
-                strokeWidth={icon.strokeWidth}
-                color={color.textSecondary}
-              />
-            </Pressable>
-          )
-        }
-      />
-
-      <FlatList
-        data={paged.visible}
-        {...HEAVY_LIST_PROPS}
-        keyExtractor={(song, index) => `${song.id}-${index}`}
-        ListHeaderComponent={
-          playlist ? (
-            <View>
-              <View style={styles.hero}>
-                <ArtworkWell
-                  uri={artworkUrl(playlist.coverArt, 600)}
-                  size={180}
-                  surface="paper"
+        <ScreenHeader
+          title={title}
+          onBack={() => navigation.goBack()}
+          action={
+            // Favourites are the server's, not a playlist — there is nothing
+            // here that editing could legitimately change.
+            isLiked ? undefined : (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Playlist options"
+                hitSlop={space[3]}
+                onPress={() => setMenuOpen(true)}
+              >
+                <IconDots
+                  size={icon.size}
+                  strokeWidth={icon.strokeWidth}
+                  color={color.textSecondary}
                 />
-                <Text style={styles.playlistTitle} numberOfLines={2}>
-                  {playlist.name}
-                </Text>
-                {playlist.comment ? (
-                  <Text style={styles.playlistMeta} numberOfLines={2}>
-                    {playlist.comment}
+              </Pressable>
+            )
+          }
+        />
+
+        <FlatList
+          data={paged.visible}
+          {...HEAVY_LIST_PROPS}
+          keyExtractor={(song, index) => `${song.id}-${index}`}
+          ListHeaderComponent={
+            playlist ? (
+              <View>
+                <View style={styles.hero}>
+                  <ArtworkWell
+                    uri={artworkUrl(playlist.coverArt, 600)}
+                    size={180}
+                    surface="paper"
+                  />
+                  <Text style={styles.playlistTitle} numberOfLines={2}>
+                    {playlist.name}
                   </Text>
-                ) : null}
+                  {playlist.comment ? (
+                    <Text style={styles.playlistMeta} numberOfLines={2}>
+                      {playlist.comment}
+                    </Text>
+                  ) : null}
 
-                <View style={styles.actions}>
-                  <ButtonRow>
-                    <Button label="Play" variant="primary" onPress={() => void playNow(songs)} />
-                    <Button label="Shuffle" onPress={() => void shufflePlay(songs)} />
-                  </ButtonRow>
+                  <View style={styles.actions}>
+                    <ButtonRow>
+                      <Button
+                        label="Play"
+                        variant="primary"
+                        onPress={() => void playNow(songs)}
+                      />
+                      <Button label="Shuffle" onPress={() => void shufflePlay(songs)} />
+                    </ButtonRow>
+                  </View>
                 </View>
-              </View>
 
-              <SectionHeader
-                title="Tracks"
-                count={`${pluralize(songs.length, 'track')} · ${formatDuration(totalDuration)}`}
-              />
-            </View>
-          ) : null
-        }
-        ListEmptyComponent={
-          loading ? (
-            <LoadingState />
-          ) : error ? (
-            <ErrorState message={error} onRetry={refresh} />
-          ) : (
-            <EmptyState
-              label={isLiked ? 'No liked songs' : 'Empty playlist'}
-              hint={
-                isLiked
-                  ? 'Tap the heart on a track to add it here.'
-                  : 'Add tracks to it in Navidrome.'
-              }
-            />
-          )
-        }
-        contentContainerStyle={songs.length ? styles.listContent : styles.emptyContainer}
-        ListFooterComponent={
-          paged.hasMore ? (
-            <View style={styles.loadMore}>
-              <Button
-                label={`Load ${paged.nextCount} more`}
-                fullWidth
-                onPress={paged.loadMore}
-              />
-            </View>
-          ) : null
-        }
-        renderItem={({ item, index }) => (
-          <SwipeableRow
-            rightSwipe={{
-              icon: <IconPlus size={icon.size} color={color.accentInk} strokeWidth={2} />,
-              label: 'Queue',
-              onAction: () => void addToQueue([item]),
-            }}
-            leftSwipe={
-              isLiked
-                ? {
-                    icon: <IconHeartFilled size={icon.size} color={color.accentInk} />,
-                    label: 'Unstar',
-                    onAction: () => void toggleStar(item.id, true),
-                  }
-                : {
-                    icon: <IconX size={icon.size} color={color.accentInk} strokeWidth={2} />,
-                    label: 'Remove',
-                    // By position: the same track can appear twice, and the
-                    // server removes by index for exactly that reason.
-                    onAction: () => {
-                      void removeTrackAt(playlistId, index).then(refresh);
-                    },
-                  }
-            }
-          >
-            <ListRow
-              title={item.title}
-              meta={[item.artist, item.duration ? formatDuration(item.duration) : null]
-                .filter(Boolean)
-                .join(' · ')}
-              artworkUri={artworkUrl(item.coverArt)}
-              action="favorite"
-              favorited={Boolean(item.starred)}
-              active={item.id === activeId}
-              last={index === paged.visible.length - 1}
-              // Starting mid-playlist queues the rest of it from that point.
-              onPress={() => void playNow(songs, index)}
-              onLongPress={() => setAddTargets([item.id])}
-              onActionPress={() => void toggleStar(item.id, Boolean(item.starred))}
-            />
-          </SwipeableRow>
-        )}
-      />
-
-      <Sheet
-        visible={menuOpen}
-        onClose={() => {
-          setMenuOpen(false);
-          setRenaming(false);
-        }}
-        title={renaming ? 'Rename playlist' : (playlist?.name ?? 'Playlist')}
-      >
-        {renaming ? (
-          <SheetBody>
-            <TextInput
-              style={styles.input}
-              value={draftName}
-              onChangeText={setDraftName}
-              placeholder="Playlist name"
-              placeholderTextColor={color.textInverseSecondary}
-              autoFocus
-              returnKeyType="done"
-            />
-            <View style={styles.sheetActions}>
-              <ButtonRow>
-                <Button
-                  label="Save"
-                  variant="primary"
-                  disabled={draftName.trim().length === 0}
-                  onPress={() => {
-                    void renamePlaylist(playlistId, draftName).then(refresh);
-                    setMenuOpen(false);
-                    setRenaming(false);
-                  }}
+                <SectionHeader
+                  title="Tracks"
+                  count={`${pluralize(songs.length, 'track')} · ${formatDuration(totalDuration)}`}
                 />
-                <Button label="Cancel" onPress={() => setRenaming(false)} />
-              </ButtonRow>
-            </View>
-          </SheetBody>
-        ) : (
-          <>
-            <SheetOption
-              label="Add these tracks to another playlist"
-              onPress={() => {
-                setMenuOpen(false);
-                setAddTargets(songs.map((song) => song.id));
+              </View>
+            ) : null
+          }
+          ListEmptyComponent={
+            loading ? (
+              <LoadingState />
+            ) : error ? (
+              <ErrorState message={error} onRetry={refresh} />
+            ) : (
+              <EmptyState
+                label={isLiked ? 'No liked songs' : 'Empty playlist'}
+                hint={
+                  isLiked
+                    ? 'Tap the heart on a track to add it here.'
+                    : 'Add tracks to it in Navidrome.'
+                }
+              />
+            )
+          }
+          contentContainerStyle={songs.length ? styles.listContent : styles.emptyContainer}
+          ListFooterComponent={
+            paged.hasMore ? (
+              <View style={styles.loadMore}>
+                <Button
+                  label={`Load ${paged.nextCount} more`}
+                  fullWidth
+                  onPress={paged.loadMore}
+                />
+              </View>
+            ) : null
+          }
+          renderItem={({ item, index }) => (
+            <SwipeableRow
+              rightSwipe={{
+                icon: <IconPlus size={icon.size} color={color.accentInk} strokeWidth={2} />,
+                label: 'Queue',
+                onAction: () => void addToQueue([item]),
               }}
-            />
-            <SheetOption
-              label="Rename"
-              onPress={() => {
-                setDraftName(playlist?.name ?? '');
-                setRenaming(true);
-              }}
-            />
-            <SheetOption
-              label="Delete playlist"
-              emphasis
-              last
-              onPress={() => {
-                void deletePlaylist(playlistId);
-                setMenuOpen(false);
-                navigation.goBack();
-              }}
-            />
-          </>
-        )}
-      </Sheet>
+              leftSwipe={
+                isLiked
+                  ? {
+                      icon: <IconHeartFilled size={icon.size} color={color.accentInk} />,
+                      label: 'Unstar',
+                      onAction: () => void toggleStar(item.id, true),
+                    }
+                  : {
+                      icon: <IconX size={icon.size} color={color.accentInk} strokeWidth={2} />,
+                      label: 'Remove',
+                      // By position: the same track can appear twice, and the
+                      // server removes by index for exactly that reason.
+                      onAction: () => {
+                        void removeTrackAt(playlistId, index).then(refresh);
+                      },
+                    }
+              }
+            >
+              <ListRow
+                title={item.title}
+                meta={[item.artist, item.duration ? formatDuration(item.duration) : null]
+                  .filter(Boolean)
+                  .join(' · ')}
+                artworkUri={artworkUrl(item.coverArt)}
+                action="favorite"
+                favorited={Boolean(item.starred)}
+                active={item.id === activeId}
+                last={index === paged.visible.length - 1}
+                // Starting mid-playlist queues the rest of it from that point.
+                onPress={() => void playNow(songs, index)}
+                onLongPress={() => setAddTargets([item.id])}
+                onActionPress={() => void toggleStar(item.id, Boolean(item.starred))}
+              />
+            </SwipeableRow>
+          )}
+        />
 
-      <AddToPlaylistSheet
-        visible={addTargets != null}
-        onClose={() => setAddTargets(null)}
-        songIds={addTargets ?? []}
-      />
-    </View>
+        <Sheet
+          visible={menuOpen}
+          onClose={() => {
+            setMenuOpen(false);
+            setRenaming(false);
+          }}
+          title={renaming ? 'Rename playlist' : (playlist?.name ?? 'Playlist')}
+        >
+          {renaming ? (
+            <SheetBody>
+              <TextInput
+                style={styles.input}
+                value={draftName}
+                onChangeText={setDraftName}
+                placeholder="Playlist name"
+                placeholderTextColor={color.textInverseSecondary}
+                autoFocus
+                returnKeyType="done"
+              />
+              <View style={styles.sheetActions}>
+                <ButtonRow>
+                  <Button
+                    label="Save"
+                    variant="primary"
+                    disabled={draftName.trim().length === 0}
+                    onPress={() => {
+                      void renamePlaylist(playlistId, draftName).then(refresh);
+                      setMenuOpen(false);
+                      setRenaming(false);
+                    }}
+                  />
+                  <Button label="Cancel" onPress={() => setRenaming(false)} />
+                </ButtonRow>
+              </View>
+            </SheetBody>
+          ) : (
+            <>
+              <SheetOption
+                label="Add these tracks to another playlist"
+                onPress={() => {
+                  setMenuOpen(false);
+                  setAddTargets(songs.map((song) => song.id));
+                }}
+              />
+              <SheetOption
+                label="Rename"
+                onPress={() => {
+                  setDraftName(playlist?.name ?? '');
+                  setRenaming(true);
+                }}
+              />
+              <SheetOption
+                label="Delete playlist"
+                emphasis
+                last
+                onPress={() => {
+                  void deletePlaylist(playlistId);
+                  setMenuOpen(false);
+                  navigation.goBack();
+                }}
+              />
+            </>
+          )}
+        </Sheet>
+
+        <AddToPlaylistSheet
+          visible={addTargets != null}
+          onClose={() => setAddTargets(null)}
+          songIds={addTargets ?? []}
+        />
+      </View>
+    </ExpandFrom>
   );
 }
 
-const makeStyles = (color: Palette) => StyleSheet.create({
-  root: { flex: 1, backgroundColor: color.paper },
-  listContent: { paddingBottom: DOCK_CLEARANCE },
-  loadMore: { paddingHorizontal: layout.screenPadding, paddingTop: space[5] },
-  input: {
-    ...type.body,
-    color: color.textInverse,
-    height: 48,
-    paddingHorizontal: space[3],
-    borderWidth: hairline,
-    borderColor: color.panelLine,
-    borderRadius: radius.sm,
-    backgroundColor: color.panelRaised,
-  },
-  sheetActions: { marginTop: space[4], paddingBottom: space[3] },
-  emptyContainer: { flexGrow: 1 },
+const makeStyles = (color: Palette) =>
+  StyleSheet.create({
+    root: { flex: 1, backgroundColor: color.paper },
+    listContent: { paddingBottom: DOCK_CLEARANCE },
+    loadMore: { paddingHorizontal: layout.screenPadding, paddingTop: space[5] },
+    input: {
+      ...type.body,
+      color: color.textInverse,
+      height: 48,
+      paddingHorizontal: space[3],
+      borderWidth: hairline,
+      borderColor: color.panelLine,
+      borderRadius: radius.sm,
+      backgroundColor: color.panelRaised,
+    },
+    sheetActions: { marginTop: space[4], paddingBottom: space[3] },
+    emptyContainer: { flexGrow: 1 },
 
-  hero: { alignItems: 'center', paddingTop: space[5], paddingHorizontal: layout.screenPadding },
-  playlistTitle: {
-    ...type.display,
-    color: color.textPrimary,
-    marginTop: space[4],
-    textAlign: 'center',
-  },
-  playlistMeta: {
-    ...type.meta,
-    color: color.textSecondary,
-    marginTop: space[1],
-    textAlign: 'center',
-  },
-  actions: { marginTop: space[5], alignSelf: 'stretch', alignItems: 'center' },
-});
+    hero: {
+      alignItems: 'center',
+      paddingTop: space[5],
+      paddingHorizontal: layout.screenPadding,
+    },
+    playlistTitle: {
+      ...type.display,
+      color: color.textPrimary,
+      marginTop: space[4],
+      textAlign: 'center',
+    },
+    playlistMeta: {
+      ...type.meta,
+      color: color.textSecondary,
+      marginTop: space[1],
+      textAlign: 'center',
+    },
+    actions: { marginTop: space[5], alignSelf: 'stretch', alignItems: 'center' },
+  });
