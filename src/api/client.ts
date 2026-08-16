@@ -684,6 +684,3 @@ export interface StreamProbe {
   totalBytes: number | null;
   acceptsRanges: boolean;
 }
-
-/** Convenience re-export so callers need only import from `api/`. */
-export type { Child, ServerConfig };
