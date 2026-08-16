@@ -25,11 +25,6 @@ export function setupPlayer(): void {
     // Disk cache is deliberately left off. It defaults to 500 MB, and this
     // library is lossless FLAC where a single album runs to hundreds of MB;
     // filling a phone silently is worse than re-streaming over Tailscale.
-
-    // Drives Event.PlaybackProgressUpdated, which the scrobbler listens on.
-    // Without an interval the event never fires at all. Five seconds is far
-    // finer than scrobbling needs and costs one timer tick.
-    progressSync: { intervalSeconds: 5 },
   });
 
   TrackPlayer.setCommands({

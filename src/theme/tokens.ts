@@ -76,13 +76,22 @@ export const palettes: Record<'light' | 'dark', Palette> = {
     accent: '#E8703A',
     accentInk: '#1A1A18',
   },
+  /**
+   * True black, for OLED panels.
+   *
+   * paper is #000000 so unlit pixels stay unlit; panel is only a few percent
+   * above it, which is enough to separate the dock and the player from the
+   * ground without lighting up a whole surface. The hairlines carry most of
+   * the structure at this contrast, so they are proportionally brighter than
+   * their light-palette counterparts.
+   */
   dark: {
-    paper: '#121211',
-    paperDim: '#1F1F1D',
-    paperLine: '#2B2B27',
-    panel: '#1E1E1B',
-    panelRaised: '#2C2C29',
-    panelLine: '#3A3A36',
+    paper: '#000000',
+    paperDim: '#101010',
+    paperLine: '#212121',
+    panel: '#101010',
+    panelRaised: '#1C1C1C',
+    panelLine: '#303030',
     textPrimary: '#EFECE4',
     textSecondary: '#8C8B84',
     textInverse: '#EFECE4',
@@ -197,8 +206,8 @@ export const layout = {
   progressHeight: 5,
   /** Fraction of screen width the Now Playing artwork occupies. */
   artworkWidthRatio: 0.8,
-  /** Corner radius of the floating dock. */
-  dockRadius: 24,
+  /** Corner radius of the floating dock and the cards that echo it. */
+  dockRadius: 16,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -226,10 +235,16 @@ export const radius = {
  * swaps are instant or a 100ms crossfade — never a scale bounce.
  */
 export const motion = {
-  durationFast: 100,
-  durationBase: 180,
+  /** Icon swaps, press feedback — should read as instant. */
+  durationFast: 70,
+  /** Row entrances, reveals, settling. */
+  durationBase: 120,
+  /** Screen transitions. */
+  durationScreen: 180,
   /** Snappy ease-out with no overshoot. Feed to Easing.bezier(...easing). */
   easing: [0.2, 0, 0.2, 1] as const,
+  /** How far a pressable sinks. Small enough to feel mechanical, not springy. */
+  pressScale: 0.97,
 } as const;
 
 // ---------------------------------------------------------------------------

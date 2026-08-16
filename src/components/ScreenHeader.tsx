@@ -63,7 +63,6 @@ const makeStyles = (color: Palette) => StyleSheet.create({
     paddingVertical: space[3],
     borderBottomWidth: hairline,
     borderBottomColor: color.paperLine,
-    backgroundColor: color.paper,
   },
   back: { marginRight: space[2], padding: space[1] },
   backIcon: { transform: [{ rotate: '180deg' }] },

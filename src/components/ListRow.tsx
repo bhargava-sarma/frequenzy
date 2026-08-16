@@ -4,6 +4,7 @@ import { hairline, icon, layout, radius, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import { ArtworkWell } from './ArtworkWell';
+import { PressScale } from './Pressable';
 import { IconHeart, IconHeartFilled, IconPlus } from './icons';
 
 /**
@@ -52,14 +53,13 @@ export function ListRow({
   const color = useTheme();
   const styles = useThemedStyles(makeStyles);
   return (
-    <Pressable
+    <PressScale
       accessibilityRole="button"
       onPress={onPress}
-      style={({ pressed }) => [
-        styles.root,
-        !last && styles.separator,
-        pressed && styles.pressed,
-      ]}
+      // Rows are wide, so they move less than a button would — the same
+      // percentage on a full-width element reads as the list lurching.
+      scaleTo={0.99}
+      style={[styles.root, !last && styles.separator]}
     >
       {showArtwork && (
         <ArtworkWell uri={artworkUri} size={layout.thumbSize} surface="paper" />
@@ -103,7 +103,7 @@ export function ListRow({
           )}
         </Pressable>
       )}
-    </Pressable>
+    </PressScale>
   );
 }
 

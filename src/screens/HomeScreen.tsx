@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   Pressable,
   RefreshControl,
@@ -9,9 +9,10 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
+import { AmbientBackground } from '../components/AmbientBackground';
 import { ListRow } from '../components/ListRow';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { SectionHeader } from '../components/SectionHeader';
@@ -93,7 +94,14 @@ export function HomeScreen() {
     void getTopTracks(chartWindow, 5).then(setTopTracks);
   }, [chartWindow]);
 
-  useEffect(loadCharts, [loadCharts]);
+  /**
+   * Reload whenever Home comes back into view.
+   *
+   * Home lives in a tab navigator and never unmounts, so a mount-only effect
+   * ran exactly once per launch — which is why the charts looked broken: plays
+   * were being recorded correctly and simply never re-read.
+   */
+  useFocusEffect(loadCharts);
 
   function openAlbum(album: AlbumSummary) {
     navigation.navigate('Album', { albumId: album.id, albumName: album.name });
@@ -117,6 +125,9 @@ export function HomeScreen() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
+      {/* Lower intensity than the player: this screen is for reading. */}
+      <AmbientBackground intensity={0.5} />
+
       <ScreenHeader
         title="Home"
         action={
@@ -234,6 +245,7 @@ const makeStyles = (color: Palette) =>
     content: { paddingBottom: DOCK_CLEARANCE },
 
     chartSwitch: { paddingHorizontal: layout.screenPadding, paddingBottom: space[4] },
+    ambient: { opacity: 0.6 },
     chartEmpty: { paddingHorizontal: layout.screenPadding, paddingBottom: space[4] },
     chartHint: { ...type.meta, color: color.textSecondary, lineHeight: 18 },
 

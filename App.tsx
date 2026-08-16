@@ -5,6 +5,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Inter_400Regular, Inter_500Medium, useFonts } from '@expo-google-fonts/inter';
 
+import { ArtworkAccentBridge } from './src/components/ArtworkAccentBridge';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { startScrobbler } from './src/player/scrobbler';
 import { SetupScreen } from './src/screens/SetupScreen';
@@ -95,7 +96,15 @@ function AppContent() {
   return (
     <>
       <StatusBar style={resolved === "dark" ? "light" : "dark"} />
-      {status === 'needsSetup' ? <SetupScreen /> : <RootNavigator />}
+      {status === 'needsSetup' ? (
+        <SetupScreen />
+      ) : (
+        <>
+          {/* Renders nothing; keeps the accent in step with what's playing. */}
+          <ArtworkAccentBridge />
+          <RootNavigator />
+        </>
+      )}
     </>
   );
 }

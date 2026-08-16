@@ -27,13 +27,19 @@ const THEME_OPTIONS = [
   { value: 'dark' as const, label: 'Dark' },
 ];
 
+const ACCENT_OPTIONS = [
+  { value: 'artwork' as const, label: 'Artwork' },
+  { value: 'fixed' as const, label: 'Fixed' },
+];
+
 export function SettingsScreen() {
   const color = useTheme();
   const styles = useThemedStyles(makeStyles);
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
 
-  const { preference, resolved, setPreference } = useThemeControls();
+  const { preference, resolved, setPreference, artworkAccentEnabled, setArtworkAccentEnabled } =
+    useThemeControls();
 
   const config = useServerStore((state) => state.config);
   const connection = useServerStore((state) => state.connection);
@@ -64,6 +70,20 @@ export function SettingsScreen() {
             {preference === 'system'
               ? `Following the system, currently ${resolved}.`
               : 'Fixed regardless of the system setting.'}
+          </Text>
+        </View>
+
+        <View style={styles.block}>
+          <View style={styles.gap} />
+          <Segmented
+            options={ACCENT_OPTIONS}
+            value={artworkAccentEnabled ? 'artwork' : 'fixed'}
+            onChange={(next) => setArtworkAccentEnabled(next === 'artwork')}
+          />
+          <Text style={styles.hint}>
+            {artworkAccentEnabled
+              ? 'Highlights take their colour from the current cover, adjusted to stay legible on this theme.'
+              : 'Highlights stay burnt orange, as the design spec fixes them.'}
           </Text>
         </View>
 

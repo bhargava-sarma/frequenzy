@@ -15,6 +15,7 @@ import { QueueScreen } from '../screens/QueueScreen';
 import { SearchScreen } from '../screens/SearchScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { ShowcaseScreen } from '../screens/ShowcaseScreen';
+import { motion } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemeControls } from '../theme/ThemeProvider';
 import type {
@@ -42,7 +43,14 @@ const LibraryStack = createNativeStackNavigator<LibraryStackParamList>();
 const SearchStack = createNativeStackNavigator<SearchStackParamList>();
 const HomeStack = createNativeStackNavigator<HomeStackParamList>();
 
-const screenOptions = { headerShown: false } as const;
+/**
+ * Pushes are snappier than the platform default too — the same argument as the
+ * sheets, applied to every drill-down in the library.
+ */
+const screenOptions = {
+  headerShown: false,
+  animationDuration: motion.durationScreen,
+} as const;
 
 /**
  * Paper is the app's ground; without this, pushes flash white between screens.
@@ -107,13 +115,13 @@ function TabNavigator() {
 }
 
 /**
- * How long the player takes to rise and fall.
+ * How long a sheet takes to rise and fall.
  *
- * The default slide runs ~350ms, which on a sheet this large reads as the
+ * The platform default runs ~350ms, which on a sheet this large reads as the
  * screen labouring into place. The spec's motion section asks for mechanical
- * rather than cinematic, and 200ms is the difference.
+ * rather than cinematic, and this is the difference.
  */
-const SHEET_DURATION_MS = 200;
+const SHEET_DURATION_MS = motion.durationScreen;
 
 export function RootNavigator() {
   const color = useTheme();

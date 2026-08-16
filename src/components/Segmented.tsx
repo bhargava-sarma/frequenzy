@@ -1,29 +1,43 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import Animated, { LinearTransition } from 'react-native-reanimated';
 
-import { hairline, radius, space, type } from '../theme/tokens';
+import { hairline, layout, motion, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useThemedStyles } from '../theme/ThemeProvider';
 
 /**
- * Two-or-three-way mode switch, in the uppercase label style.
+ * Mode switch, in the uppercase label style.
+ *
+ * Spans the full width with its segments sharing it evenly, and carries the
+ * dock's corner radius. Sized to its labels it sat as a small chip floating in
+ * a wide row, which lined up with nothing; matching the dock's geometry makes
+ * every control on a screen read as the same family of hardware.
  *
  * The selected segment carries the accent fill. On the original light palette
- * a dark panel fill did this job and left the accent free, but with the whole
- * app on a dark ground the panel colors sit within a few percent of the floor
- * and a selected segment simply disappeared. Selection is listed as one of the
- * accent's jobs in the color tokens, so this is spending it where it was
- * always allowed rather than inventing a second hue.
+ * a dark panel fill did this job and left the accent free, but on a dark
+ * ground the panel colors sit within a few percent of the floor and a selected
+ * segment simply disappeared. Selection is listed as one of the accent's jobs
+ * in the color tokens, so this spends it where it was always allowed.
  */
 export interface SegmentedProps<T extends string> {
   options: readonly { value: T; label: string }[];
   value: T;
   onChange: (value: T) => void;
+  /** Which surface it sits on, so the border and labels contrast correctly. */
+  surface?: 'paper' | 'panel';
 }
 
-export function Segmented<T extends string>({ options, value, onChange }: SegmentedProps<T>) {
+export function Segmented<T extends string>({
+  options,
+  value,
+  onChange,
+  surface = 'paper',
+}: SegmentedProps<T>) {
   const styles = useThemedStyles(makeStyles);
+  const onPanel = surface === 'panel';
+
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, onPanel && styles.rootPanel]}>
       {options.map((option) => {
         const selected = option.value === value;
         return (
@@ -34,11 +48,26 @@ export function Segmented<T extends string>({ options, value, onChange }: Segmen
             onPress={() => onChange(option.value)}
             style={({ pressed }) => [
               styles.segment,
-              selected && styles.segmentSelected,
               pressed && !selected && styles.pressed,
             ]}
           >
-            <Text style={[styles.label, selected && styles.labelSelected]}>{option.label}</Text>
+            {/* The fill is a sibling rather than a background on the segment
+                so it can transition between positions instead of cutting. */}
+            {selected && (
+              <Animated.View
+                style={styles.fill}
+                layout={LinearTransition.duration(motion.durationBase)}
+              />
+            )}
+            <Text
+              style={[
+                styles.label,
+                onPanel && styles.labelPanel,
+                selected && styles.labelSelected,
+              ]}
+            >
+              {option.label}
+            </Text>
           </Pressable>
         );
       })}
@@ -46,24 +75,36 @@ export function Segmented<T extends string>({ options, value, onChange }: Segmen
   );
 }
 
-const makeStyles = (color: Palette) => StyleSheet.create({
-  root: {
-    flexDirection: 'row',
-    alignSelf: 'flex-start',
-    borderWidth: hairline,
-    borderColor: color.paperLine,
-    borderRadius: radius.sm,
-    // Clips the selected fill to the outer radius so the corners stay tight.
-    overflow: 'hidden',
-  },
-  segment: {
-    paddingHorizontal: space[4],
-    paddingVertical: space[2],
-    minHeight: 36,
-    justifyContent: 'center',
-  },
-  segmentSelected: { backgroundColor: color.accent },
-  pressed: { opacity: 0.6 },
-  label: { ...type.label, color: color.textSecondary },
-  labelSelected: { color: color.accentInk },
-});
+const makeStyles = (color: Palette) =>
+  StyleSheet.create({
+    root: {
+      flexDirection: 'row',
+      alignSelf: 'stretch',
+      borderWidth: hairline,
+      borderColor: color.paperLine,
+      borderRadius: layout.dockRadius,
+      // Clips the selected fill to the outer radius so the corners stay tight.
+      overflow: 'hidden',
+    },
+    segment: {
+      flex: 1,
+      paddingHorizontal: space[3],
+      paddingVertical: space[2],
+      minHeight: 40,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    fill: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      top: 0,
+      bottom: 0,
+      backgroundColor: color.accent,
+    },
+    rootPanel: { borderColor: color.panelLine },
+    pressed: { opacity: 0.6 },
+    label: { ...type.label, color: color.textSecondary },
+    labelPanel: { color: color.textInverseSecondary },
+    labelSelected: { color: color.accentInk },
+  });

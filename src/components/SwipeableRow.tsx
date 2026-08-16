@@ -9,7 +9,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
-import { layout, space, type } from '../theme/tokens';
+import { layout, motion, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 
@@ -56,8 +56,8 @@ const MAX_TRAVEL_RATIO = 0.45;
  * value rather than rebuilding the easing on every gesture.
  */
 const SETTLE_TIMING = {
-  duration: 180,
-  easing: Easing.bezier(0.2, 0, 0.2, 1),
+  duration: motion.durationBase,
+  easing: Easing.bezier(...motion.easing),
 } as const;
 
 export function SwipeableRow({

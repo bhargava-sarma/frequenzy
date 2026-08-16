@@ -5,7 +5,7 @@ import { recordPlay } from '../data/playHistory';
 import { extrasOf } from './trackMapping';
 
 /**
- * Reports plays back to Navidrome.
+ * Reports plays to Navidrome and to the local history.
  *
  * Without this the server records nothing, which costs more than a missing
  * feature: its recently-played and most-played lists stay permanently empty,
@@ -19,6 +19,14 @@ import { extrasOf } from './trackMapping';
  * track or four minutes, whichever comes first, and nothing under 30 seconds
  * is scrobbled at all. Sticking to the convention matters because these plays
  * land in the same counters as the ones from any other client.
+ *
+ * Progress is polled from JS rather than driven by Event.PlaybackProgressUpdated.
+ * That event only fires when progressSync.intervalSeconds is configured, and it
+ * is emitted by the playback *service*, which reads its config from stored
+ * preferences — so whether it arrives depends on service lifecycle rather than
+ * on anything this file controls. Since the JS runtime has to be alive for the
+ * scrobble request to be sent at all, polling here costs nothing extra and
+ * removes that dependency entirely.
  */
 
 /** Tracks shorter than this are never scrobbled. */
@@ -27,6 +35,8 @@ const MIN_DURATION_SECONDS = 30;
 const SUBMIT_RATIO = 0.5;
 /** ...or this many seconds in, whichever comes first. */
 const SUBMIT_AFTER_SECONDS = 4 * 60;
+/** How often to check progress. Far finer than scrobbling needs. */
+const POLL_INTERVAL_MS = 5000;
 
 interface PlayState {
   mediaId: string;
@@ -36,7 +46,7 @@ interface PlayState {
 }
 
 /**
- * Starts listening. Returns a cleanup that removes the subscriptions.
+ * Starts watching. Returns a cleanup that stops polling and unsubscribes.
  *
  * The client is read through a getter rather than captured, so a failover to
  * the other base URL is picked up without restarting the scrobbler.
@@ -49,10 +59,19 @@ export function startScrobbler(getClient: () => SubsonicClient | null): () => vo
    * surfacing to someone who is listening to music, and the server may simply
    * be unreachable at that moment.
    */
-  function report(work: Promise<void>) {
+  function report(work: Promise<unknown>) {
     work.catch((error: unknown) => {
       if (__DEV__) console.warn('[scrobble] failed', error);
     });
+  }
+
+  function beginTrack(mediaId: string) {
+    // Repeat-one re-enters the same track; treating it as a fresh play means a
+    // track on loop scrobbles each time round rather than once.
+    current = { mediaId, startedAt: Date.now(), submitted: false };
+
+    const client = getClient();
+    if (client) report(client.scrobble(mediaId, { submission: false }));
   }
 
   const transition = TrackPlayer.addEventListener(Event.MediaItemTransition, ({ item }) => {
@@ -61,59 +80,59 @@ export function startScrobbler(getClient: () => SubsonicClient | null): () => vo
       current = null;
       return;
     }
-
-    // Repeat-one re-fires this event for the same track; treat it as a fresh
-    // play so a track on loop scrobbles each time round rather than once.
-    current = { mediaId, startedAt: Date.now(), submitted: false };
-
-    const client = getClient();
-    if (client) report(client.scrobble(mediaId, { submission: false }));
+    beginTrack(mediaId);
   });
 
-  const progress = TrackPlayer.addEventListener(
-    Event.PlaybackProgressUpdated,
-    ({ mediaId, position, duration }) => {
-      // The queue can move without a transition event reaching us — a cold
-      // start into an existing queue, for instance — so trust the id on the
-      // tick over the one being held.
-      if (!current || current.mediaId !== mediaId) {
-        current = { mediaId, startedAt: Date.now(), submitted: false };
-        return;
-      }
+  const timer = setInterval(() => {
+    const item = TrackPlayer.getActiveMediaItem();
+    const mediaId = item?.mediaId;
+    if (!mediaId) {
+      current = null;
+      return;
+    }
 
-      if (current.submitted) return;
-      if (!duration || duration < MIN_DURATION_SECONDS) return;
+    // The queue can move without a transition event reaching us — a cold start
+    // into an existing queue, for instance — so trust what is actually playing
+    // over what is being held.
+    if (!current || current.mediaId !== mediaId) {
+      beginTrack(mediaId);
+      return;
+    }
 
-      const threshold = Math.min(duration * SUBMIT_RATIO, SUBMIT_AFTER_SECONDS);
-      if (position < threshold) return;
+    if (current.submitted) return;
+    if (!TrackPlayer.isPlaying()) return;
 
-      const client = getClient();
-      if (!client) return;
+    const { position, duration } = TrackPlayer.getProgress();
+    if (!duration || duration < MIN_DURATION_SECONDS) return;
 
-      // Set before awaiting: a failed submission is not retried, and leaving
-      // the flag clear would re-fire on every tick for the rest of the track.
-      current.submitted = true;
-      report(client.scrobble(mediaId, { submission: true, time: current.startedAt }));
+    const threshold = Math.min(duration * SUBMIT_RATIO, SUBMIT_AFTER_SECONDS);
+    if (position < threshold) return;
 
-      // Logged locally at the same moment, since the server has no endpoint
-      // for "top tracks this week" and cannot answer that question later.
-      const item = TrackPlayer.getActiveMediaItem();
-      const extras = extrasOf(item);
-      report(
-        recordPlay({
-          songId: mediaId,
-          title: item?.title ?? 'Unknown title',
-          artist: item?.artist,
-          albumId: extras?.albumId,
-          coverArt: extras?.coverArt,
-          playedAt: current.startedAt,
-        }),
-      );
-    },
-  );
+    const client = getClient();
+    if (!client) return;
+
+    // Set before awaiting: a failed submission is not retried, and leaving the
+    // flag clear would re-fire on every tick for the rest of the track.
+    current.submitted = true;
+    report(client.scrobble(mediaId, { submission: true, time: current.startedAt }));
+
+    // Logged locally at the same moment, since the server has no endpoint for
+    // "top tracks this week" and cannot answer that question later.
+    const extras = extrasOf(item);
+    report(
+      recordPlay({
+        songId: mediaId,
+        title: item?.title ?? 'Unknown title',
+        artist: item?.artist,
+        albumId: extras?.albumId,
+        coverArt: extras?.coverArt,
+        playedAt: current.startedAt,
+      }),
+    );
+  }, POLL_INTERVAL_MS);
 
   return () => {
     transition.remove();
-    progress.remove();
+    clearInterval(timer);
   };
 }

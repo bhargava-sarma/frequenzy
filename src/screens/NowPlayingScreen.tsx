@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -9,7 +9,9 @@ import TrackPlayer, {
   useProgress,
 } from '@rntp/player';
 
+import { AmbientBackground } from '../components/AmbientBackground';
 import { ArtworkWell, FormatBadge } from '../components/ArtworkWell';
+import { SleepTimerSheet } from '../components/SleepTimerSheet';
 import { ProgressBar } from '../components/ProgressBar';
 import { TransportControls } from '../components/TransportControls';
 import { EmptyState } from '../components/ScreenState';
@@ -57,6 +59,27 @@ export function NowPlayingScreen() {
 
   const [shuffle, setShuffle] = useState(false);
   const [repeat, setRepeat] = useState<RepeatMode>(RepeatMode.Off);
+  const [timerOpen, setTimerOpen] = useState(false);
+  const [sleepRemaining, setSleepRemaining] = useState<number | null>(null);
+
+  /**
+   * Reads the native timer.
+   *
+   * The countdown is owned by the player so it survives the JS runtime being
+   * suspended, which means the only way to know where it is up to is to ask.
+   */
+  const readSleepTimer = useCallback(() => {
+    const timer = TrackPlayer.getSleepTimer();
+    setSleepRemaining(timer?.type === 'time' ? timer.remainingSeconds : null);
+  }, []);
+
+  // A minute is plenty for a countdown measured in tens of them, and keeps
+  // this off the once-a-second path the progress bar is already on.
+  useEffect(() => {
+    readSleepTimer();
+    const poll = setInterval(readSleepTimer, 60_000);
+    return () => clearInterval(poll);
+  }, [readSleepTimer]);
 
   const extras = extrasOf(activeItem);
   const [starred, setStarred] = useState<boolean | null>(null);
@@ -67,7 +90,7 @@ export function NowPlayingScreen() {
   if (!activeItem) {
     return (
       <View style={[styles.root, { paddingTop: insets.top }]}>
-        <Header onClose={() => navigation.goBack()} />
+        <Header onClose={() => navigation.goBack()} onSleepTimer={() => setTimerOpen(true)} />
         <EmptyState label="Nothing playing" hint="Pick something from your library." />
       </View>
     );
@@ -112,7 +135,14 @@ export function NowPlayingScreen() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-      <Header onClose={() => navigation.goBack()} />
+      {/* Behind everything, tinted by the current cover. */}
+      <AmbientBackground />
+
+      <Header
+        onClose={() => navigation.goBack()}
+        onSleepTimer={() => setTimerOpen(true)}
+        timerActive={sleepRemaining != null}
+      />
 
       {/* Absorbs the slack; everything below keeps its natural height. */}
       <View style={styles.artArea}>
@@ -241,6 +271,13 @@ export function NowPlayingScreen() {
           />
         </View>
       </View>
+
+      <SleepTimerSheet
+        visible={timerOpen}
+        onClose={() => setTimerOpen(false)}
+        remainingSeconds={sleepRemaining}
+        onChanged={readSleepTimer}
+      />
     </View>
   );
 }
@@ -251,7 +288,15 @@ export function NowPlayingScreen() {
  * The screen title is gone: a full-bleed player showing one album cover does
  * not need a caption telling you it is the player.
  */
-function Header({ onClose }: { onClose: () => void }) {
+function Header({
+  onClose,
+  onSleepTimer,
+  timerActive = false,
+}: {
+  onClose: () => void;
+  onSleepTimer: () => void;
+  timerActive?: boolean;
+}) {
   const color = useTheme();
   const styles = useThemedStyles(makeStyles);
 
@@ -261,12 +306,14 @@ function Header({ onClose }: { onClose: () => void }) {
         accessibilityRole="button"
         accessibilityLabel="Sleep timer"
         hitSlop={space[3]}
+        onPress={onSleepTimer}
         style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}
       >
+        {/* Accented while a timer is running — state, not decoration. */}
         <IconMoon
           size={icon.size}
           strokeWidth={icon.strokeWidth}
-          color={color.textInverseSecondary}
+          color={timerActive ? color.accent : color.textInverseSecondary}
         />
       </Pressable>
 
