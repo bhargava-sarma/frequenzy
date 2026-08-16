@@ -247,7 +247,6 @@ const makeStyles = (color: Palette) =>
     content: { paddingBottom: DOCK_CLEARANCE },
 
     chartSwitch: { paddingHorizontal: layout.screenPadding, paddingBottom: space[4] },
-    ambient: { opacity: 0.6 },
     chartEmpty: { paddingHorizontal: layout.screenPadding, paddingBottom: space[4] },
     chartHint: { ...type.meta, color: color.textSecondary, lineHeight: 18 },
 

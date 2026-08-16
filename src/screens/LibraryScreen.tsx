@@ -25,13 +25,11 @@ import { useArtwork } from '../hooks/useArtwork';
 import { useLibraryData } from '../hooks/useLibraryData';
 import type { LibraryStackParamList } from '../navigation/types';
 import { usePlaylistStore } from '../store/usePlaylistStore';
-import { useServerStore } from '../store/useServerStore';
 import { Button, ButtonRow } from '../components/Button';
 import { IconPlus } from '../components/icons';
 import { hairline, icon, layout, motion, radius, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
-import type { Playlist } from '../types/subsonic';
 import { formatDuration, pluralize } from '../utils/time';
 
 /**
@@ -70,7 +68,6 @@ export function LibraryScreen() {
   const artworkUrl = useArtwork();
   const { width } = useWindowDimensions();
 
-  const client = useServerStore((state) => state.client);
   const [mode, setMode] = useState<Mode>('playlists');
   const [visible, setVisible] = useState(FIRST_PAGE);
 

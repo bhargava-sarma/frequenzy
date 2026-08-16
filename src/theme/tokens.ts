@@ -211,8 +211,6 @@ export const layout = {
   panelPadding: space[4],
   /** List row height — 44px min tap target plus padding. */
   rowHeight: 56,
-  /** Standard gap between stacked elements. */
-  stackGap: space[3],
   /** Square thumbnail in a library row. */
   thumbSize: 40,
   /** Progress bar thickness. Nudged up from 3px so it is easier to grab. */

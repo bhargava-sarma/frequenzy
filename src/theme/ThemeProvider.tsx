@@ -32,7 +32,6 @@ export type ThemePreference = 'system' | 'light' | 'dark';
 const STORAGE_KEY = 'settings.theme';
 const ACCENT_KEY = 'settings.artworkAccent';
 const AMBIENT_KEY = 'settings.ambient';
-const BLUR_KEY = 'settings.blur';
 const BLUR_INTENSITY_KEY = 'settings.blurIntensity';
 const SURFACE_OPACITY_KEY = 'settings.surfaceOpacity';
 

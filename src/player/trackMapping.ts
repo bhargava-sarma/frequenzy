@@ -35,7 +35,7 @@ export interface SubsonicExtras extends Record<string, unknown> {
   starred: boolean;
 }
 
-export async function toMediaItem(
+async function toMediaItem(
   client: SubsonicClient,
   song: Child,
 ): Promise<MediaItem> {

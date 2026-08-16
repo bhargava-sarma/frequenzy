@@ -21,20 +21,6 @@ export function formatDuration(totalSeconds: number | undefined | null): string 
   return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${minutes}:${pad(seconds)}`;
 }
 
-/**
- * Time left, as `-M:SS`.
- *
- * The spec asks for a countdown rather than a total — a hardware-readout
- * touch, and more useful than restating a duration that isn't changing.
- */
-export function formatRemaining(
-  positionSeconds: number,
-  durationSeconds: number | undefined | null,
-): string {
-  if (durationSeconds == null || !Number.isFinite(durationSeconds)) return '-0:00';
-  return `-${formatDuration(Math.max(0, durationSeconds - positionSeconds))}`;
-}
-
 /** "12 tracks" / "1 track" — used in section header counts. */
 export function pluralize(count: number, singular: string, plural = `${singular}s`): string {
   return `${count} ${count === 1 ? singular : plural}`;

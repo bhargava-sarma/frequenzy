@@ -11,7 +11,7 @@ import Animated, {
 
 import { layout, motion, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
-import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
+import { useTheme } from '../theme/ThemeProvider';
 
 /**
  * Horizontal swipe actions for a list row, per spec 5.3.
@@ -68,7 +68,6 @@ export function SwipeableRow({
 }: SwipeableRowProps) {
   const { width } = useWindowDimensions();
   const color = useTheme();
-  const styles = useThemedStyles(makeStyles);
   const translateX = useSharedValue(0);
 
   const commitDistance = width * COMMIT_RATIO;
@@ -166,7 +165,6 @@ export function SwipeableRow({
 
 function Reveal({ action }: { action: SwipeAction }) {
   const color = useTheme();
-  const styles = useThemedStyles(makeStyles);
   const tint = action.tone === 'neutral' ? color.textPrimary : color.accentInk;
   return (
     <View style={styles.revealContent}>
@@ -183,7 +181,7 @@ function toneStyle(action: SwipeAction, color: Palette) {
   };
 }
 
-const makeStyles = (color: Palette) => StyleSheet.create({
+const styles = StyleSheet.create({
   root: { position: 'relative' },
   row: { flex: 1 },
 

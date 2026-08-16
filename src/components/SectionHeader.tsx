@@ -1,8 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { layout, space, type } from '../theme/tokens';
-import type { Palette } from '../theme/tokens';
-import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
+import { useTheme } from '../theme/ThemeProvider';
 
 /**
  * Section header, per spec 5.2 — label left, count right.
@@ -29,7 +28,6 @@ export function SectionHeader({
   onCountPress,
 }: SectionHeaderProps) {
   const color = useTheme();
-  const styles = useThemedStyles(makeStyles);
   const tone = surface === 'panel' ? color.textInverseSecondary : color.textSecondary;
 
   return (
@@ -47,7 +45,9 @@ export function SectionHeader({
   );
 }
 
-const makeStyles = (color: Palette) => StyleSheet.create({
+// Static: every colour here is applied inline from the palette, so there is
+// nothing for the themed-style cache to rebuild per theme.
+const styles = StyleSheet.create({
   root: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text } from 'react-native';
 import Animated, { LinearTransition } from 'react-native-reanimated';
 
 import { hairline, layout, motion, space, type } from '../theme/tokens';

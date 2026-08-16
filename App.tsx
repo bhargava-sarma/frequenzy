@@ -3,7 +3,12 @@ import { AppState, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import { Inter_400Regular, Inter_500Medium, useFonts } from '@expo-google-fonts/inter';
+// Subpaths, not the package root — same reason as components/icons.ts. The
+// root re-exports all 18 Inter weights, and Metro has no tree-shaking to drop
+// the 16 we never name, so importing it ships ~6MB of unused .ttf.
+import { useFonts } from '@expo-google-fonts/inter/useFonts';
+import { Inter_400Regular } from '@expo-google-fonts/inter/400Regular';
+import { Inter_500Medium } from '@expo-google-fonts/inter/500Medium';
 
 import { ArtworkAccentBridge } from './src/components/ArtworkAccentBridge';
 import { PlayerOverlay } from './src/components/PlayerOverlay';

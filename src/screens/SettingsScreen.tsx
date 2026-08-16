@@ -37,7 +37,6 @@ const ACCENT_OPTIONS = [
 ];
 
 export function SettingsScreen() {
-  const color = useTheme();
   const styles = useThemedStyles(makeStyles);
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();

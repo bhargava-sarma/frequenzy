@@ -2,8 +2,7 @@ import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-na
 import { Image } from 'expo-image';
 
 import { hairline, motion, radius, space, type } from '../theme/tokens';
-import type { Palette } from '../theme/tokens';
-import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
+import { useTheme } from '../theme/ThemeProvider';
 import { IconDisc } from './icons';
 
 /**
@@ -39,7 +38,6 @@ export function ArtworkWell({
   transitionMs = motion.durationFast,
 }: ArtworkWellProps) {
   const color = useTheme();
-  const styles = useThemedStyles(makeStyles);
   const onPanel = surface === 'panel';
   const frame = {
     width: size,
@@ -103,7 +101,6 @@ export function FormatBadge({
   surface = 'panel',
 }: FormatBadgeProps) {
   const color = useTheme();
-  const styles = useThemedStyles(makeStyles);
   const parts: string[] = [];
 
   if (suffix) parts.push(suffix.toUpperCase());
@@ -128,7 +125,9 @@ export function FormatBadge({
   );
 }
 
-const makeStyles = (color: Palette) => StyleSheet.create({
+// Static: the well's fill and border are applied inline, since both depend on
+// the surface a caller places it on rather than on the theme alone.
+const styles = StyleSheet.create({
   well: {
     borderWidth: hairline,
     alignItems: 'center',

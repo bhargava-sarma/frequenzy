@@ -142,7 +142,6 @@ function SecondaryControl({
   active?: boolean;
   accessibilityLabel: string;
 }) {
-  const color = useTheme();
   const styles = useThemedStyles(makeStyles);
   return (
     <Pressable

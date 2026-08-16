@@ -177,5 +177,4 @@ export interface Starred2Response {
   };
 }
 
-/** ping.view returns only the envelope — no additional payload. */
-export type PingResponse = Record<string, never>;
+

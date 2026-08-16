@@ -45,7 +45,3 @@ export function setupPlayer(): void {
   initialized = true;
 }
 
-/** Testing seam — lets a development reset re-run initialization. */
-export function resetSetupForTesting(): void {
-  initialized = false;
-}

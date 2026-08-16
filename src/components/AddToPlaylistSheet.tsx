@@ -4,7 +4,7 @@ import { ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { Button, ButtonRow } from './Button';
 import { Sheet, SheetBody, SheetOption } from './Sheet';
 import { editablePlaylists, usePlaylistStore } from '../store/usePlaylistStore';
-import { hairline, layout, radius, space, type } from '../theme/tokens';
+import { hairline, radius, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import { pluralize } from '../utils/time';
@@ -141,5 +141,4 @@ const makeStyles = (color: Palette) =>
     },
     actions: { marginTop: space[4], paddingBottom: space[3] },
     // Kept for parity with the other sheet bodies.
-    body: { paddingHorizontal: layout.panelPadding },
   });
