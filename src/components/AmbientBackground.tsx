@@ -61,7 +61,7 @@ const RINGS = 6;
 
 export function AmbientBackground({ intensity = 1 }: { intensity?: number }) {
   const color = useTheme();
-  const { resolved } = useThemeControls();
+  const { resolved, ambientIntensity } = useThemeControls();
   const { width, height } = useWindowDimensions();
   /**
    * Tab screens stay mounted when you navigate away, so without this every
@@ -70,9 +70,13 @@ export function AmbientBackground({ intensity = 1 }: { intensity?: number }) {
    */
   const focused = useIsFocused();
 
+  // Turned off entirely rather than rendered at zero: eighteen views and three
+  // UI-thread animations per screen are not worth mounting to be invisible.
+  if (ambientIntensity <= 0) return null;
+
   // The same alpha that whispers on true black stains paper, so light mode
   // gets roughly a third of it.
-  const scale = (resolved === 'dark' ? 1 : 0.35) * intensity;
+  const scale = (resolved === 'dark' ? 1 : 0.35) * intensity * ambientIntensity;
 
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="none">

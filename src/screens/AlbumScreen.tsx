@@ -1,8 +1,10 @@
+import { useState } from 'react';
 import { FlatList, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import { useActiveMediaItem } from '@rntp/player';
 
+import { AddToPlaylistSheet } from '../components/AddToPlaylistSheet';
 import { AmbientBackground } from '../components/AmbientBackground';
 import { ArtworkWell } from '../components/ArtworkWell';
 import { Button, ButtonRow } from '../components/Button';
@@ -54,6 +56,9 @@ export function AlbumScreen() {
 
   const totalDuration = songs.reduce((sum, song) => sum + (song.duration ?? 0), 0);
 
+  /** Non-null while the add-to-playlist sheet is open, holding what to add. */
+  const [addTargets, setAddTargets] = useState<string[] | null>(null);
+
   async function toggleStar(songId: string, starred: boolean) {
     if (!client) return;
     // Written straight back to Navidrome so favourites are server-side truth
@@ -66,7 +71,7 @@ export function AlbumScreen() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-      <AmbientBackground intensity={0.5} />
+      <AmbientBackground />
 
       <ScreenHeader title={title} onBack={() => navigation.goBack()} />
 
@@ -146,10 +151,19 @@ export function AlbumScreen() {
               // Starting mid-album queues the whole album from that point,
               // rather than the single track — the queue is the point.
               onPress={() => void playNow(songs, index)}
+              // Long-press is the app-wide gesture for "do something else
+              // with this track".
+              onLongPress={() => setAddTargets([item.id])}
               onActionPress={() => void toggleStar(item.id, Boolean(item.starred))}
             />
           </SwipeableRow>
         )}
+      />
+
+      <AddToPlaylistSheet
+        visible={addTargets != null}
+        onClose={() => setAddTargets(null)}
+        songIds={addTargets ?? []}
       />
     </View>
   );

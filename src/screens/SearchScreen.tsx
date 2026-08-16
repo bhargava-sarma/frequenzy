@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
+import { AddToPlaylistSheet } from '../components/AddToPlaylistSheet';
 import { AmbientBackground } from '../components/AmbientBackground';
 import { Button } from '../components/Button';
 import { ListRow } from '../components/ListRow';
@@ -87,6 +88,8 @@ export function SearchScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recent, setRecent] = useState<string[]>([]);
+  /** Non-null while the add-to-playlist sheet is open, holding what to add. */
+  const [addTargets, setAddTargets] = useState<string[] | null>(null);
 
   useEffect(() => {
     void getRecentSearches().then(setRecent);
@@ -192,7 +195,7 @@ export function SearchScreen() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top + space[3] }]}>
-      <AmbientBackground intensity={0.5} />
+      <AmbientBackground />
 
       {/* Field and scopes share one card, the way the dock joins the
           mini-player to the nav — they are one control for one job. */}
@@ -348,6 +351,7 @@ export function SearchScreen() {
                 last={index === shown.length - 1}
                 // Plays this one without discarding whatever is queued.
                 onPress={() => void playTrackNow(song)}
+                onLongPress={() => setAddTargets([song.id])}
                 // The trailing action queues rather than plays, matching the
                 // icon and matching what it does everywhere else.
                 onActionPress={() => void addToQueue([song])}
@@ -357,6 +361,12 @@ export function SearchScreen() {
         }}
       />
       </Animated.View>
+
+      <AddToPlaylistSheet
+        visible={addTargets != null}
+        onClose={() => setAddTargets(null)}
+        songIds={addTargets ?? []}
+      />
     </View>
   );
 }

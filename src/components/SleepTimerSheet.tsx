@@ -1,10 +1,6 @@
-import { Modal, Pressable, StyleSheet, Text } from 'react-native';
 import TrackPlayer from '@rntp/player';
 
-import { SectionHeader } from './SectionHeader';
-import { hairline, layout, space, type } from '../theme/tokens';
-import type { Palette } from '../theme/tokens';
-import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
+import { Sheet, SheetOption } from './Sheet';
 
 /**
  * Sleep timer options.
@@ -42,8 +38,6 @@ export function SleepTimerSheet({
   remainingSeconds,
   onChanged,
 }: SleepTimerSheetProps) {
-  const styles = useThemedStyles(makeStyles);
-
   function choose(action: () => void) {
     action();
     onChanged();
@@ -51,71 +45,39 @@ export function SleepTimerSheet({
   }
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      {/* Tapping the scrim dismisses; the sheet itself swallows the press. */}
-      <Pressable style={styles.scrim} onPress={onClose}>
-        <Pressable style={styles.sheet} onPress={() => {}}>
-          <SectionHeader
-            title="Sleep timer"
-            count={remainingSeconds != null ? formatRemaining(remainingSeconds) : undefined}
-            surface="panel"
-          />
-
-          {OPTIONS.map((option) => (
-            <Option
-              key={option.minutes}
-              label={option.label}
-              onPress={() =>
-                choose(() =>
-                  TrackPlayer.sleepAfterTime(option.minutes * 60, {
-                    fadeOutSeconds: FADE_SECONDS,
-                  }),
-                )
-              }
-            />
-          ))}
-
-          <Option
-            label="End of this track"
-            onPress={() => choose(() => TrackPlayer.sleepAfterMediaItemAtIndex())}
-          />
-
-          {remainingSeconds != null && (
-            <Option
-              label="Cancel timer"
-              emphasis
-              last
-              onPress={() => choose(() => TrackPlayer.cancelSleepTimer())}
-            />
-          )}
-        </Pressable>
-      </Pressable>
-    </Modal>
-  );
-}
-
-function Option({
-  label,
-  onPress,
-  emphasis = false,
-  last = false,
-}: {
-  label: string;
-  onPress: () => void;
-  emphasis?: boolean;
-  last?: boolean;
-}) {
-  const color = useTheme();
-  const styles = useThemedStyles(makeStyles);
-
-  return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onPress}
-      style={({ pressed }) => [styles.option, !last && styles.optionLine, pressed && styles.pressed]}
+    <Sheet
+      visible={visible}
+      onClose={onClose}
+      title="Sleep timer"
+      detail={remainingSeconds != null ? formatRemaining(remainingSeconds) : undefined}
     >
-      <Text style={[styles.optionLabel, emphasis && { color: color.accent }]}>{label}</Text>
-    </Pressable>
+      {OPTIONS.map((option) => (
+        <SheetOption
+          key={option.minutes}
+          label={option.label}
+          onPress={() =>
+            choose(() =>
+              TrackPlayer.sleepAfterTime(option.minutes * 60, { fadeOutSeconds: FADE_SECONDS }),
+            )
+          }
+        />
+      ))}
+
+      <SheetOption
+        label="End of this track"
+        last={remainingSeconds == null}
+        onPress={() => choose(() => TrackPlayer.sleepAfterMediaItemAtIndex())}
+      />
+
+      {remainingSeconds != null && (
+        <SheetOption
+          label="Cancel timer"
+          emphasis
+          last
+          onPress={() => choose(() => TrackPlayer.cancelSleepTimer())}
+        />
+      )}
+    </Sheet>
   );
 }
 
@@ -130,28 +92,3 @@ function formatRemaining(seconds: number): string {
     ? `${hours}:${String(minutes).padStart(2, '0')} left`
     : `${minutes}:${String(secs).padStart(2, '0')} left`;
 }
-
-const makeStyles = (color: Palette) =>
-  StyleSheet.create({
-    scrim: {
-      flex: 1,
-      backgroundColor: '#000000AA',
-      justifyContent: 'flex-end',
-      padding: space[3],
-    },
-    sheet: {
-      backgroundColor: color.panel,
-      borderRadius: layout.dockRadius,
-      borderWidth: hairline,
-      borderColor: color.panelLine,
-      overflow: 'hidden',
-      paddingBottom: space[3],
-    },
-    option: {
-      paddingHorizontal: layout.panelPadding,
-      paddingVertical: space[4],
-    },
-    optionLine: { borderBottomWidth: hairline, borderBottomColor: color.panelLine },
-    optionLabel: { ...type.body, color: color.textInverse },
-    pressed: { opacity: 0.6 },
-  });

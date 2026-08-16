@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 
 import { AmbientBackground } from '../components/AmbientBackground';
+import { blurAvailable } from '../components/Frosted';
 import { Button } from '../components/Button';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { SectionHeader } from '../components/SectionHeader';
@@ -33,14 +34,45 @@ const ACCENT_OPTIONS = [
   { value: 'fixed' as const, label: 'Fixed' },
 ];
 
+const AMBIENT_OPTIONS = [
+  { value: 'off' as const, label: 'Off' },
+  { value: 'subtle' as const, label: 'Subtle' },
+  { value: 'full' as const, label: 'Full' },
+];
+
+const AMBIENT_VALUES: Record<'off' | 'subtle' | 'full', number> = {
+  off: 0,
+  subtle: 0.5,
+  full: 1,
+};
+
+function ambientChoice(intensity: number): 'off' | 'subtle' | 'full' {
+  if (intensity <= 0) return 'off';
+  return intensity < 0.8 ? 'subtle' : 'full';
+}
+
+const BLUR_OPTIONS = [
+  { value: 'on' as const, label: 'Blurred' },
+  { value: 'off' as const, label: 'Solid' },
+];
+
 export function SettingsScreen() {
   const color = useTheme();
   const styles = useThemedStyles(makeStyles);
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
 
-  const { preference, resolved, setPreference, artworkAccentEnabled, setArtworkAccentEnabled } =
-    useThemeControls();
+  const {
+    preference,
+    resolved,
+    setPreference,
+    artworkAccentEnabled,
+    setArtworkAccentEnabled,
+    ambientIntensity,
+    setAmbientIntensity,
+    blurEnabled,
+    setBlurEnabled,
+  } = useThemeControls();
 
   const config = useServerStore((state) => state.config);
   const connection = useServerStore((state) => state.connection);
@@ -61,7 +93,7 @@ export function SettingsScreen() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-      <AmbientBackground intensity={0.5} />
+      <AmbientBackground />
 
       <ScreenHeader title="Settings" onBack={() => navigation.goBack()} />
 
@@ -87,6 +119,33 @@ export function SettingsScreen() {
             {artworkAccentEnabled
               ? 'Highlights take their colour from the current cover, adjusted to stay legible on this theme.'
               : 'Highlights stay burnt orange, as the design spec fixes them.'}
+          </Text>
+        </View>
+
+        <SectionHeader title="Background" />
+        <View style={styles.block}>
+          <Segmented
+            options={AMBIENT_OPTIONS}
+            value={ambientChoice(ambientIntensity)}
+            onChange={(next) => setAmbientIntensity(AMBIENT_VALUES[next])}
+          />
+          <Text style={styles.hint}>
+            A slow drift of the current track&apos;s colour behind every screen. Off removes it
+            entirely rather than hiding it, so nothing is left animating.
+          </Text>
+        </View>
+
+        <SectionHeader title="Surfaces" />
+        <View style={styles.block}>
+          <Segmented
+            options={BLUR_OPTIONS}
+            value={blurEnabled && blurAvailable ? 'on' : 'off'}
+            onChange={(next) => setBlurEnabled(next === 'on')}
+          />
+          <Text style={styles.hint}>
+            {blurAvailable
+              ? 'The dock, the search field and the tab strips blur what passes behind them.'
+              : 'This build has no blur module, so these surfaces are solid regardless. Installing a newer build enables the choice.'}
           </Text>
         </View>
 

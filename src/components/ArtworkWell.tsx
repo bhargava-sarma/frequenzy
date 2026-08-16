@@ -23,9 +23,21 @@ export interface ArtworkWellProps {
   size: number;
   surface?: 'paper' | 'panel';
   style?: StyleProp<ViewStyle>;
+  /**
+   * Crossfade length. Thumbnails want the default — anything slower reads as
+   * lag while scrolling — but a full-screen cover changing between tracks
+   * wants long enough to register as a change rather than a cut.
+   */
+  transitionMs?: number;
 }
 
-export function ArtworkWell({ uri, size, surface = 'panel', style }: ArtworkWellProps) {
+export function ArtworkWell({
+  uri,
+  size,
+  surface = 'panel',
+  style,
+  transitionMs = motion.durationFast,
+}: ArtworkWellProps) {
   const color = useTheme();
   const styles = useThemedStyles(makeStyles);
   const onPanel = surface === 'panel';
@@ -55,7 +67,7 @@ export function ArtworkWell({ uri, size, surface = 'panel', style }: ArtworkWell
           cachePolicy="memory-disk"
           // Short crossfade only — the spec rules out anything with scale or
           // bounce, and a hard pop on every tile reads as jitter while scrolling.
-          transition={motion.durationFast}
+          transition={transitionMs}
         />
       ) : (
         <IconDisc

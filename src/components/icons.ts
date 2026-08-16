@@ -35,3 +35,5 @@ export { default as IconX } from '@tabler/icons-react-native/IconX';
 export { default as IconMoon } from '@tabler/icons-react-native/IconMoon';
 export { default as IconChevronDown } from '@tabler/icons-react-native/IconChevronDown';
 export { default as IconMicrophone2 } from '@tabler/icons-react-native/IconMicrophone2';
+export { default as IconDots } from '@tabler/icons-react-native/IconDots';
+export { default as IconPencil } from '@tabler/icons-react-native/IconPencil';

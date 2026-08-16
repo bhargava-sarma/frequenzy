@@ -153,34 +153,26 @@ export function RootNavigator() {
     <NavigationContainer theme={theme}>
       <RootStack.Navigator screenOptions={screenOptions}>
         <RootStack.Screen name="Tabs" component={TabNavigator} />
-        <RootStack.Screen
-          name="NowPlaying"
-          component={NowPlayingScreen}
-          options={{
-            presentation: 'modal',
-            animation: 'slide_from_bottom',
-            animationDuration: SHEET_DURATION_MS,
-          }}
-        />
-        <RootStack.Screen
-          name="Queue"
-          component={QueueScreen}
-          options={{
-            presentation: 'modal',
-            animation: 'slide_from_bottom',
-            animationDuration: SHEET_DURATION_MS,
-          }}
-        />
-        <RootStack.Screen
-          name="Settings"
-          component={SettingsScreen}
-          options={{ presentation: 'modal', animationDuration: SHEET_DURATION_MS }}
-        />
+        {/**
+         * Sheets are ordinary pushed screens that happen to slide up, not
+         * `presentation: 'modal'`.
+         *
+         * Android's modal presentation hands the screen to a separate native
+         * container, and dismissing one left the screen underneath unpainted —
+         * which is the black screen that appeared after swiping down. A plain
+         * push keeps the previous screen mounted and drawn the whole time, and
+         * looks identical going up.
+         */}
+        <RootStack.Group screenOptions={{ animation: 'slide_from_bottom' }}>
+          <RootStack.Screen name="NowPlaying" component={NowPlayingScreen} />
+          <RootStack.Screen name="Queue" component={QueueScreen} />
+          <RootStack.Screen name="Settings" component={SettingsScreen} />
+        </RootStack.Group>
 
         {/* Development surfaces. Reachable only from the diagnostics entry
             point and excluded from release builds. */}
         {__DEV__ && (
-          <RootStack.Group screenOptions={{ presentation: 'modal' }}>
+          <RootStack.Group screenOptions={{ animation: 'slide_from_bottom' }}>
             <RootStack.Screen name="Diagnostics" component={DiagnosticScreen} />
             <RootStack.Screen name="Showcase" component={ShowcaseScreen} />
           </RootStack.Group>

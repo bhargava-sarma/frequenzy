@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { FlatList, RefreshControl, StyleSheet, useWindowDimensions, View } from 'react-native';
+import {
+  FlatList,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  TextInput,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -7,7 +15,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { AlbumTile } from '../components/AlbumTile';
 import { AmbientBackground } from '../components/AmbientBackground';
-import { Button } from '../components/Button';
+import { Sheet, SheetBody } from '../components/Sheet';
 import { ListRow } from '../components/ListRow';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { Segmented } from '../components/Segmented';
@@ -15,9 +23,12 @@ import { EmptyState, ErrorState, LoadingState } from '../components/ScreenState'
 import { DOCK_CLEARANCE } from '../components/TabBar';
 import { useArtwork } from '../hooks/useArtwork';
 import { useLibraryData } from '../hooks/useLibraryData';
-import { LIKED_PLAYLIST_ID, type LibraryStackParamList } from '../navigation/types';
+import type { LibraryStackParamList } from '../navigation/types';
+import { usePlaylistStore } from '../store/usePlaylistStore';
 import { useServerStore } from '../store/useServerStore';
-import { layout, motion, space } from '../theme/tokens';
+import { Button, ButtonRow } from '../components/Button';
+import { IconPlus } from '../components/icons';
+import { hairline, icon, layout, motion, radius, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import type { Playlist } from '../types/subsonic';
@@ -91,41 +102,23 @@ export function LibraryScreen() {
     [requested.albums],
   );
 
-  // Playlists bypass the repository: they change whenever you edit one, and a
-  // stale playlist is more confusing than a slightly slower load.
-  const [playlists, setPlaylists] = useState<Playlist[] | null>(null);
-  const [playlistError, setPlaylistError] = useState<string | null>(null);
+  /**
+   * Playlists come from their own store rather than this screen.
+   *
+   * They are the one collection the app writes to, and an edit made from a
+   * track row or inside a playlist has to show up here too — three screens
+   * each holding a copy would disagree the moment one of them changed.
+   */
+  const playlists = usePlaylistStore((state) => state.playlists);
+  const playlistError = usePlaylistStore((state) => state.error);
+  const loadPlaylists = usePlaylistStore((state) => state.load);
+  const createPlaylist = usePlaylistStore((state) => state.create);
 
-  const loadPlaylists = useCallback(() => {
-    if (!client) return;
-
-    // Favourites are not a playlist on the server — Navidrome keeps them behind
-    // getStarred2 — so they are fetched alongside and prepended. Reading the
-    // starred list here rather than synthesising a bare row is what gives the
-    // entry a count, a duration and a cover like every other row has.
-    void Promise.all([client.getPlaylists(), client.getStarred2()])
-      .then(([lists, starred]) => {
-        const songs = starred.starred2.song ?? [];
-        const liked: Playlist = {
-          id: LIKED_PLAYLIST_ID,
-          name: 'Liked songs',
-          songCount: songs.length,
-          duration: songs.reduce((sum, song) => sum + (song.duration ?? 0), 0),
-          // Borrows the newest favourite's cover, since the set has none of
-          // its own. Better a real cover than a permanent placeholder.
-          coverArt: songs[0]?.coverArt,
-        };
-
-        setPlaylists([liked, ...(lists.playlists.playlist ?? [])]);
-        setPlaylistError(null);
-      })
-      .catch((cause: unknown) => {
-        setPlaylistError(cause instanceof Error ? cause.message : String(cause));
-      });
-  }, [client]);
+  const [creating, setCreating] = useState(false);
+  const [draftName, setDraftName] = useState('');
 
   useEffect(() => {
-    if (requested.playlists) loadPlaylists();
+    if (requested.playlists) void loadPlaylists();
   }, [requested.playlists, loadPlaylists]);
 
   function switchMode(next: Mode) {
@@ -139,14 +132,14 @@ export function LibraryScreen() {
       ? (artists.data?.length ?? 0)
       : mode === 'albums'
         ? (albums.data?.length ?? 0)
-        : (playlists?.length ?? 0);
+        : playlists.length;
 
   const loading =
     mode === 'artists'
       ? artists.loading
       : mode === 'albums'
         ? albums.loading
-        : playlists == null && playlistError == null;
+        : playlists.length === 0 && playlistError == null;
 
   const error =
     mode === 'artists' ? artists.error : mode === 'albums' ? albums.error : playlistError;
@@ -159,7 +152,7 @@ export function LibraryScreen() {
     [artists.data, visible],
   );
   const shownAlbums = useMemo(() => (albums.data ?? []).slice(0, visible), [albums.data, visible]);
-  const shownPlaylists = useMemo(() => (playlists ?? []).slice(0, visible), [playlists, visible]);
+  const shownPlaylists = useMemo(() => playlists.slice(0, visible), [playlists, visible]);
 
   const footer =
     visible < total ? (
@@ -200,8 +193,29 @@ export function LibraryScreen() {
    */
   const shell = (children: React.ReactNode) => (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-      <AmbientBackground intensity={0.5} />
-      <ScreenHeader title="Library" />
+      <AmbientBackground />
+      <ScreenHeader
+        title="Library"
+        action={
+          mode === 'playlists' ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="New playlist"
+              hitSlop={space[3]}
+              onPress={() => {
+                setDraftName('');
+                setCreating(true);
+              }}
+            >
+              <IconPlus
+                size={icon.size}
+                strokeWidth={icon.strokeWidth}
+                color={color.textSecondary}
+              />
+            </Pressable>
+          ) : undefined
+        }
+      />
       <View style={styles.switch}>
         <Segmented options={MODES} value={mode} onChange={switchMode} />
       </View>
@@ -214,6 +228,34 @@ export function LibraryScreen() {
       >
         {children}
       </Animated.View>
+
+      <Sheet visible={creating} onClose={() => setCreating(false)} title="New playlist">
+        <SheetBody>
+          <TextInput
+            style={styles.input}
+            value={draftName}
+            onChangeText={setDraftName}
+            placeholder="Playlist name"
+            placeholderTextColor={color.textInverseSecondary}
+            autoFocus
+            returnKeyType="done"
+          />
+          <View style={styles.sheetActions}>
+            <ButtonRow>
+              <Button
+                label="Create"
+                variant="primary"
+                disabled={draftName.trim().length === 0}
+                onPress={() => {
+                  void createPlaylist(draftName);
+                  setCreating(false);
+                }}
+              />
+              <Button label="Cancel" onPress={() => setCreating(false)} />
+            </ButtonRow>
+          </View>
+        </SheetBody>
+      </Sheet>
     </View>
   );
 
@@ -315,6 +357,17 @@ const makeStyles = (color: Palette) =>
     },
 
     listContent: {},
+    input: {
+      ...type.body,
+      color: color.textInverse,
+      height: 48,
+      paddingHorizontal: space[3],
+      borderWidth: hairline,
+      borderColor: color.panelLine,
+      borderRadius: radius.sm,
+      backgroundColor: color.panelRaised,
+    },
+    sheetActions: { marginTop: space[4], paddingBottom: space[3] },
     gridContent: { paddingHorizontal: layout.screenPadding },
     column: { gap: space[3], marginBottom: space[5] },
 

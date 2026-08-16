@@ -55,6 +55,9 @@ import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
  * you actually want to go from a track you're listening to, and making you
  * back out and search for them was the long way round.
  */
+/** Crossfade between covers when the track changes. */
+const COVER_FADE_MS = 260;
+
 /** Peak of the artwork swell, and how long one breath takes. */
 const BREATH_SCALE = 1.015;
 const BREATH_PERIOD_MS = 2600;
@@ -234,6 +237,7 @@ export function NowPlayingScreen() {
               position={progress.position}
               duration={progress.duration || activeItem.duration}
               surface="panel"
+              playing={isPlaying}
               onSeek={(seconds) => TrackPlayer.seekTo(seconds)}
             />
           </View>
@@ -343,7 +347,7 @@ function BreathingArtwork({
 
   return (
     <Animated.View style={style}>
-      <ArtworkWell uri={uri} size={size} surface="panel" />
+      <ArtworkWell uri={uri} size={size} surface="panel" transitionMs={COVER_FADE_MS} />
     </Animated.View>
   );
 }

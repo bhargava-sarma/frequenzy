@@ -34,6 +34,8 @@ export interface ListRowProps {
   active?: boolean;
   onPress?: () => void;
   onActionPress?: () => void;
+  /** Secondary gesture — used for "add to playlist" on track rows. */
+  onLongPress?: () => void;
   /** Suppress the separator on the final row of a list. */
   last?: boolean;
 }
@@ -48,6 +50,7 @@ export function ListRow({
   active = false,
   onPress,
   onActionPress,
+  onLongPress,
   last = false,
 }: ListRowProps) {
   const color = useTheme();
@@ -56,6 +59,7 @@ export function ListRow({
     <PressScale
       accessibilityRole="button"
       onPress={onPress}
+      onLongPress={onLongPress}
       // Rows are wide, so they move less than a button would — the same
       // percentage on a full-width element reads as the list lurching.
       scaleTo={0.99}

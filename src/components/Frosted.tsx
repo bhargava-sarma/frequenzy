@@ -59,11 +59,11 @@ export interface FrostedProps {
 
 export function Frosted({ children, style, surface = 'panel' }: FrostedProps) {
   const color = useTheme();
-  const { resolved } = useThemeControls();
+  const { resolved, blurEnabled } = useThemeControls();
 
   const base = surface === 'panel' ? color.panel : color.paper;
 
-  if (!BlurView) {
+  if (!BlurView || !blurEnabled) {
     return (
       <View style={[style, { backgroundColor: withAlpha(base, TINT_WITHOUT_BLUR) }]}>
         {children}

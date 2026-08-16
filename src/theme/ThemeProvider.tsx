@@ -31,6 +31,8 @@ export type ThemePreference = 'system' | 'light' | 'dark';
 
 const STORAGE_KEY = 'settings.theme';
 const ACCENT_KEY = 'settings.artworkAccent';
+const AMBIENT_KEY = 'settings.ambient';
+const BLUR_KEY = 'settings.blur';
 
 /**
  * How long the accent takes to travel from one track's colour to the next.
@@ -85,6 +87,12 @@ interface ThemeContextValue {
   /** Whether the accent follows the current artwork. */
   artworkAccentEnabled: boolean;
   setArtworkAccentEnabled: (enabled: boolean) => void;
+  /** Strength of the drifting background wash. 0 turns it off entirely. */
+  ambientIntensity: number;
+  setAmbientIntensity: (intensity: number) => void;
+  /** Whether floating surfaces blur. Ignored on a build without the module. */
+  blurEnabled: boolean;
+  setBlurEnabled: (enabled: boolean) => void;
   /**
    * Pushed in by the bridge that watches what's playing.
    *
@@ -102,6 +110,10 @@ const ThemeContext = createContext<ThemeContextValue>({
   setPreference: () => {},
   artworkAccentEnabled: true,
   setArtworkAccentEnabled: () => {},
+  ambientIntensity: 1,
+  setAmbientIntensity: () => {},
+  blurEnabled: true,
+  setBlurEnabled: () => {},
   setArtworkAccent: () => {},
 });
 
@@ -109,6 +121,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const systemScheme = useColorScheme();
   const [preference, setPreferenceState] = useState<ThemePreference>('dark');
   const [artworkAccentEnabled, setArtworkAccentEnabledState] = useState(true);
+  const [ambientIntensity, setAmbientIntensityState] = useState(1);
+  const [blurEnabled, setBlurEnabledState] = useState(true);
   /** What is on screen right now, mid-fade included. */
   const [artworkAccent, setArtworkAccentState] = useState<ArtworkAccent | null>(null);
   const fadeTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -179,6 +193,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     void AsyncStorage.getItem(ACCENT_KEY).then((stored) => {
       if (!cancelled && stored != null) setArtworkAccentEnabledState(stored === 'true');
     });
+    void AsyncStorage.getItem(AMBIENT_KEY).then((stored) => {
+      const parsed = stored != null ? Number(stored) : NaN;
+      if (!cancelled && Number.isFinite(parsed)) setAmbientIntensityState(parsed);
+    });
+    void AsyncStorage.getItem(BLUR_KEY).then((stored) => {
+      if (!cancelled && stored != null) setBlurEnabledState(stored === 'true');
+    });
     return () => {
       cancelled = true;
     };
@@ -195,6 +216,16 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     setArtworkAccentEnabledState(enabled);
     if (!enabled) setArtworkAccentState(null);
     void AsyncStorage.setItem(ACCENT_KEY, String(enabled));
+  }, []);
+
+  const setAmbientIntensity = useCallback((intensity: number) => {
+    setAmbientIntensityState(intensity);
+    void AsyncStorage.setItem(AMBIENT_KEY, String(intensity));
+  }, []);
+
+  const setBlurEnabled = useCallback((enabled: boolean) => {
+    setBlurEnabledState(enabled);
+    void AsyncStorage.setItem(BLUR_KEY, String(enabled));
   }, []);
 
   const resolved: 'light' | 'dark' =
@@ -214,6 +245,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       setPreference,
       artworkAccentEnabled,
       setArtworkAccentEnabled,
+      ambientIntensity,
+      setAmbientIntensity,
+      blurEnabled,
+      setBlurEnabled,
       setArtworkAccent,
     }),
     [
@@ -223,6 +258,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       setPreference,
       artworkAccentEnabled,
       setArtworkAccentEnabled,
+      ambientIntensity,
+      setAmbientIntensity,
+      blurEnabled,
+      setBlurEnabled,
       setArtworkAccent,
     ],
   );

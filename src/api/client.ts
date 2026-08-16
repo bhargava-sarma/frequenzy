@@ -529,8 +529,43 @@ export class SubsonicClient {
     await this.request('unstar', target);
   }
 
-  async createPlaylist(name: string, songIds: string[] = []): Promise<void> {
-    await this.request('createPlaylist', { name, songId: songIds });
+  /**
+   * Creates a playlist and returns it, so the caller can navigate straight to
+   * what it just made rather than refetching the whole list to find the id.
+   */
+  async createPlaylist(name: string, songIds: string[] = []): Promise<PlaylistResponse> {
+    return this.request<PlaylistResponse>('createPlaylist', { name, songId: songIds });
+  }
+
+  /**
+   * Edits a playlist in place.
+   *
+   * `songIndexToRemove` is by POSITION, not by song id — the Subsonic spec is
+   * explicit about this, and it is the only way to remove one copy of a track
+   * that appears in the playlist twice. Indexes shift as removals apply, so a
+   * multi-row removal must be sent highest-first; the caller is responsible
+   * for that ordering.
+   */
+  async updatePlaylist(options: {
+    playlistId: string;
+    name?: string;
+    comment?: string;
+    public?: boolean;
+    songIdToAdd?: string[];
+    songIndexToRemove?: number[];
+  }): Promise<void> {
+    await this.request('updatePlaylist', {
+      playlistId: options.playlistId,
+      name: options.name,
+      comment: options.comment,
+      public: options.public,
+      songIdToAdd: options.songIdToAdd,
+      songIndexToRemove: options.songIndexToRemove,
+    });
+  }
+
+  async deletePlaylist(id: string): Promise<void> {
+    await this.request('deletePlaylist', { id });
   }
 
   /**

@@ -77,7 +77,7 @@ export function ArtistScreen() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-      <AmbientBackground intensity={0.5} />
+      <AmbientBackground />
 
       <ScreenHeader title={title} onBack={() => navigation.goBack()} />
 

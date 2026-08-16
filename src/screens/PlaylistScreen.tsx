@@ -1,26 +1,29 @@
 import { useCallback, useEffect, useState } from 'react';
-import { FlatList, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import { useActiveMediaItem } from '@rntp/player';
 
+import { AddToPlaylistSheet } from '../components/AddToPlaylistSheet';
 import { AmbientBackground } from '../components/AmbientBackground';
 import { ArtworkWell } from '../components/ArtworkWell';
 import { Button, ButtonRow } from '../components/Button';
-import { IconHeart, IconHeartFilled, IconPlus } from '../components/icons';
+import { IconDots, IconHeartFilled, IconPlus, IconX } from '../components/icons';
 import { ListRow } from '../components/ListRow';
 import { DOCK_CLEARANCE } from '../components/TabBar';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { SectionHeader } from '../components/SectionHeader';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenState';
+import { Sheet, SheetBody, SheetOption } from '../components/Sheet';
 import { SwipeableRow } from '../components/SwipeableRow';
 import { extrasOf } from '../player/trackMapping';
 import { useArtwork } from '../hooks/useArtwork';
 import { HEAVY_LIST_PROPS, usePagedList } from '../hooks/usePagedList';
 import { LIKED_PLAYLIST_ID, type LibraryStackParamList } from '../navigation/types';
 import { usePlayerStore } from '../store/usePlayerStore';
+import { usePlaylistStore } from '../store/usePlaylistStore';
 import { useServerStore } from '../store/useServerStore';
-import { icon, layout, space, type } from '../theme/tokens';
+import { hairline, icon, layout, radius, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import type { Child, Playlist } from '../types/subsonic';
@@ -110,6 +113,16 @@ export function PlaylistScreen() {
     };
   }, [client, playlistId, isLiked, reloadToken]);
 
+  const renamePlaylist = usePlaylistStore((state) => state.rename);
+  const deletePlaylist = usePlaylistStore((state) => state.remove);
+  const removeTrackAt = usePlaylistStore((state) => state.removeTrackAt);
+
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [draftName, setDraftName] = useState('');
+  /** Non-null while the add-to-playlist sheet is open, holding what to add. */
+  const [addTargets, setAddTargets] = useState<string[] | null>(null);
+
   const paged = usePagedList(songs);
   const title = playlist?.name ?? playlistName ?? 'Playlist';
   const totalDuration =
@@ -125,9 +138,30 @@ export function PlaylistScreen() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-      <AmbientBackground intensity={0.5} />
+      <AmbientBackground />
 
-      <ScreenHeader title={title} onBack={() => navigation.goBack()} />
+      <ScreenHeader
+        title={title}
+        onBack={() => navigation.goBack()}
+        action={
+          // Favourites are the server's, not a playlist — there is nothing
+          // here that editing could legitimately change.
+          isLiked ? undefined : (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Playlist options"
+              hitSlop={space[3]}
+              onPress={() => setMenuOpen(true)}
+            >
+              <IconDots
+                size={icon.size}
+                strokeWidth={icon.strokeWidth}
+                color={color.textSecondary}
+              />
+            </Pressable>
+          )
+        }
+      />
 
       <FlatList
         data={paged.visible}
@@ -201,15 +235,23 @@ export function PlaylistScreen() {
               label: 'Queue',
               onAction: () => void addToQueue([item]),
             }}
-            leftSwipe={{
-              icon: item.starred ? (
-                <IconHeartFilled size={icon.size} color={color.accentInk} />
-              ) : (
-                <IconHeart size={icon.size} color={color.accentInk} strokeWidth={2} />
-              ),
-              label: item.starred ? 'Unstar' : 'Star',
-              onAction: () => void toggleStar(item.id, Boolean(item.starred)),
-            }}
+            leftSwipe={
+              isLiked
+                ? {
+                    icon: <IconHeartFilled size={icon.size} color={color.accentInk} />,
+                    label: 'Unstar',
+                    onAction: () => void toggleStar(item.id, true),
+                  }
+                : {
+                    icon: <IconX size={icon.size} color={color.accentInk} strokeWidth={2} />,
+                    label: 'Remove',
+                    // By position: the same track can appear twice, and the
+                    // server removes by index for exactly that reason.
+                    onAction: () => {
+                      void removeTrackAt(playlistId, index).then(refresh);
+                    },
+                  }
+            }
           >
             <ListRow
               title={item.title}
@@ -223,10 +265,82 @@ export function PlaylistScreen() {
               last={index === paged.visible.length - 1}
               // Starting mid-playlist queues the rest of it from that point.
               onPress={() => void playNow(songs, index)}
+              onLongPress={() => setAddTargets([item.id])}
               onActionPress={() => void toggleStar(item.id, Boolean(item.starred))}
             />
           </SwipeableRow>
         )}
+      />
+
+      <Sheet
+        visible={menuOpen}
+        onClose={() => {
+          setMenuOpen(false);
+          setRenaming(false);
+        }}
+        title={renaming ? 'Rename playlist' : (playlist?.name ?? 'Playlist')}
+      >
+        {renaming ? (
+          <SheetBody>
+            <TextInput
+              style={styles.input}
+              value={draftName}
+              onChangeText={setDraftName}
+              placeholder="Playlist name"
+              placeholderTextColor={color.textInverseSecondary}
+              autoFocus
+              returnKeyType="done"
+            />
+            <View style={styles.sheetActions}>
+              <ButtonRow>
+                <Button
+                  label="Save"
+                  variant="primary"
+                  disabled={draftName.trim().length === 0}
+                  onPress={() => {
+                    void renamePlaylist(playlistId, draftName).then(refresh);
+                    setMenuOpen(false);
+                    setRenaming(false);
+                  }}
+                />
+                <Button label="Cancel" onPress={() => setRenaming(false)} />
+              </ButtonRow>
+            </View>
+          </SheetBody>
+        ) : (
+          <>
+            <SheetOption
+              label="Add these tracks to another playlist"
+              onPress={() => {
+                setMenuOpen(false);
+                setAddTargets(songs.map((song) => song.id));
+              }}
+            />
+            <SheetOption
+              label="Rename"
+              onPress={() => {
+                setDraftName(playlist?.name ?? '');
+                setRenaming(true);
+              }}
+            />
+            <SheetOption
+              label="Delete playlist"
+              emphasis
+              last
+              onPress={() => {
+                void deletePlaylist(playlistId);
+                setMenuOpen(false);
+                navigation.goBack();
+              }}
+            />
+          </>
+        )}
+      </Sheet>
+
+      <AddToPlaylistSheet
+        visible={addTargets != null}
+        onClose={() => setAddTargets(null)}
+        songIds={addTargets ?? []}
       />
     </View>
   );
@@ -236,6 +350,17 @@ const makeStyles = (color: Palette) => StyleSheet.create({
   root: { flex: 1, backgroundColor: color.paper },
   listContent: { paddingBottom: DOCK_CLEARANCE },
   loadMore: { paddingHorizontal: layout.screenPadding, paddingTop: space[5] },
+  input: {
+    ...type.body,
+    color: color.textInverse,
+    height: 48,
+    paddingHorizontal: space[3],
+    borderWidth: hairline,
+    borderColor: color.panelLine,
+    borderRadius: radius.sm,
+    backgroundColor: color.panelRaised,
+  },
+  sheetActions: { marginTop: space[4], paddingBottom: space[3] },
   emptyContainer: { flexGrow: 1 },
 
   hero: { alignItems: 'center', paddingTop: space[5], paddingHorizontal: layout.screenPadding },

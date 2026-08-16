@@ -126,7 +126,7 @@ export function HomeScreen() {
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       {/* Lower intensity than the player: this screen is for reading. */}
-      <AmbientBackground intensity={0.5} />
+      <AmbientBackground />
 
       <ScreenHeader
         title="Home"

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FlatList, StyleSheet, View } from 'react-native';
+import Animated, { LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import TrackPlayer, { Event, useActiveMediaItem, type MediaItem } from '@rntp/player';
@@ -17,7 +18,7 @@ import { DOCK_CLEARANCE } from '../components/TabBar';
 import { HEAVY_LIST_PROPS, usePagedList } from '../hooks/usePagedList';
 import { extrasOf } from '../player/trackMapping';
 import { usePlayerStore } from '../store/usePlayerStore';
-import { icon, layout, space } from '../theme/tokens';
+import { icon, layout, motion, space } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import { formatDuration, pluralize } from '../utils/time';
@@ -105,7 +106,7 @@ export function QueueScreen() {
       onDismiss={() => navigation.goBack()}
       style={[styles.root, { paddingTop: insets.top }]}
     >
-      <AmbientBackground intensity={0.5} />
+      <AmbientBackground />
 
       <ScreenHeader
         title="Queue"
@@ -132,7 +133,10 @@ export function QueueScreen() {
           const track = (
             <ListRow
               title={row.item.title ?? 'Unknown title'}
-              meta={[row.item.artist, row.item.duration ? formatDuration(row.item.duration) : null]
+              meta={[
+                row.item.artist,
+                row.item.duration ? formatDuration(row.item.duration) : null,
+              ]
                 .filter(Boolean)
                 .join(' · ')}
               artworkUri={
@@ -147,19 +151,23 @@ export function QueueScreen() {
           if (!row.removable) return track;
 
           return (
-            <SwipeableRow
-              leftSwipe={{
-                icon: <IconTrash size={icon.size} color={color.accentInk} strokeWidth={2} />,
-                label: 'Remove',
-                // No manual resync: reading the queue straight after a write
-                // returns the pre-write state, since the write is dispatched to
-                // the native queue while the read runs inline. QueueChanged
-                // arrives once the change has actually landed.
-                onAction: () => removeFromQueue(row.index),
-              }}
-            >
-              {track}
-            </SwipeableRow>
+            // Laid out with a transition so removing a row closes the gap
+            // rather than the rest of the queue jumping up a slot.
+            <Animated.View layout={LinearTransition.duration(motion.durationBase)}>
+              <SwipeableRow
+                leftSwipe={{
+                  icon: <IconTrash size={icon.size} color={color.accentInk} strokeWidth={2} />,
+                  label: 'Remove',
+                  // No manual resync: reading the queue straight after a write
+                  // returns the pre-write state, since the write is dispatched to
+                  // the native queue while the read runs inline. QueueChanged
+                  // arrives once the change has actually landed.
+                  onAction: () => removeFromQueue(row.index),
+                }}
+              >
+                {track}
+              </SwipeableRow>
+            </Animated.View>
           );
         }}
         ListFooterComponent={
@@ -167,7 +175,11 @@ export function QueueScreen() {
             <View style={styles.footer}>
               {paged.hasMore && (
                 <View style={styles.loadMore}>
-                  <Button label={`Load ${paged.nextCount} more`} fullWidth onPress={paged.loadMore} />
+                  <Button
+                    label={`Load ${paged.nextCount} more`}
+                    fullWidth
+                    onPress={paged.loadMore}
+                  />
                 </View>
               )}
               <EmptyState
@@ -181,10 +193,11 @@ export function QueueScreen() {
   );
 }
 
-const makeStyles = (color: Palette) => StyleSheet.create({
-  root: { flex: 1, backgroundColor: color.paper },
-  listContent: { paddingBottom: space[6] },
-  emptyContainer: { flexGrow: 1 },
-  footer: { paddingBottom: DOCK_CLEARANCE },
-  loadMore: { paddingHorizontal: layout.screenPadding, paddingTop: space[5] },
-});
+const makeStyles = (color: Palette) =>
+  StyleSheet.create({
+    root: { flex: 1, backgroundColor: color.paper },
+    listContent: { paddingBottom: space[6] },
+    emptyContainer: { flexGrow: 1 },
+    footer: { paddingBottom: DOCK_CLEARANCE },
+    loadMore: { paddingHorizontal: layout.screenPadding, paddingTop: space[5] },
+  });
