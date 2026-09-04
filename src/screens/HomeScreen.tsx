@@ -167,10 +167,7 @@ export function HomeScreen() {
 
         {topTracks.length === 0 ? (
           <View style={styles.chartEmpty}>
-            <Text style={styles.chartHint}>
-              Nothing played in this window yet. Counts build as you listen — they come from this
-              device rather than from the server, which has no notion of a time window.
-            </Text>
+            <Text style={styles.chartHint}>Play something.</Text>
           </View>
         ) : (
           topTracks.map((track, index) => (

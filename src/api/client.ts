@@ -238,7 +238,7 @@ export class SubsonicClient {
 
   /**
    * Races the two addresses with a head start for local (RFC 8305 "Happy
-   * Eyeballs", as browsers do for IPv6/IPv4).
+   * Eyeballs", as browsers do for IPv6/IPv4), then insists on local.
    *
    * Probing strictly in sequence means that when the LAN address is absent —
    * i.e. any time you're away from home — every cold start burns the full
@@ -246,11 +246,18 @@ export class SubsonicClient {
    * that was 2.6s to first byte, nearly all of it spent waiting for a
    * timeout we could have predicted.
    *
-   * Local still goes first and still wins outright when it's there: it
-   * answers in ~160ms at home, well inside the stagger, so remote is never
-   * contacted at all. A flat parallel race would be faster to write but would
-   * defeat the intent, since Tailscale often beats the LAN on latency and
-   * would win the race while you're sitting at home.
+   * The head start alone is not enough to keep us on the LAN at home, which
+   * is what this originally got wrong. A stagger only delays remote; it does
+   * not outrank it. On a phone the first request after the Wi-Fi radio has
+   * been idle regularly overruns the window — the LAN measured 124-294ms
+   * warm but 424ms on a cold ARP entry — while Tailscale, kept warm by its
+   * own keepalives, answers immediately. Whenever local overran, remote won
+   * the race and the app sat on Tailscale while on home Wi-Fi.
+   *
+   * So the race decides only how soon something is usable, never which
+   * address we keep. If remote wins it, local keeps probing, and the moment
+   * it answers the connection switches to it. Away, local simply fails in
+   * the background and nothing changes.
    */
   private async probeStaggered(
     local: UrlCandidate,
@@ -281,7 +288,16 @@ export class SubsonicClient {
     };
 
     try {
-      return this.commit(await Promise.any([asWinner(localAttempt), asWinner(remoteAttempt)]));
+      const winner = await Promise.any([asWinner(localAttempt), asWinner(remoteAttempt)]);
+      const state = this.commit(winner);
+
+      // Remote answering first does not settle it — local may still be on its
+      // way. Hand back the usable connection now and keep listening for local.
+      if (winner.candidate.kind === 'remote') {
+        this.preferLocalWhenItAnswers(state, localAttempt);
+      }
+
+      return state;
     } catch (aggregate) {
       const failures: ProbeOutcome[] =
         aggregate instanceof AggregateError ? aggregate.errors : [];
@@ -304,6 +320,28 @@ export class SubsonicClient {
         ),
       );
     }
+  }
+
+  /**
+   * Switches an already-committed remote connection to local if local answers
+   * late. Fire-and-forget: the caller is not kept waiting on it.
+   *
+   * Guarded on object identity rather than on `kind`. Between committing and
+   * local answering, the connection may have been invalidated, re-probed by
+   * a resume, or cleared by sign-out — and quietly reinstating an address
+   * from a decision that is no longer current is worse than staying remote.
+   */
+  private preferLocalWhenItAnswers(
+    committed: ConnectionState,
+    localAttempt: Promise<ProbeOutcome>,
+  ): void {
+    void localAttempt.then((outcome) => {
+      if (!outcome.ok) return;
+      if (this.connection !== committed) return;
+
+      this.log('Local answered after remote; switching to it');
+      this.commit(outcome);
+    });
   }
 
   /** Plain in-order fallback for when only one address is configured. */
