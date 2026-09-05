@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import Animated, {
   Easing,
@@ -18,7 +18,6 @@ import TrackPlayer, {
 
 import { AmbientBackground } from '../components/AmbientBackground';
 import { ArtworkWell, FormatBadge } from '../components/ArtworkWell';
-import { SleepTimerSheet } from '../components/SleepTimerSheet';
 import { ProgressBar } from '../components/ProgressBar';
 import { TransportControls } from '../components/TransportControls';
 import { EmptyState } from '../components/ScreenState';
@@ -27,7 +26,6 @@ import {
   IconHeart,
   IconHeartFilled,
   IconMicrophone2,
-  IconMoon,
   IconPlaylist,
 } from '../components/icons';
 import { navigateToAlbum, navigateToArtist } from '../navigation/ref';
@@ -79,28 +77,6 @@ export function NowPlayingScreen() {
   const shuffled = usePlayerStore((state) => state.shuffled);
   const setShuffled = usePlayerStore((state) => state.setShuffled);
   const [repeat, setRepeat] = useState<RepeatMode>(RepeatMode.Off);
-  const [timerOpen, setTimerOpen] = useState(false);
-  const [sleepRemaining, setSleepRemaining] = useState<number | null>(null);
-
-  /**
-   * Reads the native timer.
-   *
-   * The countdown is owned by the player so it survives the JS runtime being
-   * suspended, which means the only way to know where it is up to is to ask.
-   */
-  const readSleepTimer = useCallback(() => {
-    const timer = TrackPlayer.getSleepTimer();
-    setSleepRemaining(timer?.type === 'time' ? timer.remainingSeconds : null);
-  }, []);
-
-  // A minute is plenty for a countdown measured in tens of them, and keeps
-  // this off the once-a-second path the progress bar is already on.
-  useEffect(() => {
-    readSleepTimer();
-    const poll = setInterval(readSleepTimer, 60_000);
-    return () => clearInterval(poll);
-  }, [readSleepTimer]);
-
   const extras = extrasOf(activeItem);
   const [starred, setStarred] = useState<boolean | null>(null);
   const isStarred = starred ?? extras?.starred ?? false;
@@ -111,7 +87,7 @@ export function NowPlayingScreen() {
   if (!activeItem) {
     return (
       <View style={[styles.root, { paddingTop: insets.top }]}>
-        <Header onClose={closePlayer} onSleepTimer={() => setTimerOpen(true)} />
+        <Header onClose={closePlayer} />
         <EmptyState label="Nothing playing" hint="Pick something from your library." />
       </View>
     );
@@ -147,11 +123,7 @@ export function NowPlayingScreen() {
         {/* Behind everything, tinted by the current cover. */}
         <AmbientBackground />
 
-        <Header
-          onClose={closePlayer}
-          onSleepTimer={() => setTimerOpen(true)}
-          timerActive={sleepRemaining != null}
-        />
+        <Header onClose={closePlayer} />
 
         {/* Absorbs the slack; everything below keeps its natural height. */}
         <View style={styles.artArea}>
@@ -282,13 +254,6 @@ export function NowPlayingScreen() {
             />
           </View>
         </View>
-
-        <SleepTimerSheet
-          visible={timerOpen}
-          onClose={() => setTimerOpen(false)}
-          remainingSeconds={sleepRemaining}
-          onChanged={readSleepTimer}
-        />
     </View>
   );
 }
@@ -347,35 +312,12 @@ function BreathingArtwork({
  * The screen title is gone: a full-bleed player showing one album cover does
  * not need a caption telling you it is the player.
  */
-function Header({
-  onClose,
-  onSleepTimer,
-  timerActive = false,
-}: {
-  onClose: () => void;
-  onSleepTimer: () => void;
-  timerActive?: boolean;
-}) {
+function Header({ onClose }: { onClose: () => void }) {
   const color = useTheme();
   const styles = useThemedStyles(makeStyles);
 
   return (
     <View style={styles.header}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Sleep timer"
-        hitSlop={space[3]}
-        onPress={onSleepTimer}
-        style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}
-      >
-        {/* Accented while a timer is running — state, not decoration. */}
-        <IconMoon
-          size={icon.size}
-          strokeWidth={icon.strokeWidth}
-          color={timerActive ? color.accent : color.textInverseSecondary}
-        />
-      </Pressable>
-
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Minimise player"
@@ -424,7 +366,9 @@ const makeStyles = (color: Palette) =>
     header: {
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
+      // Was space-between for a pair of buttons. The minimise chevron is the
+      // only one left, and it stays on the right where the thumb expects it.
+      justifyContent: 'flex-end',
       paddingHorizontal: layout.panelPadding,
       paddingVertical: space[3],
     },

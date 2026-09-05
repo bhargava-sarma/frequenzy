@@ -1,5 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import Animated, {
+  Easing,
+  interpolate,
+  interpolateColor,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import TrackPlayer, { useActiveMediaItem, useProgress } from '@rntp/player';
 
@@ -10,7 +18,8 @@ import { EmptyState } from '../components/ScreenState';
 import { activeLineIndex } from '../api/lrclib';
 import { useLyrics } from '../hooks/useLyrics';
 import { usePlayerUiStore } from '../store/usePlayerUiStore';
-import { layout, space, type } from '../theme/tokens';
+import { romanizeLine } from '../utils/romanize';
+import { layout, motion, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 
@@ -23,7 +32,7 @@ import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
  *
  * Lines are tappable and seek. A lyric sheet already answers "where am I",
  * and once it does, "take me back to that bit" is the obvious next thing to
- * want — this is the same reasoning that makes the progress bar draggable.
+ * want — the same reasoning that makes the progress bar draggable.
  */
 
 /** Progress tick. Finer than the player's 1s, or lines land visibly late. */
@@ -36,6 +45,23 @@ const TICK_SECONDS = 0.25;
  * straight back to the current line and the gesture feels broken.
  */
 const MANUAL_SCROLL_GRACE_MS = 5000;
+
+/**
+ * Line handover. Longer than the app's other motion on purpose.
+ *
+ * Everything else here is UI acknowledging a press and wants to read as
+ * instant. This is following a voice, and at 120ms the change reads as a
+ * flicker between two states rather than as one line giving way to the next.
+ */
+const LINE_FADE_MS = 260;
+
+const TIMING = {
+  duration: LINE_FADE_MS,
+  easing: Easing.bezier(...motion.easing),
+};
+
+/** Inactive lines sit back rather than disappearing — you can still read ahead. */
+const INACTIVE_OPACITY = 0.38;
 
 export function LyricsScreen() {
   const color = useTheme();
@@ -52,15 +78,31 @@ export function LyricsScreen() {
   const viewportHeight = useRef(0);
   const manualUntil = useRef(0);
 
-  const lines = lyrics?.lines ?? [];
+  const [showRoman, setShowRoman] = useState(true);
+
+  const lines = useMemo(() => lyrics?.lines ?? [], [lyrics]);
   const synced = Boolean(lyrics?.synced);
+
+  /**
+   * Romanised twice-over is wasteful, so it is computed once per lyric sheet
+   * rather than per render or per progress tick — this runs over every line
+   * and the progress tick fires four times a second.
+   */
+  const roman = useMemo(() => lines.map((line) => romanizeLine(line.text)), [lines]);
+  const hasRoman = useMemo(() => roman.some(Boolean), [roman]);
+
+  const romanPlain = useMemo(
+    () => (lyrics?.plain ? romanizeLine(lyrics.plain) : null),
+    [lyrics],
+  );
+
   const index = useMemo(
     () => (synced ? activeLineIndex(lines, position) : -1),
     [synced, lines, position],
   );
 
-  // Reset the recorded geometry when the words change, or the next track's
-  // scroll would be aimed using the previous track's line positions.
+  // Reset recorded geometry when the words change, or the next track's scroll
+  // would be aimed using the previous track's line positions.
   useEffect(() => {
     offsets.current = {};
     manualUntil.current = 0;
@@ -84,6 +126,10 @@ export function LyricsScreen() {
 
   const onLineLayout = useCallback((i: number, y: number) => {
     offsets.current[i] = y;
+  }, []);
+
+  const seekTo = useCallback((seconds: number) => {
+    TrackPlayer.seekTo(seconds);
   }, []);
 
   const body = () => {
@@ -131,6 +177,11 @@ export function LyricsScreen() {
           <Text style={styles.plain} selectable>
             {lyrics?.plain}
           </Text>
+          {showRoman && romanPlain && (
+            <Text style={styles.plainRoman} selectable>
+              {romanPlain}
+            </Text>
+          )}
         </View>
       );
     }
@@ -151,26 +202,20 @@ export function LyricsScreen() {
             );
           }
 
-          const isActive = i === index;
           return (
-            <Pressable
+            <LyricRow
               key={i}
-              onPress={() => TrackPlayer.seekTo(line.time)}
-              onLayout={(e) => onLineLayout(i, e.nativeEvent.layout.y)}
-              accessibilityRole="button"
-              accessibilityLabel={`Play from "${line.text}"`}
-              style={styles.linePress}
-            >
-              <Text
-                style={[
-                  styles.line,
-                  { color: isActive ? color.accent : color.textSecondary },
-                  isActive && styles.lineActive,
-                ]}
-              >
-                {line.text}
-              </Text>
-            </Pressable>
+              index={i}
+              text={line.text}
+              roman={showRoman ? roman[i] : null}
+              time={line.time}
+              active={i === index}
+              styles={styles}
+              idleColor={color.textSecondary}
+              activeColor={color.accent}
+              onLayout={onLineLayout}
+              onSeek={seekTo}
+            />
           );
         })}
       </>
@@ -185,7 +230,26 @@ export function LyricsScreen() {
         title="Lyrics"
         onBack={closeLyrics}
         action={
-          synced ? <Text style={styles.source}>LRCLIB</Text> : undefined
+          hasRoman ? (
+            <Pressable
+              accessibilityRole="switch"
+              accessibilityState={{ checked: showRoman }}
+              accessibilityLabel="Show romanised lyrics"
+              hitSlop={space[3]}
+              onPress={() => setShowRoman((on) => !on)}
+            >
+              <Text
+                style={[
+                  styles.toggle,
+                  { color: showRoman ? color.accent : color.textSecondary },
+                ]}
+              >
+                Romanised
+              </Text>
+            </Pressable>
+          ) : synced ? (
+            <Text style={styles.source}>LRCLIB</Text>
+          ) : undefined
         }
       />
 
@@ -206,6 +270,77 @@ export function LyricsScreen() {
   );
 }
 
+/**
+ * One line, which lifts as it becomes current.
+ *
+ * Memoised on `active` so a progress tick re-renders the two lines that
+ * changed rather than all of them — at four ticks a second across a few
+ * hundred lines, that is the difference between smooth and not.
+ *
+ * The animation runs on the UI thread through Reanimated, so it keeps its
+ * timing even while the JS thread is busy fetching the next track's artwork.
+ * Opacity, scale and colour move together over one curve: three properties
+ * on separate timings read as three things happening, not one line arriving.
+ */
+const LyricRow = memo(function LyricRow({
+  index,
+  text,
+  roman,
+  time,
+  active,
+  styles,
+  idleColor,
+  activeColor,
+  onLayout,
+  onSeek,
+}: {
+  index: number;
+  text: string;
+  roman: string | null;
+  time: number;
+  active: boolean;
+  styles: ReturnType<typeof makeStyles>;
+  idleColor: string;
+  activeColor: string;
+  onLayout: (index: number, y: number) => void;
+  onSeek: (seconds: number) => void;
+}) {
+  const lit = useSharedValue(active ? 1 : 0);
+
+  useEffect(() => {
+    lit.value = withTiming(active ? 1 : 0, TIMING);
+  }, [active, lit]);
+
+  const textStyle = useAnimatedStyle(() => ({
+    color: interpolateColor(lit.value, [0, 1], [idleColor, activeColor]),
+    opacity: interpolate(lit.value, [0, 1], [INACTIVE_OPACITY, 1]),
+    // Barely there. The spec rules out bounce, and a line that visibly grows
+    // reads as a button press rather than as the song moving on.
+    transform: [{ scale: interpolate(lit.value, [0, 1], [0.98, 1]) }],
+  }));
+
+  const romanStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(lit.value, [0, 1], [INACTIVE_OPACITY * 0.8, 0.75]),
+  }));
+
+  return (
+    <Pressable
+      onPress={() => onSeek(time)}
+      onLayout={(e) => onLayout(index, e.nativeEvent.layout.y)}
+      accessibilityRole="button"
+      accessibilityLabel={`Play from "${text}"`}
+      style={styles.linePress}
+    >
+      <Animated.Text style={[styles.line, textStyle]}>{text}</Animated.Text>
+      {roman && (
+        <Animated.Text style={[styles.roman, romanStyle]} numberOfLines={2}>
+          {roman}
+        </Animated.Text>
+      )}
+    </Pressable>
+  );
+});
+
 const makeStyles = (color: Palette) =>
   StyleSheet.create({
     root: { flex: 1, backgroundColor: color.paper },
@@ -220,11 +355,24 @@ const makeStyles = (color: Palette) =>
 
     linePress: { paddingVertical: space[2] },
     line: { ...type.title, fontSize: 19, lineHeight: 28 },
-    lineActive: { ...type.display, fontSize: 21, lineHeight: 30 },
+    roman: {
+      ...type.meta,
+      fontSize: 13,
+      lineHeight: 19,
+      color: color.textSecondary,
+      marginTop: space[1],
+    },
     gap: { height: space[5] },
 
     plainBlock: { paddingTop: space[2] },
     plain: { ...type.body, fontSize: 16, lineHeight: 26, color: color.textPrimary },
+    plainRoman: {
+      ...type.meta,
+      fontSize: 14,
+      lineHeight: 23,
+      color: color.textSecondary,
+      marginTop: space[5],
+    },
     unsyncedNote: {
       ...type.label,
       color: color.textSecondary,
@@ -232,6 +380,7 @@ const makeStyles = (color: Palette) =>
     },
 
     source: { ...type.label, color: color.textSecondary },
+    toggle: { ...type.label },
     state: { flexGrow: 1, justifyContent: 'center' },
     retry: { alignItems: 'center', marginTop: space[4] },
   });

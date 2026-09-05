@@ -9,6 +9,7 @@
  */
 
 import { activeLineIndex, baseTitle, fetchLyrics, parseLrc, primaryArtist } from '../src/api/lrclib';
+import { needsRomanizing, romanizeLine } from '../src/utils/romanize';
 
 const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
@@ -85,8 +86,36 @@ check('feat in title', baseTitle('Mood (feat. iann dior)'), 'Mood');
 check('plain title untouched', baseTitle('Blinding Lights'), 'Blinding Lights');
 check('never returns empty', baseTitle('(Remix)'), '(Remix)');
 
+console.log(bold('\n4. ROMANISATION') + dim(' (transliteration, not translation)'));
+
+check('latin needs nothing', needsRomanizing('Is this the real life?'), false);
+check('devanagari detected', needsRomanizing('कल हो ना हो'), true);
+check('latin returns null', romanizeLine('Blinding Lights'), null);
+
+const roman: [string, string][] = [
+  ['तुम ही हो, अब तुम ही हो', 'tum hi ho, ab tum hi ho'],
+  ['कल हो ना हो', 'kal ho na ho'],
+  ['कमल', 'kamal'],
+  ['चाँदनी रातें', 'chandni raten'],
+  ['दिल तो पागल है', 'dil to pagal hai'],
+  ['मेरे सपनों की रानी', 'mere sapnon ki rani'],
+  ['ਤੇਰੇ ਬਿਨ ਨਹੀਂ ਲਗਦਾ ਦਿਲ', 'tere bin nahin lagda dil'],
+  ['నువ్వు నాకు నచ్చావు', 'nuvvu naku nachchavu'],
+  ['ನಾನು ನಿನ್ನ ಪ್ರೀತಿಸುತ್ತೇನೆ', 'nanu ninna pritisuttene'],
+  ['사랑해 그대여', 'saranghae geudaeyeo'],
+  ['너를 사랑해', 'neoreul saranghae'],
+];
+for (const [src, want] of roman) check(src, romanizeLine(src), want);
+
+// Not exact-matched: these scripts are approximated, so just prove they
+// produce readable Latin rather than being dropped.
+for (const src of ['Очи чёрные', 'حبيبي يا نور العين', 'ひらがな']) {
+  const out = romanizeLine(src);
+  check(`${src} -> latin`, Boolean(out && !needsRomanizing(out)), true);
+}
+
 async function main() {
-console.log(bold('\n4. LIVE LOOKUPS') + dim(' (lrclib.net)'));
+console.log(bold('\n5. LIVE LOOKUPS') + dim(' (lrclib.net)'));
 
 const cases = [
   { trackName: 'Mood (Remix)', artistName: '24kGoldn', duration: 184 },
