@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { Button, ButtonRow } from './Button';
 import { Sheet, SheetBody, SheetOption } from './Sheet';
 import { editablePlaylists, usePlaylistStore } from '../store/usePlaylistStore';
 import { hairline, radius, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
+import type { Playlist } from '../types/subsonic';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import { pluralize } from '../utils/time';
 
@@ -41,10 +42,16 @@ export function AddToPlaylistSheet({
   const load = usePlaylistStore((state) => state.load);
   const create = usePlaylistStore((state) => state.create);
   const addTracks = usePlaylistStore((state) => state.addTracks);
+  const findDuplicates = usePlaylistStore((state) => state.findDuplicates);
 
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
+  const [checking, setChecking] = useState<string | null>(null);
+  /** Set when the chosen playlist already holds some of these tracks. */
+  const [conflict, setConflict] = useState<{ playlist: Playlist; count: number } | null>(
+    null,
+  );
 
   // Refetch each time it opens: a playlist made on another device, or on the
   // last visit to this sheet, should be here.
@@ -57,6 +64,8 @@ export function AddToPlaylistSheet({
     if (!visible) {
       setCreating(false);
       setName('');
+      setConflict(null);
+      setChecking(null);
     }
   }, [visible]);
 
@@ -70,16 +79,62 @@ export function AddToPlaylistSheet({
     }
   }
 
+  /**
+   * Looks before it adds.
+   *
+   * Subsonic will happily store the same track twice, so nothing upstream
+   * stops this — and a silent second copy is only discovered later, halfway
+   * down the playlist. The check costs one request and only on the playlist
+   * actually chosen.
+   */
+  async function choose(playlist: Playlist) {
+    setChecking(playlist.id);
+    try {
+      const duplicates = await findDuplicates(playlist.id, songIds);
+      if (duplicates.length > 0) {
+        setConflict({ playlist, count: duplicates.length });
+        return;
+      }
+      await run(() => addTracks(playlist.id, songIds));
+    } finally {
+      setChecking(null);
+    }
+  }
+
   const options = editablePlaylists(playlists);
 
   return (
     <Sheet
       visible={visible}
       onClose={onClose}
-      title={creating ? 'New playlist' : 'Add to playlist'}
+      title={conflict ? 'Already in playlist' : creating ? 'New playlist' : 'Add to playlist'}
       detail={subject ?? (songIds.length > 1 ? pluralize(songIds.length, 'track') : undefined)}
     >
-      {creating ? (
+      {conflict ? (
+        <SheetBody>
+          <Text style={styles.warning}>
+            {conflict.count === songIds.length && songIds.length === 1
+              ? `This track is already in ${conflict.playlist.name}.`
+              : `${pluralize(conflict.count, 'track')} of these ${
+                  conflict.count === 1 ? 'is' : 'are'
+                } already in ${conflict.playlist.name}.`}
+          </Text>
+          <Text style={styles.warningHint}>
+            Adding again will leave a second copy in the playlist.
+          </Text>
+          <View style={styles.actions}>
+            <ButtonRow>
+              <Button
+                label="Add anyway"
+                variant="primary"
+                busy={busy}
+                onPress={() => void run(() => addTracks(conflict.playlist.id, songIds))}
+              />
+              <Button label="Cancel" onPress={() => setConflict(null)} />
+            </ButtonRow>
+          </View>
+        </SheetBody>
+      ) : creating ? (
         <SheetBody>
           <TextInput
             style={styles.input}
@@ -116,9 +171,9 @@ export function AddToPlaylistSheet({
               detail={
                 playlist.songCount != null ? pluralize(playlist.songCount, 'track') : undefined
               }
-              disabled={busy}
+              disabled={busy || checking != null}
               last={index === options.length - 1}
-              onPress={() => void run(() => addTracks(playlist.id, songIds))}
+              onPress={() => void choose(playlist)}
             />
           ))}
         </ScrollView>
@@ -140,5 +195,12 @@ const makeStyles = (color: Palette) =>
       backgroundColor: color.panelRaised,
     },
     actions: { marginTop: space[4], paddingBottom: space[3] },
+    warning: { ...type.body, color: color.textInverse, lineHeight: 21 },
+    warningHint: {
+      ...type.meta,
+      color: color.textInverseSecondary,
+      marginTop: space[2],
+      lineHeight: 18,
+    },
     // Kept for parity with the other sheet bodies.
   });

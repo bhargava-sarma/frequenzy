@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { FlatList, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import { useActiveMediaItem } from '@rntp/player';
 
-import { AddToPlaylistSheet } from '../components/AddToPlaylistSheet';
+import { SearchField } from '../components/SearchField';
+import { TrackActionsSheet } from '../components/TrackActionsSheet';
 import { AmbientBackground } from '../components/AmbientBackground';
 import { ExpandFrom } from '../components/ExpandFrom';
 import { ArtworkWell } from '../components/ArtworkWell';
@@ -26,7 +27,14 @@ import { useServerStore } from '../store/useServerStore';
 import { icon, layout, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
+import type { Child } from '../types/subsonic';
 import { formatDuration, pluralize } from '../utils/time';
+
+/**
+ * Below this many rows the list is short enough to read at a glance, and a
+ * filter field would cost more space than the scrolling it saves.
+ */
+const MIN_ROWS_FOR_FILTER = 8;
 
 /** Album detail — artwork, actions, and the track list. */
 export function AlbumScreen() {
@@ -57,8 +65,26 @@ export function AlbumScreen() {
 
   const totalDuration = songs.reduce((sum, song) => sum + (song.duration ?? 0), 0);
 
-  /** Non-null while the add-to-playlist sheet is open, holding what to add. */
-  const [addTargets, setAddTargets] = useState<string[] | null>(null);
+  /** Non-null while the actions sheet is open, holding the track it acts on. */
+  const [actionTarget, setActionTarget] = useState<Child | null>(null);
+
+  const [filter, setFilter] = useState('');
+
+  /**
+   * Filters on title and artist together. On a compilation the thing you
+   * remember is often who sang it rather than what it was called.
+   */
+  const visible = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    if (!needle) return songs;
+    return songs.filter(
+      (song) =>
+        song.title.toLowerCase().includes(needle) ||
+        (song.artist ?? '').toLowerCase().includes(needle),
+    );
+  }, [songs, filter]);
+
+  const filtering = filter.trim().length > 0;
 
   async function toggleStar(songId: string, starred: boolean) {
     if (!client) return;
@@ -77,8 +103,12 @@ export function AlbumScreen() {
 
         <ScreenHeader title={title} onBack={() => navigation.goBack()} />
 
+        {songs.length > MIN_ROWS_FOR_FILTER && (
+          <SearchField value={filter} onChangeText={setFilter} placeholder="Find in album" />
+        )}
+
         <FlatList
-          data={songs}
+          data={visible}
           {...HEAVY_LIST_PROPS}
           keyExtractor={(song) => song.id}
           ListHeaderComponent={
@@ -127,10 +157,10 @@ export function AlbumScreen() {
             ) : error ? (
               <ErrorState message={error} onRetry={refresh} />
             ) : (
-              <EmptyState label="No tracks" />
+              <EmptyState label={filtering ? 'No matches' : 'No tracks'} />
             )
           }
-          contentContainerStyle={songs.length ? styles.listContent : styles.emptyContainer}
+          contentContainerStyle={visible.length ? styles.listContent : styles.emptyContainer}
           renderItem={({ item, index }) => (
             <SwipeableRow
               rightSwipe={{
@@ -157,23 +187,25 @@ export function AlbumScreen() {
                 action="favorite"
                 favorited={Boolean(item.starred)}
                 active={item.id === activeId}
-                last={index === songs.length - 1}
+                last={index === visible.length - 1}
                 // Starting mid-album queues the whole album from that point,
                 // rather than the single track — the queue is the point.
-                onPress={() => void playNow(songs, index)}
+                onPress={() => void playNow(visible, index)}
                 // Long-press is the app-wide gesture for "do something else
                 // with this track".
-                onLongPress={() => setAddTargets([item.id])}
+                onLongPress={() => setActionTarget(item)}
                 onActionPress={() => void toggleStar(item.id, Boolean(item.starred))}
               />
             </SwipeableRow>
           )}
         />
 
-        <AddToPlaylistSheet
-          visible={addTargets != null}
-          onClose={() => setAddTargets(null)}
-          songIds={addTargets ?? []}
+        <TrackActionsSheet
+          visible={actionTarget != null}
+          onClose={() => setActionTarget(null)}
+          song={actionTarget}
+          hide={['album']}
+          onStarChanged={refresh}
         />
       </View>
     </ExpandFrom>

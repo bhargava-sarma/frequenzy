@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
@@ -16,7 +16,9 @@ import { ScreenHeader } from '../components/ScreenHeader';
 import { SectionHeader } from '../components/SectionHeader';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenState';
 import { Sheet, SheetBody, SheetOption } from '../components/Sheet';
+import { SearchField } from '../components/SearchField';
 import { SwipeableRow } from '../components/SwipeableRow';
+import { TrackActionsSheet } from '../components/TrackActionsSheet';
 import { extrasOf } from '../player/trackMapping';
 import { useArtwork } from '../hooks/useArtwork';
 import { HEAVY_LIST_PROPS, usePagedList } from '../hooks/usePagedList';
@@ -29,6 +31,9 @@ import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import type { Child, Playlist } from '../types/subsonic';
 import { formatDuration, pluralize } from '../utils/time';
+
+/** Below this, the list fits on a screen and a filter costs more than it saves. */
+const MIN_ROWS_FOR_FILTER = 8;
 
 /**
  * Playlist detail — the same shape as the album screen.
@@ -122,9 +127,34 @@ export function PlaylistScreen() {
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState('');
   /** Non-null while the add-to-playlist sheet is open, holding what to add. */
-  const [addTargets, setAddTargets] = useState<string[] | null>(null);
+  const [actionTarget, setActionTarget] = useState<Child | null>(null);
+  /** Bulk copy of the whole playlist, from its own menu — not a row action. */
+  const [bulkTargets, setBulkTargets] = useState<string[] | null>(null);
+  const [filter, setFilter] = useState('');
 
-  const paged = usePagedList(songs);
+  const filtered = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    if (!needle) return songs;
+    return songs.filter(
+      (song) =>
+        song.title.toLowerCase().includes(needle) ||
+        (song.artist ?? '').toLowerCase().includes(needle),
+    );
+  }, [songs, filter]);
+
+  const filtering = filter.trim().length > 0;
+
+  /**
+   * The track's position in the playlist itself, not in what's on screen.
+   *
+   * The server removes by index because the same track may appear twice, so
+   * the index handed to it has to be the real one — a filtered list renumbers
+   * from zero and would otherwise delete whatever happens to sit at that
+   * position in the full playlist.
+   */
+  const positionOf = (song: Child) => songs.indexOf(song);
+
+  const paged = usePagedList(filtered);
   const title = playlist?.name ?? playlistName ?? 'Playlist';
   const totalDuration =
     playlist?.duration ?? songs.reduce((sum, song) => sum + (song.duration ?? 0), 0);
@@ -164,6 +194,10 @@ export function PlaylistScreen() {
             )
           }
         />
+
+        {songs.length > MIN_ROWS_FOR_FILTER && (
+          <SearchField value={filter} onChangeText={setFilter} placeholder="Find in playlist" />
+        )}
 
         <FlatList
           data={paged.visible}
@@ -213,16 +247,20 @@ export function PlaylistScreen() {
               <ErrorState message={error} onRetry={refresh} />
             ) : (
               <EmptyState
-                label={isLiked ? 'No liked songs' : 'Empty playlist'}
+                label={
+                  filtering ? 'No matches' : isLiked ? 'No liked songs' : 'Empty playlist'
+                }
                 hint={
-                  isLiked
-                    ? 'Tap the heart on a track to add it here.'
-                    : 'Add tracks to it in Navidrome.'
+                  filtering
+                    ? undefined
+                    : isLiked
+                      ? 'Tap the heart on a track to add it here.'
+                      : 'Add tracks to it in Navidrome.'
                 }
               />
             )
           }
-          contentContainerStyle={songs.length ? styles.listContent : styles.emptyContainer}
+          contentContainerStyle={filtered.length ? styles.listContent : styles.emptyContainer}
           ListFooterComponent={
             paged.hasMore ? (
               <View style={styles.loadMore}>
@@ -254,7 +292,7 @@ export function PlaylistScreen() {
                       // By position: the same track can appear twice, and the
                       // server removes by index for exactly that reason.
                       onAction: () => {
-                        void removeTrackAt(playlistId, index).then(refresh);
+                        void removeTrackAt(playlistId, positionOf(item)).then(refresh);
                       },
                     }
               }
@@ -270,8 +308,10 @@ export function PlaylistScreen() {
                 active={item.id === activeId}
                 last={index === paged.visible.length - 1}
                 // Starting mid-playlist queues the rest of it from that point.
-                onPress={() => void playNow(songs, index)}
-                onLongPress={() => setAddTargets([item.id])}
+                // Plays what you are looking at: unfiltered that is the whole
+                // playlist from here, filtered it is the matches.
+                onPress={() => void playNow(filtered, index)}
+                onLongPress={() => setActionTarget(item)}
                 onActionPress={() => void toggleStar(item.id, Boolean(item.starred))}
               />
             </SwipeableRow>
@@ -319,7 +359,7 @@ export function PlaylistScreen() {
                 label="Add these tracks to another playlist"
                 onPress={() => {
                   setMenuOpen(false);
-                  setAddTargets(songs.map((song) => song.id));
+                  setBulkTargets(songs.map((song) => song.id));
                 }}
               />
               <SheetOption
@@ -344,9 +384,28 @@ export function PlaylistScreen() {
         </Sheet>
 
         <AddToPlaylistSheet
-          visible={addTargets != null}
-          onClose={() => setAddTargets(null)}
-          songIds={addTargets ?? []}
+          visible={bulkTargets != null}
+          onClose={() => setBulkTargets(null)}
+          songIds={bulkTargets ?? []}
+          subject={playlist?.name}
+        />
+
+        <TrackActionsSheet
+          visible={actionTarget != null}
+          onClose={() => setActionTarget(null)}
+          song={actionTarget}
+          onStarChanged={refresh}
+          extraAction={
+            isLiked || !actionTarget
+              ? undefined
+              : {
+                  label: 'Remove from this playlist',
+                  emphasis: true,
+                  onPress: () => {
+                    void removeTrackAt(playlistId, positionOf(actionTarget)).then(refresh);
+                  },
+                }
+          }
         />
       </View>
     </ExpandFrom>

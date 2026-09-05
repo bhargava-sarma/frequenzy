@@ -1,27 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { FlatList, StyleSheet, TextInput, View } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
-import { AddToPlaylistSheet } from '../components/AddToPlaylistSheet';
 import { AmbientBackground } from '../components/AmbientBackground';
 import { Button } from '../components/Button';
 import { ListRow } from '../components/ListRow';
 import { SectionHeader } from '../components/SectionHeader';
 import { Segmented } from '../components/Segmented';
-import { Frosted } from '../components/Frosted';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenState';
 import { DOCK_CLEARANCE } from '../components/TabBar';
+import { SearchField } from '../components/SearchField';
 import { SwipeableRow } from '../components/SwipeableRow';
-import { IconHeart, IconHeartFilled, IconPlus, IconX } from '../components/icons';
+import { TrackActionsSheet } from '../components/TrackActionsSheet';
+import { IconHeart, IconHeartFilled, IconPlus } from '../components/icons';
 import { clearRecentSearches, getRecentSearches, recordSearch } from '../data/recentSearches';
 import { useArtwork } from '../hooks/useArtwork';
 import type { SearchStackParamList } from '../navigation/types';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { useServerStore } from '../store/useServerStore';
-import { hairline, icon, layout, motion, space, type } from '../theme/tokens';
+import { icon, layout, motion, space } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import type { AlbumSummary, ArtistSummary, Child } from '../types/subsonic';
@@ -89,7 +89,7 @@ export function SearchScreen() {
   const [error, setError] = useState<string | null>(null);
   const [recent, setRecent] = useState<string[]>([]);
   /** Non-null while the add-to-playlist sheet is open, holding what to add. */
-  const [addTargets, setAddTargets] = useState<string[] | null>(null);
+  const [actionTarget, setActionTarget] = useState<Child | null>(null);
 
   useEffect(() => {
     void getRecentSearches().then(setRecent);
@@ -199,45 +199,16 @@ export function SearchScreen() {
 
       {/* Field and scopes share one card, the way the dock joins the
           mini-player to the nav — they are one control for one job. */}
-      <View style={styles.searchBar}>
-        <Frosted style={styles.card}>
-          <View style={styles.inputWrap}>
-            <TextInput
-              ref={inputRef}
-              style={styles.input}
-              value={query}
-              onChangeText={setQuery}
-              placeholder="Search your library"
-              placeholderTextColor={color.textInverseSecondary}
-              autoCapitalize="none"
-              autoCorrect={false}
-              returnKeyType="search"
-            />
-
-            {/* Android has no built-in clear affordance — clearButtonMode is
-                iOS-only, which is why the field had no way to be emptied. */}
-            {hasQuery && (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Clear search"
-                hitSlop={space[3]}
-                onPress={() => setQuery('')}
-                style={({ pressed }) => [styles.clear, pressed && styles.pressed]}
-              >
-                <IconX
-                  size={icon.sizeSmall}
-                  strokeWidth={icon.strokeWidth}
-                  color={color.textInverseSecondary}
-                />
-              </Pressable>
-            )}
-          </View>
-
-          <View style={styles.scopes}>
-            <Segmented options={SCOPES} value={scope} onChange={switchScope} surface="panel" />
-          </View>
-        </Frosted>
-      </View>
+      <SearchField
+        ref={inputRef}
+        value={query}
+        onChangeText={setQuery}
+        placeholder="Search your library"
+      >
+        <View style={styles.scopes}>
+          <Segmented options={SCOPES} value={scope} onChange={switchScope} surface="panel" />
+        </View>
+      </SearchField>
 
       {/* Keyed on the scope so switching tabs crossfades the results. */}
       <Animated.View key={scope} style={styles.list} entering={FadeIn.duration(motion.durationBase)}>
@@ -351,7 +322,7 @@ export function SearchScreen() {
                 last={index === shown.length - 1}
                 // Plays this one without discarding whatever is queued.
                 onPress={() => void playTrackNow(song)}
-                onLongPress={() => setAddTargets([song.id])}
+                onLongPress={() => setActionTarget(song)}
                 // The trailing action queues rather than plays, matching the
                 // icon and matching what it does everywhere else.
                 onActionPress={() => void addToQueue([song])}
@@ -362,10 +333,11 @@ export function SearchScreen() {
       />
       </Animated.View>
 
-      <AddToPlaylistSheet
-        visible={addTargets != null}
-        onClose={() => setAddTargets(null)}
-        songIds={addTargets ?? []}
+      <TrackActionsSheet
+        visible={actionTarget != null}
+        onClose={() => setActionTarget(null)}
+        song={actionTarget}
+        onStarChanged={() => setActionTarget(null)}
       />
     </View>
   );
@@ -375,30 +347,6 @@ const makeStyles = (color: Palette) =>
   StyleSheet.create({
     root: { flex: 1, backgroundColor: color.paper },
     list: { flex: 1 },
-
-    searchBar: { paddingHorizontal: layout.screenPadding, paddingBottom: space[4] },
-    card: {
-      borderRadius: layout.dockRadius,
-      borderWidth: hairline,
-      borderColor: color.panelLine,
-      overflow: 'hidden',
-      padding: space[2],
-      gap: space[2],
-    },
-    inputWrap: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingRight: space[2],
-    },
-    input: {
-      ...type.body,
-      color: color.textInverse,
-      flex: 1,
-      height: 44,
-      paddingHorizontal: space[3],
-    },
-    clear: { padding: space[1] },
-    pressed: { opacity: 0.6 },
 
     scopes: {},
 

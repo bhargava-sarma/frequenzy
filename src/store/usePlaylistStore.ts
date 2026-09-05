@@ -32,6 +32,16 @@ interface PlaylistStore {
   addTracks: (playlistId: string, songIds: string[]) => Promise<void>;
   /** Removes by position — see the client's note on why ids won't do. */
   removeTrackAt: (playlistId: string, index: number) => Promise<void>;
+
+  /**
+   * Which of `songIds` the playlist already holds.
+   *
+   * Checked on demand rather than kept in the store: membership needs each
+   * playlist's full track list, and fetching every one of them up front to
+   * answer a question usually not asked would cost a request per playlist
+   * each time the sheet opened.
+   */
+  findDuplicates: (playlistId: string, songIds: string[]) => Promise<string[]>;
 }
 
 function client() {
@@ -102,6 +112,20 @@ export const usePlaylistStore = create<PlaylistStore>((set, get) => ({
   removeTrackAt: async (playlistId, index) => {
     await client().updatePlaylist({ playlistId, songIndexToRemove: [index] });
     await get().load();
+  },
+
+  findDuplicates: async (playlistId, songIds) => {
+    if (songIds.length === 0) return [];
+    try {
+      const response = await client().getPlaylist(playlistId);
+      const existing = new Set((response.playlist?.entry ?? []).map((song) => song.id));
+      return songIds.filter((id) => existing.has(id));
+    } catch {
+      // Never block the add on a failed check. Subsonic playlists tolerate
+      // duplicates, so the cost of guessing wrong here is a repeated track,
+      // whereas refusing to add would lose the thing you actually asked for.
+      return [];
+    }
   },
 }));
 

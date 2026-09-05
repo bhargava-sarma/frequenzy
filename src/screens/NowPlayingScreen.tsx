@@ -21,8 +21,10 @@ import { ArtworkWell, FormatBadge } from '../components/ArtworkWell';
 import { ProgressBar } from '../components/ProgressBar';
 import { TransportControls } from '../components/TransportControls';
 import { EmptyState } from '../components/ScreenState';
+import { TrackActionsSheet } from '../components/TrackActionsSheet';
 import {
   IconChevronDown,
+  IconDots,
   IconHeart,
   IconHeartFilled,
   IconMicrophone2,
@@ -35,6 +37,7 @@ import { usePlayerUiStore } from '../store/usePlayerUiStore';
 import { useServerStore } from '../store/useServerStore';
 import { hairline, icon, layout, motion, space, type, withAlpha } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
+import type { Child } from '../types/subsonic';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 
 /**
@@ -79,6 +82,7 @@ export function NowPlayingScreen() {
   const [repeat, setRepeat] = useState<RepeatMode>(RepeatMode.Off);
   const extras = extrasOf(activeItem);
   const [starred, setStarred] = useState<boolean | null>(null);
+  const [actionsOpen, setActionsOpen] = useState(false);
   const isStarred = starred ?? extras?.starred ?? false;
 
   const artSize = Math.round(width * layout.artworkWidthRatio);
@@ -92,6 +96,31 @@ export function NowPlayingScreen() {
       </View>
     );
   }
+
+  /**
+   * The playing track as a library record.
+   *
+   * The queue holds MediaItems, which carry only what the player needs; the
+   * actions sheet works on Child like every other screen. Everything it needs
+   * is already on the item or in its extras, so this reassembles rather than
+   * refetches.
+   */
+  const actionSong: Child | null =
+    activeItem && extras
+      ? {
+          id: extras.subsonicId,
+          isDir: false,
+          title: activeItem.title ?? '',
+          artist: activeItem.artist,
+          album: activeItem.albumTitle ?? extras.albumTitle,
+          albumId: extras.albumId,
+          artistId: extras.artistId,
+          coverArt: extras.coverArt,
+          duration: activeItem.duration,
+          // Child carries a timestamp when starred; only its presence is read.
+          starred: isStarred ? new Date().toISOString() : undefined,
+        }
+      : null;
 
   async function toggleStar() {
     if (!client || !extras) return;
@@ -123,7 +152,7 @@ export function NowPlayingScreen() {
         {/* Behind everything, tinted by the current cover. */}
         <AmbientBackground />
 
-        <Header onClose={closePlayer} />
+        <Header onClose={closePlayer} onOptions={() => setActionsOpen(true)} />
 
         {/* Absorbs the slack; everything below keeps its natural height. */}
         <View style={styles.artArea}>
@@ -254,6 +283,13 @@ export function NowPlayingScreen() {
             />
           </View>
         </View>
+
+        <TrackActionsSheet
+          visible={actionsOpen}
+          onClose={() => setActionsOpen(false)}
+          song={actionSong}
+          onStarChanged={() => setStarred(!isStarred)}
+        />
     </View>
   );
 }
@@ -312,12 +348,32 @@ function BreathingArtwork({
  * The screen title is gone: a full-bleed player showing one album cover does
  * not need a caption telling you it is the player.
  */
-function Header({ onClose }: { onClose: () => void }) {
+function Header({ onClose, onOptions }: { onClose: () => void; onOptions?: () => void }) {
   const color = useTheme();
   const styles = useThemedStyles(makeStyles);
 
   return (
     <View style={styles.header}>
+      {/* Left slot, empty when nothing is playing so the chevron keeps its
+          place rather than sliding across. */}
+      {onOptions ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Track options"
+          hitSlop={space[3]}
+          onPress={onOptions}
+          style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}
+        >
+          <IconDots
+            size={icon.size}
+            strokeWidth={icon.strokeWidth}
+            color={color.textInverseSecondary}
+          />
+        </Pressable>
+      ) : (
+        <View style={styles.headerButton} />
+      )}
+
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Minimise player"
@@ -366,9 +422,7 @@ const makeStyles = (color: Palette) =>
     header: {
       flexDirection: 'row',
       alignItems: 'center',
-      // Was space-between for a pair of buttons. The minimise chevron is the
-      // only one left, and it stays on the right where the thumb expects it.
-      justifyContent: 'flex-end',
+      justifyContent: 'space-between',
       paddingHorizontal: layout.panelPadding,
       paddingVertical: space[3],
     },

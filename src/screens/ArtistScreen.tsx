@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { FlatList, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { AmbientBackground } from '../components/AmbientBackground';
+import { SearchField } from '../components/SearchField';
 import { ExpandFrom } from '../components/ExpandFrom';
 import { Button, ButtonRow } from '../components/Button';
 import { ListRow } from '../components/ListRow';
@@ -22,6 +23,9 @@ import type { Palette } from '../theme/tokens';
 import { useThemedStyles } from '../theme/ThemeProvider';
 import type { Child } from '../types/subsonic';
 import { formatDuration, pluralize } from '../utils/time';
+
+/** Below this, the list fits on a screen and a filter costs more than it saves. */
+const MIN_ROWS_FOR_FILTER = 8;
 
 /** An artist's albums. */
 export function ArtistScreen() {
@@ -47,6 +51,22 @@ export function ArtistScreen() {
   const playNow = usePlayerStore((state) => state.playNow);
   const shufflePlay = usePlayerStore((state) => state.shufflePlay);
   const [gathering, setGathering] = useState(false);
+  const [filter, setFilter] = useState('');
+
+  // Albums only carry a name and a year worth matching on; the track titles
+  // inside them are not loaded here, and fetching every album to search it
+  // would defeat the reason this screen is lazy in the first place.
+  const visible = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    if (!needle) return albums;
+    return albums.filter(
+      (album) =>
+        album.name.toLowerCase().includes(needle) ||
+        String(album.year ?? '').includes(needle),
+    );
+  }, [albums, filter]);
+
+  const filtering = filter.trim().length > 0;
 
   /**
    * Every track by this artist, in album order.
@@ -83,8 +103,12 @@ export function ArtistScreen() {
 
         <ScreenHeader title={title} onBack={() => navigation.goBack()} />
 
+        {albums.length > MIN_ROWS_FOR_FILTER && (
+          <SearchField value={filter} onChangeText={setFilter} placeholder="Find an album" />
+        )}
+
         <FlatList
-          data={albums}
+          data={visible}
           keyExtractor={(album) => album.id}
           ListHeaderComponent={
             albums.length > 0 ? (
@@ -114,10 +138,10 @@ export function ArtistScreen() {
             ) : error ? (
               <ErrorState message={error} onRetry={refresh} />
             ) : (
-              <EmptyState label="No albums" />
+              <EmptyState label={filtering ? 'No matches' : 'No albums'} />
             )
           }
-          contentContainerStyle={albums.length ? styles.listContent : styles.emptyContainer}
+          contentContainerStyle={visible.length ? styles.listContent : styles.emptyContainer}
           renderItem={({ item, index }) => (
             <ListRow
               title={item.name}
@@ -129,7 +153,7 @@ export function ArtistScreen() {
                 .filter(Boolean)
                 .join(' · ')}
               artworkUri={artworkUrl(item.coverArt)}
-              last={index === albums.length - 1}
+              last={index === visible.length - 1}
               onPress={() =>
                 navigation.navigate('Album', { albumId: item.id, albumName: item.name })
               }
