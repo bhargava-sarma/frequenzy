@@ -127,13 +127,18 @@ export function withAlpha(hex: string, alpha: number): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Inter, two weights only. Loaded via @expo-google-fonts/inter; these names
+ * Manrope, two weights only. Loaded from assets/fonts in App.tsx; these names
  * must match the keys passed to useFonts, or RN silently falls back to the
  * platform face and the tracking looks wrong.
+ *
+ * Chosen over Inter for its softer, semi-rounded terminals and wider
+ * apertures, which read as warmer without giving up the even rhythm the panel
+ * layout needs. It carries true tabular figures, which is not optional here —
+ * the running timers below depend on them.
  */
 export const fontFamily = {
-  regular: 'Inter_400Regular',
-  medium: 'Inter_500Medium',
+  regular: 'Manrope_400Regular',
+  medium: 'Manrope_500Medium',
 } as const;
 
 /**

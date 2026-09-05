@@ -3,12 +3,7 @@ import { AppState, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-// Subpaths, not the package root — same reason as components/icons.ts. The
-// root re-exports all 18 Inter weights, and Metro has no tree-shaking to drop
-// the 16 we never name, so importing it ships ~6MB of unused .ttf.
-import { useFonts } from '@expo-google-fonts/inter/useFonts';
-import { Inter_400Regular } from '@expo-google-fonts/inter/400Regular';
-import { Inter_500Medium } from '@expo-google-fonts/inter/500Medium';
+import { useFonts } from 'expo-font';
 
 import { ArtworkAccentBridge } from './src/components/ArtworkAccentBridge';
 import { PlayerOverlay } from './src/components/PlayerOverlay';
@@ -46,10 +41,20 @@ function AppContent() {
   const refreshConnection = useServerStore((state) => state.refreshConnection);
   const initPlayer = usePlayerStore((state) => state.init);
 
-  // Inter carries the tracked-out uppercase labels the design leans on. Render
-  // nothing until it's resident — swapping the face mid-render reflows every
-  // label and reads as a flash of the wrong typeface.
-  const [fontsLoaded] = useFonts({ Inter_400Regular, Inter_500Medium });
+  /**
+   * Manrope carries the tracked-out uppercase labels the design leans on.
+   * Render nothing until it's resident — swapping the face mid-render reflows
+   * every label and reads as a flash of the wrong typeface.
+   *
+   * The files live in assets/ and are required directly rather than pulled
+   * from an @expo-google-fonts package. A new dependency would move the
+   * project fingerprint and force a native rebuild; an asset does not, so the
+   * typeface can ship as an over-the-air update like any other change.
+   */
+  const [fontsLoaded] = useFonts({
+    Manrope_400Regular: require('./assets/fonts/Manrope_400Regular.ttf'),
+    Manrope_500Medium: require('./assets/fonts/Manrope_500Medium.ttf'),
+  });
 
   useEffect(() => {
     void hydrate();
