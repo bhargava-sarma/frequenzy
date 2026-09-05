@@ -22,8 +22,10 @@ Built with Expo and React Native, against the Subsonic API (1.16.1).
 - [What it does](#what-it-does)
 - [The lossless guarantee](#the-lossless-guarantee)
 - [Connectivity: one server, two addresses](#connectivity-one-server-two-addresses)
+- [Lyrics and romanisation](#lyrics-and-romanisation)
 - [Design](#design)
 - [Getting started](#getting-started)
+- [Updating the app](#updating-the-app)
 - [Verification scripts](#verification-scripts)
 - [Project structure](#project-structure)
 - [Security notes](#security-notes)
@@ -53,8 +55,15 @@ they are reflected everywhere rather than trapped in this app. Scrobbling
 follows the Last.fm thresholds every Subsonic server expects: half the track or
 four minutes, whichever comes first, and never under 30 seconds.
 
-**Also** — Sleep timer, play-history charts on Home (day/week/month/year),
-recent searches, light/dark/AMOLED themes, and a diagnostics screen.
+**Lyrics** — Time-synced lyrics from [LRCLIB](https://lrclib.net), scrolling
+with the track. The current line is the only thing on screen in the accent
+colour, and tapping any line seeks to it. Lyrics in another script are
+romanised beneath the original — transliteration, not translation, so the line
+stays singable rather than becoming prose you can't follow. See
+[Lyrics and romanisation](#lyrics-and-romanisation).
+
+**Also** — Play-history charts on Home (day/week/month/year), recent searches,
+light/dark/AMOLED themes, and a diagnostics screen.
 
 ---
 
@@ -128,6 +137,49 @@ you are sitting at home.
 
 There is no SSID or network-state detection anywhere. Failover lives entirely
 in the API client, so nothing above it needs to know which address won.
+
+---
+
+## Lyrics and romanisation
+
+Lyrics come from LRCLIB, which is deliberately kept outside the Subsonic
+client: a different host, no auth, no failover. A lyrics outage must never be
+able to look like the music server going down.
+
+Matching a local library to a lyrics database is most of the work. LRCLIB's
+exact endpoint keys on artist, track, album and duration together, so it misses
+whenever the tags carry a subtitle the release doesn't. A search recovers those,
+and a final pass normalises the tags — Navidrome lists every credited artist
+joined by ID3 separators (`24kGoldn; Justin Bieber; J Balvin`) while LRCLIB
+files under the lead alone, and library titles carry variants (`Mood (Remix)`,
+`- Remastered 2011`) that LRCLIB usually omits. Duration guards every loosened
+search, so a live cut or a different edit is rejected rather than shown against
+timings it doesn't fit.
+
+Misses are cached as well as hits. Most of any library will never be in LRCLIB,
+and without recording that, every play of those tracks costs two requests to
+someone else's free server to learn the same thing again. Misses expire after
+two weeks since the database grows; hits don't, since lyrics for a fixed
+recording don't change.
+
+**Romanisation** is transliteration, never translation. The general-purpose
+libraries were measured and rejected: they drop Devanagari's inherent vowel, so
+`कमल` becomes `kml` rather than `kamal`. Instead Sanscript produces full IAST
+and the app supplies what IAST leaves out — schwa deletion for Indo-Aryan
+scripts and deliberately *not* for Dravidian ones, where final vowels are
+pronounced; candrabindu as a real nasal; and IAST `c` remapped to `ch`, since
+bare `c` would have every "chai" misread. Hangul uses the algorithmic Revised
+Romanization. Cyrillic, Greek and Arabic fall back to a general transliterator.
+Japanese kanji stays approximate — reading it properly needs a dictionary far
+too large to ship.
+
+```
+तुम ही हो, अब तुम ही हो   ->  tum hi ho, ab tum hi ho
+दिल तो पागल है            ->  dil to pagal hai
+ਤੇਰੇ ਬਿਨ ਨਹੀਂ ਲਗਦਾ ਦਿਲ     ->  tere bin nahin lagda dil
+నువ్వు నాకు నచ్చావు        ->  nuvvu naku nachchavu
+사랑해 그대여              ->  saranghae geudaeyeo
+```
 
 ---
 
@@ -209,6 +261,30 @@ a backup or by another app.
 
 ---
 
+## Updating the app
+
+The app ships with over-the-air updates, so most changes reach the phone
+without a build:
+
+```bash
+npx eas update --branch preview --environment preview -m "what changed"
+```
+
+That takes about 30 seconds and applies on next launch — no dev server, and
+nothing needs to be on the local network.
+
+A **rebuild is required** whenever dependencies or native config change, not
+just when native code does. `runtimeVersion` uses the fingerprint policy, which
+hashes the native dependency set, and a new package can't be known to be
+pure JS in advance. When the fingerprint moves, the update is simply not
+offered to older builds — a no-op rather than a crash, which is the reason for
+choosing that policy over `appVersion`.
+
+So: editing existing files ships over the air; adding a library needs
+`eas build`.
+
+---
+
 ## Verification scripts
 
 Three scripts run the app's real modules from a laptop under Node, so the data
@@ -218,6 +294,7 @@ layer can be proven without a device in the loop.
 npm run check:connection   # failover + losslessness against your server
 npm run check:cache        # repository caching, fully offline
 npm run check:scrobble     # scrobble path and play-derived shelves
+npm run check:lyrics       # LRC parsing, tag normalisation, romanisation
 ```
 
 `check:connection` and `check:scrobble` need a `.env`:
@@ -297,6 +374,8 @@ to be liftable into a shared package if a web client follows.
 | Images | `expo-image` |
 | Storage | `expo-secure-store`, AsyncStorage |
 | Server API | Subsonic 1.16.1 (Navidrome) |
+| Lyrics | LRCLIB, Sanscript (IAST), Hangul RR, any-ascii |
+| Delivery | EAS Build + EAS Update (fingerprint runtime) |
 
 ---
 
