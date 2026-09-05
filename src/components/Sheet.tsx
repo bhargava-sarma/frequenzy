@@ -1,6 +1,7 @@
 import { type ReactNode } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { SectionHeader } from './SectionHeader';
 import { hairline, layout, motion, space, type } from '../theme/tokens';
@@ -30,14 +31,26 @@ export interface SheetProps {
 
 export function Sheet({ visible, onClose, title, detail, children }: SheetProps) {
   const styles = useThemedStyles(makeStyles);
+  const insets = useSafeAreaInsets();
 
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
       {/* Tapping the scrim dismisses; the sheet itself swallows the press. */}
       <Animated.View entering={FadeIn.duration(motion.durationBase)} style={styles.scrimLayer}>
         <Pressable style={styles.scrim} onPress={onClose}>
-          <Animated.View entering={FadeInDown.duration(motion.durationScreen)}>
-            <Pressable style={styles.sheet} onPress={() => {}}>
+          {/* The cap lives here, not on the sheet. A percentage resolves
+              against the parent's height, and the sheet's parent was this
+              wrapper — which is sized by its own content, so the cap either
+              did nothing or clipped the sheet to less than its content and
+              cut the last row in half. The scrim below has a real height. */}
+          <Animated.View
+            entering={FadeInDown.duration(motion.durationScreen)}
+            style={styles.riser}
+          >
+            <Pressable
+              style={[styles.sheet, { paddingBottom: space[3] + insets.bottom }]}
+              onPress={() => {}}
+            >
               <SectionHeader title={title} count={detail} surface="panel" />
               {children}
             </Pressable>
@@ -106,16 +119,22 @@ const makeStyles = (color: Palette) =>
       justifyContent: 'flex-end',
       padding: space[3],
     },
+    // Never taller than most of the screen, so a long playlist list stays a
+    // sheet rather than becoming a screen. On the scrim's child because that
+    // is the box with a height to take a percentage of.
+    riser: { maxHeight: '75%' },
     sheet: {
+      // Shrinks into the riser's cap, which is what gives a long list inside
+      // a bounded height to scroll within instead of growing past the screen.
+      flexShrink: 1,
       backgroundColor: color.panel,
       borderRadius: layout.dockRadius,
       borderWidth: hairline,
       borderColor: color.panelLine,
       overflow: 'hidden',
-      paddingBottom: space[3],
-      // Never taller than most of the screen, so a long playlist list stays a
-      // sheet rather than becoming a screen.
-      maxHeight: '75%',
+      // Bottom padding is applied inline, adding the gesture bar inset: the
+      // sheet sits at the very bottom of the screen, so without it the last
+      // row is under the system navigation.
     },
     option: {
       flexDirection: 'row',
