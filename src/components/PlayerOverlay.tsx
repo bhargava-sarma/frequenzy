@@ -11,6 +11,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { NowPlayingScreen } from '../screens/NowPlayingScreen';
+import { LyricsScreen } from '../screens/LyricsScreen';
 import { QueueScreen } from '../screens/QueueScreen';
 import { usePlayerUiStore } from '../store/usePlayerUiStore';
 import { layout, motion } from '../theme/tokens';
@@ -50,6 +51,10 @@ export function PlayerOverlay() {
   const open = usePlayerUiStore((state) => state.open);
   const origin = usePlayerUiStore((state) => state.origin);
   const closePlayer = usePlayerUiStore((state) => state.closePlayer);
+  const queueOpen = usePlayerUiStore((state) => state.queueOpen);
+  const closeQueue = usePlayerUiStore((state) => state.closeQueue);
+  const lyricsOpen = usePlayerUiStore((state) => state.lyricsOpen);
+  const closeLyrics = usePlayerUiStore((state) => state.closeLyrics);
 
   /** 0 = collapsed into the origin, 1 = filling the screen. */
   const progress = useSharedValue(0);
@@ -111,7 +116,12 @@ export function PlayerOverlay() {
       <GestureDetector gesture={pan}>
         <Animated.View style={[styles.container, containerStyle]}>
           <NowPlayingScreen />
-          <QueuePanel />
+          <SlidePanel open={queueOpen} onClose={closeQueue}>
+            <QueueScreen />
+          </SlidePanel>
+          <SlidePanel open={lyricsOpen} onClose={closeLyrics}>
+            <LyricsScreen />
+          </SlidePanel>
         </Animated.View>
       </GestureDetector>
     </View>
@@ -119,24 +129,35 @@ export function PlayerOverlay() {
 }
 
 /**
- * The queue, over the player.
+ * A panel that slides up over the player and is dragged down to dismiss.
  *
- * A panel rather than another screen, for the same reason the player is: it
- * belongs to what is playing, and pushing it onto a stack put it in the same
- * detach-the-screen-below trap.
+ * Panels rather than screens, for the same reason the player itself is one:
+ * they belong to what is playing, and pushing them onto a stack put them in
+ * the same detach-the-screen-below trap that left a black rectangle behind.
+ *
+ * Shared by the queue and the lyrics because the dismissal is the interesting
+ * part and it should behave identically in both — the drag thresholds, the
+ * horizontal fail-out that keeps swipe-to-queue rows working underneath, and
+ * the snap back when a drag is too short to count.
  */
-function QueuePanel() {
+function SlidePanel({
+  open,
+  onClose,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
   const { height } = useWindowDimensions();
-  const queueOpen = usePlayerUiStore((state) => state.queueOpen);
-  const closeQueue = usePlayerUiStore((state) => state.closeQueue);
 
   const offset = useSharedValue(height);
   const dragY = useSharedValue(0);
 
   useEffect(() => {
-    offset.value = withTiming(queueOpen ? 0 : height, TIMING);
-    if (queueOpen) dragY.value = 0;
-  }, [queueOpen, height, offset, dragY]);
+    offset.value = withTiming(open ? 0 : height, TIMING);
+    if (open) dragY.value = 0;
+  }, [open, height, offset, dragY]);
 
   const pan = Gesture.Pan()
     .activeOffsetY(24)
@@ -146,7 +167,7 @@ function QueuePanel() {
     })
     .onEnd((event) => {
       if (dragY.value > DISMISS_DISTANCE || event.velocityY > DISMISS_VELOCITY) {
-        runOnJS(closeQueue)();
+        runOnJS(onClose)();
         dragY.value = 0;
         return;
       }
@@ -157,13 +178,11 @@ function QueuePanel() {
     transform: [{ translateY: offset.value + dragY.value }],
   }));
 
-  if (!queueOpen) return null;
+  if (!open) return null;
 
   return (
     <GestureDetector gesture={pan}>
-      <Animated.View style={[StyleSheet.absoluteFill, style]}>
-        <QueueScreen />
-      </Animated.View>
+      <Animated.View style={[StyleSheet.absoluteFill, style]}>{children}</Animated.View>
     </GestureDetector>
   );
 }

@@ -68,6 +68,7 @@ export function NowPlayingScreen() {
   const insets = useSafeAreaInsets();
   const closePlayer = usePlayerUiStore((state) => state.closePlayer);
   const openQueue = usePlayerUiStore((state) => state.openQueue);
+  const openLyrics = usePlayerUiStore((state) => state.openLyrics);
   const { width } = useWindowDimensions();
 
   const activeItem = useActiveMediaItem();
@@ -268,8 +269,6 @@ export function NowPlayingScreen() {
               onPress={openQueue}
             />
 
-            {/* Not wired up yet — deliberately inert rather than hidden, so the
-              footer keeps its balance while the feature is built. */}
             <FooterButton
               label="Lyrics"
               icon={
@@ -279,6 +278,7 @@ export function NowPlayingScreen() {
                   color={color.textInverseSecondary}
                 />
               }
+              onPress={openLyrics}
             />
           </View>
         </View>

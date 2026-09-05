@@ -17,7 +17,6 @@ import type {
   AlbumResponse,
   ArtistResponse,
   ArtistsResponse,
-  Child,
   PlaylistResponse,
   PlaylistsResponse,
   Starred2Response,

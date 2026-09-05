@@ -11,6 +11,7 @@ import { Button } from '../components/Button';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { SectionHeader } from '../components/SectionHeader';
 import { Segmented } from '../components/Segmented';
+import { clearLyricsCache } from '../data/lyricsCache';
 import { clearPlayHistory } from '../data/playHistory';
 import { useServerStore } from '../store/useServerStore';
 import { hairline, layout, space, type } from '../theme/tokens';
@@ -172,7 +173,8 @@ export function SettingsScreen() {
             <Text style={styles.hint}>
               Library data is cached on this device and refetched when stale. Play history is
               what the charts on Home are built from; clearing it does not touch the play counts
-              already sent to Navidrome.
+              already sent to Navidrome. Lyrics are cached separately, including the tracks
+              LRCLIB had none for, so those are not looked up again on every play.
             </Text>
 
             <View style={styles.actions}>
@@ -190,6 +192,13 @@ export function SettingsScreen() {
                 busy={busy === 'history'}
                 fullWidth
                 onPress={() => void run('history', clearPlayHistory)}
+              />
+              <View style={styles.gap} />
+              <Button
+                label="Clear lyrics cache"
+                busy={busy === 'lyrics'}
+                fullWidth
+                onPress={() => void run('lyrics', clearLyricsCache)}
               />
             </View>
           </View>

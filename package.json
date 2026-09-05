@@ -44,7 +44,8 @@
     "typecheck": "tsc --noEmit",
     "check:connection": "node --env-file-if-exists=.env --import tsx scripts/check-connection.ts",
     "check:cache": "node --import tsx scripts/check-cache.ts",
-    "check:scrobble": "node --env-file-if-exists=.env --import tsx scripts/check-scrobble.ts"
+    "check:scrobble": "node --env-file-if-exists=.env --import tsx scripts/check-scrobble.ts",
+    "check:lyrics": "node --import tsx scripts/check-lyrics.ts"
   },
   "private": true
 }

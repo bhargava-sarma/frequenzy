@@ -26,22 +26,31 @@ interface PlayerUiStore {
   origin: OriginRect | null;
   /** The queue panel, which lives inside the player rather than beside it. */
   queueOpen: boolean;
+  /** The lyrics panel. A sibling of the queue, and mutually exclusive with it. */
+  lyricsOpen: boolean;
 
   openPlayer: (origin: OriginRect) => void;
   closePlayer: () => void;
   openQueue: () => void;
   closeQueue: () => void;
+  openLyrics: () => void;
+  closeLyrics: () => void;
 }
 
 export const usePlayerUiStore = create<PlayerUiStore>((set) => ({
   open: false,
   origin: null,
   queueOpen: false,
+  lyricsOpen: false,
 
   openPlayer: (origin) => set({ open: true, origin }),
-  // The queue closes with the player: it is a panel of the player, and
-  // leaving it open would have it reappear over the next expansion.
-  closePlayer: () => set({ open: false, queueOpen: false }),
-  openQueue: () => set({ queueOpen: true }),
+  // Both panels close with the player: they belong to it, and leaving one
+  // open would have it reappear over the next expansion.
+  closePlayer: () => set({ open: false, queueOpen: false, lyricsOpen: false }),
+  // Opening one dismisses the other. They occupy the same space, and stacking
+  // them would leave the hidden one to reappear when the top one is closed.
+  openQueue: () => set({ queueOpen: true, lyricsOpen: false }),
   closeQueue: () => set({ queueOpen: false }),
+  openLyrics: () => set({ lyricsOpen: true, queueOpen: false }),
+  closeLyrics: () => set({ lyricsOpen: false }),
 }));
