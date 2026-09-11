@@ -22,6 +22,7 @@ import { Segmented } from '../components/Segmented';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenState';
 import { DOCK_CLEARANCE } from '../components/TabBar';
 import { useArtwork } from '../hooks/useArtwork';
+import { HEAVY_LIST_PROPS, trackItemLayout } from '../hooks/usePagedList';
 import { useLibraryData } from '../hooks/useLibraryData';
 import type { LibraryStackParamList } from '../navigation/types';
 import { usePlaylistStore } from '../store/usePlaylistStore';
@@ -69,6 +70,28 @@ export function LibraryScreen() {
   const { width } = useWindowDimensions();
 
   const [mode, setMode] = useState<Mode>('playlists');
+
+  /**
+   * Stable openers, so the memoised rows are not handed a fresh closure on
+   * every render and re-rendered for nothing. Each takes its subject as an
+   * argument rather than closing over it, which is what keeps the identity
+   * the same across renders.
+   */
+  const openAlbum = useCallback(
+    (albumId: string, albumName: string) =>
+      navigation.navigate('Album', { albumId, albumName }),
+    [navigation],
+  );
+  const openPlaylist = useCallback(
+    (playlistId: string, playlistName: string) =>
+      navigation.navigate('Playlist', { playlistId, playlistName }),
+    [navigation],
+  );
+  const openArtist = useCallback(
+    (artistId: string, artistName: string) =>
+      navigation.navigate('Artist', { artistId, artistName }),
+    [navigation],
+  );
   const [visible, setVisible] = useState(FIRST_PAGE);
 
   /**
@@ -260,6 +283,7 @@ export function LibraryScreen() {
     return shell(
       <FlatList
         data={shownAlbums}
+        {...HEAVY_LIST_PROPS}
         // Distinct keys per mode so switching starts a fresh list rather than
         // carrying a scroll offset from a list of a different shape.
         key="albums"
@@ -275,9 +299,7 @@ export function LibraryScreen() {
             subtitle={item.artist}
             artworkUri={artworkUrl(item.coverArt, 400)}
             size={tileSize}
-            onPress={() =>
-              navigation.navigate('Album', { albumId: item.id, albumName: item.name })
-            }
+            onPress={() => openAlbum(item.id, item.name)}
           />
         )}
         refreshControl={refreshControl}
@@ -289,6 +311,8 @@ export function LibraryScreen() {
     return shell(
       <FlatList
         data={shownPlaylists}
+        {...HEAVY_LIST_PROPS}
+        getItemLayout={trackItemLayout}
         key="playlists"
         keyExtractor={(playlist) => playlist.id}
         ListEmptyComponent={renderEmpty}
@@ -305,12 +329,7 @@ export function LibraryScreen() {
               .join(' · ')}
             artworkUri={artworkUrl(item.coverArt)}
             last={index === shownPlaylists.length - 1}
-            onPress={() =>
-              navigation.navigate('Playlist', {
-                playlistId: item.id,
-                playlistName: item.name,
-              })
-            }
+            onPress={() => openPlaylist(item.id, item.name)}
           />
         )}
         refreshControl={refreshControl}
@@ -321,6 +340,8 @@ export function LibraryScreen() {
   return shell(
     <FlatList
       data={shownArtists}
+      {...HEAVY_LIST_PROPS}
+      getItemLayout={trackItemLayout}
       key="artists"
       keyExtractor={(artist) => artist.id}
       ListEmptyComponent={renderEmpty}
@@ -332,9 +353,7 @@ export function LibraryScreen() {
           meta={item.albumCount != null ? pluralize(item.albumCount, 'album') : undefined}
           artworkUri={artworkUrl(item.coverArt)}
           last={index === shownArtists.length - 1}
-          onPress={() =>
-            navigation.navigate('Artist', { artistId: item.id, artistName: item.name })
-          }
+          onPress={() => openArtist(item.id, item.name)}
         />
       )}
       refreshControl={refreshControl}

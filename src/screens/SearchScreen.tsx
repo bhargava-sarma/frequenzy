@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, StyleSheet, TextInput, View } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -13,20 +13,19 @@ import { Segmented } from '../components/Segmented';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenState';
 import { DOCK_CLEARANCE } from '../components/TabBar';
 import { SearchField } from '../components/SearchField';
-import { SwipeableRow } from '../components/SwipeableRow';
+import { TrackRow } from '../components/TrackRow';
 import { TrackActionsSheet } from '../components/TrackActionsSheet';
-import { IconHeart, IconHeartFilled, IconPlus } from '../components/icons';
 import { clearRecentSearches, getRecentSearches, recordSearch } from '../data/recentSearches';
 import { useArtwork } from '../hooks/useArtwork';
+import { HEAVY_LIST_PROPS, trackItemLayout } from '../hooks/usePagedList';
 import type { SearchStackParamList } from '../navigation/types';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { useServerStore } from '../store/useServerStore';
-import { icon, layout, motion, space } from '../theme/tokens';
+import { layout, motion, space } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
-import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
+import { useThemedStyles } from '../theme/ThemeProvider';
 import type { AlbumSummary, ArtistSummary, Child } from '../types/subsonic';
 import { onSearchRequested } from '../utils/tabEvents';
-import { formatDuration } from '../utils/time';
 
 /**
  * Search across tracks, albums and artists.
@@ -62,7 +61,6 @@ const PAGE_SIZE = 20;
 const FETCH_COUNT = 100;
 
 export function SearchScreen() {
-  const color = useTheme();
   const styles = useThemedStyles(makeStyles);
   const navigation = useNavigation<NativeStackNavigationProp<SearchStackParamList>>();
   const insets = useSafeAreaInsets();
@@ -162,7 +160,7 @@ export function SearchScreen() {
    * local copy rather than refetching — a search result set is a query, and
    * re-running it to learn one boolean would reshuffle the list under you.
    */
-  async function toggleStar(song: Child) {
+  const handleStar = useCallback(async (song: Child) => {
     if (!client) return;
     const next = song.starred ? undefined : new Date().toISOString();
 
@@ -191,7 +189,19 @@ export function SearchScreen() {
           : current,
       );
     }
-  }
+  }, [client]);
+
+  // Stable identities, so a row re-renders only when its own data changes.
+  const handlePlay = useCallback(
+    (index: number) => {
+      const song = shown[index] as Child | undefined;
+      // Plays this one without discarding whatever is already queued.
+      if (song) void playTrackNow(song);
+    },
+    [shown, playTrackNow],
+  );
+  const handleQueue = useCallback((song: Child) => void addToQueue([song]), [addToQueue]);
+  const handleOptions = useCallback((song: Child) => setActionTarget(song), []);
 
   return (
     <View style={[styles.root, { paddingTop: insets.top + space[3] }]}>
@@ -213,6 +223,10 @@ export function SearchScreen() {
       {/* Keyed on the scope so switching tabs crossfades the results. */}
       <Animated.View key={scope} style={styles.list} entering={FadeIn.duration(motion.durationBase)}>
       <FlatList
+        {...HEAVY_LIST_PROPS}
+        // Every shape in this list — track, album, artist — is a ListRow, so
+        // the height is the same for all of them.
+        getItemLayout={trackItemLayout}
         data={shown}
         keyExtractor={(item) => item.id}
         keyboardShouldPersistTaps="handled"
@@ -294,40 +308,17 @@ export function SearchScreen() {
 
           const song = item as Child;
           return (
-            // Swipeable like every other track row in the app — search results
-            // were the one place a track couldn't be queued by gesture.
-            <SwipeableRow
-              rightSwipe={{
-                icon: <IconPlus size={icon.size} color={color.accentInk} strokeWidth={2} />,
-                label: 'Queue',
-                onAction: () => void addToQueue([song]),
-              }}
-              leftSwipe={{
-                icon: song.starred ? (
-                  <IconHeartFilled size={icon.size} color={color.accentInk} />
-                ) : (
-                  <IconHeart size={icon.size} color={color.accentInk} strokeWidth={2} />
-                ),
-                label: song.starred ? 'Unstar' : 'Star',
-                onAction: () => void toggleStar(song),
-              }}
-            >
-              <ListRow
-                title={song.title}
-                meta={[song.artist, song.duration ? formatDuration(song.duration) : null]
-                  .filter(Boolean)
-                  .join(' · ')}
-                artworkUri={artworkUrl(song.coverArt)}
-                action="queue"
-                last={index === shown.length - 1}
-                // Plays this one without discarding whatever is queued.
-                onPress={() => void playTrackNow(song)}
-                onLongPress={() => setActionTarget(song)}
-                // The trailing action queues rather than plays, matching the
-                // icon and matching what it does everywhere else.
-                onActionPress={() => void addToQueue([song])}
-              />
-            </SwipeableRow>
+            <TrackRow
+              song={song}
+              index={index}
+              active={false}
+              last={index === shown.length - 1}
+              action="queue"
+              onPlay={handlePlay}
+              onOptions={handleOptions}
+              onQueue={handleQueue}
+              onStar={handleStar}
+            />
           );
         }}
       />

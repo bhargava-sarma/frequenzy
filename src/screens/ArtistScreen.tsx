@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useDeferredValue, useMemo, useState } from 'react';
 import { FlatList, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
@@ -15,6 +15,7 @@ import { SectionHeader } from '../components/SectionHeader';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenState';
 import { useArtwork } from '../hooks/useArtwork';
 import { useLibraryData } from '../hooks/useLibraryData';
+import { HEAVY_LIST_PROPS, trackItemLayout } from '../hooks/usePagedList';
 import type { LibraryStackParamList } from '../navigation/types';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { useServerStore } from '../store/useServerStore';
@@ -56,17 +57,27 @@ export function ArtistScreen() {
   // Albums only carry a name and a year worth matching on; the track titles
   // inside them are not loaded here, and fetching every album to search it
   // would defeat the reason this screen is lazy in the first place.
+  // Deferred, so the field keeps painting while the rows catch up.
+  const deferredFilter = useDeferredValue(filter);
+
   const visible = useMemo(() => {
-    const needle = filter.trim().toLowerCase();
+    const needle = deferredFilter.trim().toLowerCase();
     if (!needle) return albums;
     return albums.filter(
       (album) =>
         album.name.toLowerCase().includes(needle) ||
         String(album.year ?? '').includes(needle),
     );
-  }, [albums, filter]);
+  }, [albums, deferredFilter]);
 
-  const filtering = filter.trim().length > 0;
+  const filtering = deferredFilter.trim().length > 0;
+
+  // Stable, so the memoised rows are not re-rendered by a fresh closure.
+  const openAlbum = useCallback(
+    (albumId: string, albumName: string) =>
+      navigation.navigate('Album', { albumId, albumName }),
+    [navigation],
+  );
 
   /**
    * Every track by this artist, in album order.
@@ -109,6 +120,8 @@ export function ArtistScreen() {
 
         <FlatList
           data={visible}
+          {...HEAVY_LIST_PROPS}
+          getItemLayout={trackItemLayout}
           keyExtractor={(album) => album.id}
           ListHeaderComponent={
             albums.length > 0 ? (
@@ -154,9 +167,7 @@ export function ArtistScreen() {
                 .join(' · ')}
               artworkUri={artworkUrl(item.coverArt)}
               last={index === visible.length - 1}
-              onPress={() =>
-                navigation.navigate('Album', { albumId: item.id, albumName: item.name })
-              }
+              onPress={() => openAlbum(item.id, item.name)}
             />
           )}
         />

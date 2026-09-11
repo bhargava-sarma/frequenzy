@@ -1,5 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 
+import { layout } from '../theme/tokens';
+
 /**
  * Reveals a long list a page at a time.
  *
@@ -63,3 +65,16 @@ export const HEAVY_LIST_PROPS = {
   windowSize: 7,
   removeClippedSubviews: true,
 } as const;
+
+/**
+ * Track rows are a fixed height, so FlatList never has to measure one.
+ *
+ * Without this it lays out every cell to find where the next begins, which is
+ * work proportional to the list on every data change — exactly the cost that
+ * made each Load more slower than the one before it.
+ */
+export const trackItemLayout = (_data: unknown, index: number) => ({
+  length: layout.rowHeight,
+  offset: layout.rowHeight * index,
+  index,
+});

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
@@ -9,19 +9,18 @@ import { AmbientBackground } from '../components/AmbientBackground';
 import { ExpandFrom } from '../components/ExpandFrom';
 import { ArtworkWell } from '../components/ArtworkWell';
 import { Button, ButtonRow } from '../components/Button';
-import { IconDots, IconHeartFilled, IconPlus, IconX } from '../components/icons';
-import { ListRow } from '../components/ListRow';
+import { IconDots } from '../components/icons';
 import { DOCK_CLEARANCE } from '../components/TabBar';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { SectionHeader } from '../components/SectionHeader';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenState';
 import { Sheet, SheetBody, SheetOption } from '../components/Sheet';
 import { SearchField } from '../components/SearchField';
-import { SwipeableRow } from '../components/SwipeableRow';
+import { TrackRow } from '../components/TrackRow';
 import { TrackActionsSheet } from '../components/TrackActionsSheet';
 import { extrasOf } from '../player/trackMapping';
 import { useArtwork } from '../hooks/useArtwork';
-import { HEAVY_LIST_PROPS, usePagedList } from '../hooks/usePagedList';
+import { HEAVY_LIST_PROPS, trackItemLayout, usePagedList } from '../hooks/usePagedList';
 import { LIKED_PLAYLIST_ID, type LibraryStackParamList } from '../navigation/types';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { usePlaylistStore } from '../store/usePlaylistStore';
@@ -132,27 +131,63 @@ export function PlaylistScreen() {
   const [bulkTargets, setBulkTargets] = useState<string[] | null>(null);
   const [filter, setFilter] = useState('');
 
+  // Deferred, so the field keeps painting while the rows catch up. See the
+  // note in AlbumScreen for why this rather than a debounce.
+  const deferredFilter = useDeferredValue(filter);
+
   const filtered = useMemo(() => {
-    const needle = filter.trim().toLowerCase();
+    const needle = deferredFilter.trim().toLowerCase();
     if (!needle) return songs;
     return songs.filter(
       (song) =>
         song.title.toLowerCase().includes(needle) ||
         (song.artist ?? '').toLowerCase().includes(needle),
     );
-  }, [songs, filter]);
+  }, [songs, deferredFilter]);
 
-  const filtering = filter.trim().length > 0;
+  const filtering = deferredFilter.trim().length > 0;
 
   /**
-   * The track's position in the playlist itself, not in what's on screen.
+   * Each track's position in the playlist itself, not in what's on screen.
    *
-   * The server removes by index because the same track may appear twice, so
-   * the index handed to it has to be the real one — a filtered list renumbers
-   * from zero and would otherwise delete whatever happens to sit at that
-   * position in the full playlist.
+   * Two things need this. The server removes by index because the same track
+   * may appear twice, so the index handed to it has to be the real one — a
+   * filtered list renumbers from zero and would otherwise delete whatever sits
+   * at that position in the full playlist. And the row key is built from it,
+   * which is what keeps keys stable while a filter reorders the list.
+   *
+   * A Map rather than indexOf per row: the latter is a scan, and calling it
+   * once per row turns rendering a long playlist into quadratic work.
    */
-  const positionOf = (song: Child) => songs.indexOf(song);
+  const positions = useMemo(() => {
+    const map = new Map<Child, number>();
+    songs.forEach((song, index) => map.set(song, index));
+    return map;
+  }, [songs]);
+
+  const positionOf = useCallback((song: Child) => positions.get(song) ?? -1, [positions]);
+
+  // Stable identities, so a row re-renders only when its own data changes.
+  const handlePlay = useCallback(
+    (index: number) => void playNow(filtered, index),
+    [playNow, filtered],
+  );
+  const handleQueue = useCallback((song: Child) => void addToQueue([song]), [addToQueue]);
+  const handleOptions = useCallback((song: Child) => setActionTarget(song), []);
+  const handleStar = useCallback(
+    (song: Child) => void toggleStar(song.id, Boolean(song.starred)),
+    // toggleStar is redeclared each render; it only closes over client and
+    // refresh, both of which are stable for the life of the screen.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+  const handleRemove = useCallback(
+    (song: Child) => {
+      void removeTrackAt(playlistId, positionOf(song)).then(refresh);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [removeTrackAt, playlistId, positionOf],
+  );
 
   const paged = usePagedList(filtered);
   const title = playlist?.name ?? playlistName ?? 'Playlist';
@@ -202,7 +237,11 @@ export function PlaylistScreen() {
         <FlatList
           data={paged.visible}
           {...HEAVY_LIST_PROPS}
-          keyExtractor={(song, index) => `${song.id}-${index}`}
+          // Keyed on the position in the playlist, not in the filtered view.
+          // An index into what is on screen changes the moment a filter
+          // reorders things, which unmounts and rebuilds every row — the whole
+          // of the delay that used to follow each keystroke.
+          keyExtractor={(song) => `${song.id}-${positionOf(song)}`}
           ListHeaderComponent={
             playlist ? (
               <View>
@@ -272,49 +311,22 @@ export function PlaylistScreen() {
               </View>
             ) : null
           }
+          getItemLayout={trackItemLayout}
           renderItem={({ item, index }) => (
-            <SwipeableRow
-              rightSwipe={{
-                icon: <IconPlus size={icon.size} color={color.accentInk} strokeWidth={2} />,
-                label: 'Queue',
-                onAction: () => void addToQueue([item]),
-              }}
-              leftSwipe={
-                isLiked
-                  ? {
-                      icon: <IconHeartFilled size={icon.size} color={color.accentInk} />,
-                      label: 'Unstar',
-                      onAction: () => void toggleStar(item.id, true),
-                    }
-                  : {
-                      icon: <IconX size={icon.size} color={color.accentInk} strokeWidth={2} />,
-                      label: 'Remove',
-                      // By position: the same track can appear twice, and the
-                      // server removes by index for exactly that reason.
-                      onAction: () => {
-                        void removeTrackAt(playlistId, positionOf(item)).then(refresh);
-                      },
-                    }
-              }
-            >
-              <ListRow
-                title={item.title}
-                meta={[item.artist, item.duration ? formatDuration(item.duration) : null]
-                  .filter(Boolean)
-                  .join(' · ')}
-                artworkUri={artworkUrl(item.coverArt)}
-                action="favorite"
-                favorited={Boolean(item.starred)}
-                active={item.id === activeId}
-                last={index === paged.visible.length - 1}
-                // Starting mid-playlist queues the rest of it from that point.
-                // Plays what you are looking at: unfiltered that is the whole
-                // playlist from here, filtered it is the matches.
-                onPress={() => void playNow(filtered, index)}
-                onLongPress={() => setActionTarget(item)}
-                onActionPress={() => void toggleStar(item.id, Boolean(item.starred))}
-              />
-            </SwipeableRow>
+            <TrackRow
+              song={item}
+              index={index}
+              active={item.id === activeId}
+              last={index === paged.visible.length - 1}
+              // Favourites are the server's own list: a left swipe there means
+              // unstar, which is what takes it out. Elsewhere it means remove.
+              leftAction={isLiked ? 'star' : 'remove'}
+              onPlay={handlePlay}
+              onOptions={handleOptions}
+              onQueue={handleQueue}
+              onStar={handleStar}
+              onRemove={handleRemove}
+            />
           )}
         />
 

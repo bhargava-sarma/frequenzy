@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { FlatList, StyleSheet, View } from 'react-native';
 import Animated, { LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -40,7 +40,6 @@ type Row =
   | { kind: 'track'; key: string; item: MediaItem; index: number; removable: boolean };
 
 export function QueueScreen() {
-  const color = useTheme();
   const styles = useThemedStyles(makeStyles);
   const insets = useSafeAreaInsets();
   const closeQueue = usePlayerUiStore((state) => state.closeQueue);
@@ -121,51 +120,22 @@ export function QueueScreen() {
           />
         }
         contentContainerStyle={rows.length ? styles.listContent : styles.emptyContainer}
-        renderItem={({ item: row }) => {
-          if (row.kind === 'header') {
-            return <SectionHeader title={row.title} />;
-          }
-
-          const track = (
-            <ListRow
-              title={row.item.title ?? 'Unknown title'}
-              meta={[
-                row.item.artist,
-                row.item.duration ? formatDuration(row.item.duration) : null,
-              ]
-                .filter(Boolean)
-                .join(' · ')}
-              artworkUri={
-                typeof row.item.artworkUrl === 'string' ? row.item.artworkUrl : undefined
+        renderItem={({ item: row }) =>
+          row.kind === 'header' ? (
+            <SectionHeader title={row.title} />
+          ) : (
+            <QueueRow
+              item={row.item}
+              index={row.index}
+              active={
+                extrasOf(row.item)?.subsonicId === activeId && row.index === activeIndex
               }
-              active={extrasOf(row.item)?.subsonicId === activeId && row.index === activeIndex}
               last={row.index === queue.length - 1}
-              onPress={() => TrackPlayer.skipToIndex(row.index)}
+              removable={row.removable}
+              onRemove={removeFromQueue}
             />
-          );
-
-          if (!row.removable) return track;
-
-          return (
-            // Laid out with a transition so removing a row closes the gap
-            // rather than the rest of the queue jumping up a slot.
-            <Animated.View layout={LinearTransition.duration(motion.durationBase)}>
-              <SwipeableRow
-                leftSwipe={{
-                  icon: <IconTrash size={icon.size} color={color.accentInk} strokeWidth={2} />,
-                  label: 'Remove',
-                  // No manual resync: reading the queue straight after a write
-                  // returns the pre-write state, since the write is dispatched to
-                  // the native queue while the read runs inline. QueueChanged
-                  // arrives once the change has actually landed.
-                  onAction: () => removeFromQueue(row.index),
-                }}
-              >
-                {track}
-              </SwipeableRow>
-            </Animated.View>
-          );
-        }}
+          )
+        }
         ListFooterComponent={
           queue.length > 0 ? (
             <View style={styles.footer}>
@@ -188,6 +158,66 @@ export function QueueScreen() {
     </View>
   );
 }
+
+/**
+ * One queued track.
+ *
+ * Memoised for the same reason the library rows are: a queue is long, every
+ * row carries a pan gesture and worklets, and without this each change to the
+ * queue re-rendered all of them.
+ */
+const QueueRow = memo(function QueueRow({
+  item,
+  index,
+  active,
+  last,
+  removable,
+  onRemove,
+}: {
+  item: MediaItem;
+  index: number;
+  active: boolean;
+  last: boolean;
+  removable: boolean;
+  onRemove: (index: number) => void;
+}) {
+  const color = useTheme();
+
+  const track = (
+    <ListRow
+      title={item.title ?? 'Unknown title'}
+      meta={[item.artist, item.duration ? formatDuration(item.duration) : null]
+        .filter(Boolean)
+        .join(' · ')}
+      artworkUri={typeof item.artworkUrl === 'string' ? item.artworkUrl : undefined}
+      active={active}
+      last={last}
+      onPress={() => TrackPlayer.skipToIndex(index)}
+    />
+  );
+
+  if (!removable) return track;
+
+  return (
+    // Laid out with a transition so removing a row closes the gap rather than
+    // the rest of the queue jumping up a slot.
+    <Animated.View layout={LinearTransition.duration(motion.durationBase)}>
+      <SwipeableRow
+        leftSwipe={{
+          icon: <IconTrash size={icon.size} color={color.accentInk} strokeWidth={2} />,
+          label: 'Remove',
+          // No manual resync: reading the queue straight after a write returns
+          // the pre-write state, since the write is dispatched to the native
+          // queue while the read runs inline. QueueChanged arrives once the
+          // change has actually landed.
+          onAction: () => onRemove(index),
+        }}
+      >
+        {track}
+      </SwipeableRow>
+    </Animated.View>
+  );
+});
 
 const makeStyles = (color: Palette) =>
   StyleSheet.create({

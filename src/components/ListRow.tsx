@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { hairline, icon, layout, radius, space, type } from '../theme/tokens';
@@ -40,7 +41,7 @@ export interface ListRowProps {
   last?: boolean;
 }
 
-export function ListRow({
+export const ListRow = memo(function ListRow({
   title,
   meta,
   artworkUri,
@@ -109,7 +110,7 @@ export function ListRow({
       )}
     </PressScale>
   );
-}
+});
 
 const makeStyles = (color: Palette) => StyleSheet.create({
   root: {

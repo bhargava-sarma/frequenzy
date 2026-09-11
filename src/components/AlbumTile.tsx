@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { space, type } from '../theme/tokens';
@@ -27,7 +28,7 @@ export interface AlbumTileProps {
   onPress?: () => void;
 }
 
-export function AlbumTile({ title, subtitle, artworkUri, size, onPress }: AlbumTileProps) {
+export const AlbumTile = memo(function AlbumTile({ title, subtitle, artworkUri, size, onPress }: AlbumTileProps) {
   const styles = useThemedStyles(makeStyles);
   return (
     <PressScale
@@ -49,7 +50,7 @@ export function AlbumTile({ title, subtitle, artworkUri, size, onPress }: AlbumT
       </View>
     </PressScale>
   );
-}
+});
 
 const makeStyles = (color: Palette) => StyleSheet.create({
   caption: { marginTop: space[2] },
