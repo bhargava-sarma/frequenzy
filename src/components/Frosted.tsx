@@ -58,19 +58,46 @@ export interface FrostedProps {
   style?: StyleProp<ViewStyle>;
   /** Which palette surface tints the glass. */
   surface?: 'panel' | 'paper';
+  /**
+   * Overrides the tint colour and its strength.
+   *
+   * Surfaces take the palette and the user's opacity setting, which is right
+   * for the dock and the search field — they are the app's own chrome. A
+   * highlight is not: it has to read as a highlight at a strength of its own,
+   * independent of how transparent the chrome is set to be.
+   */
+  tintColor?: string;
+  tintOpacity?: number;
 }
 
-export function Frosted({ children, style, surface = 'panel' }: FrostedProps) {
+export function Frosted({
+  children,
+  style,
+  surface = 'panel',
+  tintColor,
+  tintOpacity,
+}: FrostedProps) {
   const color = useTheme();
   const { resolved, blurIntensity, surfaceOpacity } = useThemeControls();
 
-  const base = surface === 'panel' ? color.panel : color.paper;
+  const base = tintColor ?? (surface === 'panel' ? color.panel : color.paper);
+  const alpha = tintOpacity ?? surfaceOpacity;
   const blurring = BlurView != null && blurIntensity > 0;
 
   if (!blurring) {
     return (
       <View
-        style={[style, { backgroundColor: withAlpha(base, Math.max(surfaceOpacity, OPAQUE_FALLBACK)) }]}
+        style={[
+          style,
+          {
+            // An overridden tint is already chosen for its own job, so it is
+            // not pushed toward opaque the way a chrome surface is.
+            backgroundColor: withAlpha(
+              base,
+              tintOpacity != null ? alpha : Math.max(alpha, OPAQUE_FALLBACK),
+            ),
+          },
+        ]}
       >
         {children}
       </View>
@@ -86,9 +113,7 @@ export function Frosted({ children, style, surface = 'panel' }: FrostedProps) {
         tint={resolved === 'dark' ? 'dark' : 'light'}
         style={StyleSheet.absoluteFill}
       />
-      <View
-        style={[StyleSheet.absoluteFill, { backgroundColor: withAlpha(base, surfaceOpacity) }]}
-      />
+      <View style={[StyleSheet.absoluteFill, { backgroundColor: withAlpha(base, alpha) }]} />
       {children}
     </View>
   );

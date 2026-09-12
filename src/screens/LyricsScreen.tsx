@@ -2,6 +2,8 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   Easing,
+  FadeIn,
+  FadeOut,
   interpolate,
   interpolateColor,
   useAnimatedStyle,
@@ -12,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import TrackPlayer, { useActiveMediaItem, useProgress } from '@rntp/player';
 
 import { AmbientBackground } from '../components/AmbientBackground';
+import { Frosted } from '../components/Frosted';
 import { Button } from '../components/Button';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { EmptyState } from '../components/ScreenState';
@@ -19,9 +22,9 @@ import { activeLineIndex } from '../api/lrclib';
 import { useLyrics } from '../hooks/useLyrics';
 import { usePlayerUiStore } from '../store/usePlayerUiStore';
 import { romanizeLine } from '../utils/romanize';
-import { layout, motion, space, type } from '../theme/tokens';
+import { layout, motion, radius, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
-import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
+import { useTheme, useThemeControls, useThemedStyles } from '../theme/ThemeProvider';
 
 /**
  * Lyrics, following the track.
@@ -62,6 +65,16 @@ const TIMING = {
 
 /** Inactive lines sit back rather than disappearing — you can still read ahead. */
 const INACTIVE_OPACITY = 0.38;
+
+/**
+ * Strength of the frosted plate behind the current line.
+ *
+ * Two values because the plate is white in both themes and the ground is not.
+ * On the dark panel a tenth of white is already a clear lift; on paper it has
+ * to be most of the way opaque before it separates from an off-white page.
+ */
+const HIGHLIGHT_TINT_DARK = 0.12;
+const HIGHLIGHT_TINT_LIGHT = 0.62;
 
 export function LyricsScreen() {
   const color = useTheme();
@@ -305,6 +318,9 @@ const LyricRow = memo(function LyricRow({
   onLayout: (index: number, y: number) => void;
   onSeek: (seconds: number) => void;
 }) {
+  const { resolved } = useThemeControls();
+  const dark = resolved === 'dark';
+
   const lit = useSharedValue(active ? 1 : 0);
 
   useEffect(() => {
@@ -331,6 +347,28 @@ const LyricRow = memo(function LyricRow({
       accessibilityLabel={`Play from "${text}"`}
       style={styles.linePress}
     >
+      {/*
+        Mounted only while this line is current, so exactly one blurred plate
+        exists at a time rather than one per line — a few hundred native blur
+        views would cost far more than the effect is worth. Reanimated's
+        exiting animation is what lets it fade out on the way off, which an
+        unmount otherwise cuts short.
+      */}
+      {active && (
+        <Animated.View
+          pointerEvents="none"
+          entering={FadeIn.duration(LINE_FADE_MS)}
+          exiting={FadeOut.duration(LINE_FADE_MS)}
+          style={styles.plate}
+        >
+          <Frosted
+            style={StyleSheet.absoluteFill}
+            tintColor="#FFFFFF"
+            tintOpacity={dark ? HIGHLIGHT_TINT_DARK : HIGHLIGHT_TINT_LIGHT}
+          />
+        </Animated.View>
+      )}
+
       <Animated.Text style={[styles.line, textStyle]}>{text}</Animated.Text>
       {roman && (
         <Animated.Text style={[styles.roman, romanStyle]} numberOfLines={2}>
@@ -353,7 +391,23 @@ const makeStyles = (color: Palette) =>
       flexGrow: 1,
     },
 
-    linePress: { paddingVertical: space[2] },
+    linePress: {
+      paddingVertical: space[3],
+      // The plate needs room to sit around the words rather than touching
+      // them; the negative margin keeps the text where it already was so the
+      // left edge does not shift when a line becomes current.
+      paddingHorizontal: space[3],
+      marginHorizontal: -space[3],
+    },
+    plate: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      borderRadius: radius.md,
+      overflow: 'hidden',
+    },
     line: { ...type.title, fontSize: 19, lineHeight: 28 },
     roman: {
       ...type.meta,
