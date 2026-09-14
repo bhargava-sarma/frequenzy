@@ -17,6 +17,9 @@ import TrackPlayer, {
 } from '@rntp/player';
 
 import { AmbientBackground } from '../components/AmbientBackground';
+import { Glass } from '../components/Glass';
+import { PressScale } from '../components/Pressable';
+import { springs, useSpringValue } from '../theme/motion';
 import { ArtworkWell, FormatBadge } from '../components/ArtworkWell';
 import { ProgressBar } from '../components/ProgressBar';
 import { TransportControls } from '../components/TransportControls';
@@ -35,7 +38,7 @@ import { extrasOf } from '../player/trackMapping';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { usePlayerUiStore } from '../store/usePlayerUiStore';
 import { useServerStore } from '../store/useServerStore';
-import { hairline, icon, layout, motion, space, type, withAlpha } from '../theme/tokens';
+import { icon, layout, motion, radius, space, type, withAlpha } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import type { Child } from '../types/subsonic';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
@@ -56,6 +59,12 @@ import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
  * you actually want to go from a track you're listening to, and making you
  * back out and search for them was the long way round.
  */
+/** How far the cover settles back while paused. */
+const PAUSED_SCALE = 0.8;
+
+/** Diameter of the glass buttons in the header. */
+const HEADER_BUTTON = 38;
+
 /** Crossfade between covers when the track changes. */
 const COVER_FADE_MS = 260;
 
@@ -149,8 +158,9 @@ export function NowPlayingScreen() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-        {/* Behind everything, tinted by the current cover. */}
-        <AmbientBackground />
+        {/* The whole screen becomes the cover's colours, drifting slowly —
+            Apple Music's full-screen player rather than a tinted panel. */}
+        <AmbientBackground variant="immersive" />
 
         <Header onClose={closePlayer} onOptions={() => setActionsOpen(true)} />
 
@@ -204,7 +214,7 @@ export function NowPlayingScreen() {
                 <IconHeart
                   size={icon.size}
                   strokeWidth={icon.strokeWidth}
-                  color={color.textInverseSecondary}
+                  color={withAlpha(color.onArtwork, 0.75)}
                 />
               )}
             </Pressable>
@@ -264,7 +274,7 @@ export function NowPlayingScreen() {
                 <IconPlaylist
                   size={icon.sizeSmall}
                   strokeWidth={icon.strokeWidth}
-                  color={color.textInverseSecondary}
+                  color={withAlpha(color.onArtwork, 0.75)}
                 />
               }
               onPress={openQueue}
@@ -276,7 +286,7 @@ export function NowPlayingScreen() {
                 <IconMicrophone2
                   size={icon.sizeSmall}
                   strokeWidth={icon.strokeWidth}
-                  color={color.textInverseSecondary}
+                  color={withAlpha(color.onArtwork, 0.75)}
                 />
               }
               onPress={openLyrics}
@@ -313,6 +323,10 @@ function BreathingArtwork({
   playing: boolean;
 }) {
   const scale = useSharedValue(1);
+  // Separate from the breath so the two never fight: this one springs the
+  // cover back when music stops, the way Apple Music's player does, and the
+  // breath only runs on top of it while playing.
+  const rest = useSpringValue(playing ? 1 : PAUSED_SCALE, springs.gentle);
 
   useEffect(() => {
     if (!playing) {
@@ -333,7 +347,7 @@ function BreathingArtwork({
     return () => cancelAnimation(scale);
   }, [playing, scale]);
 
-  const style = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+  const style = useAnimatedStyle(() => ({ transform: [{ scale: scale.value * rest.value }] }));
 
   return (
     <Animated.View style={style}>
@@ -357,36 +371,34 @@ function Header({ onClose, onOptions }: { onClose: () => void; onOptions?: () =>
       {/* Left slot, empty when nothing is playing so the chevron keeps its
           place rather than sliding across. */}
       {onOptions ? (
-        <Pressable
+        <PressScale
+          noOrigin
           accessibilityRole="button"
           accessibilityLabel="Track options"
           hitSlop={space[3]}
           onPress={onOptions}
-          style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}
+          scaleTo={0.86}
+          style={styles.headerButton}
         >
-          <IconDots
-            size={icon.size}
-            strokeWidth={icon.strokeWidth}
-            color={color.textInverseSecondary}
-          />
-        </Pressable>
+          <Glass variant="thin" lite radius={HEADER_BUTTON / 2} style={StyleSheet.absoluteFill} />
+          <IconDots size={icon.size} strokeWidth={2} color={color.onArtwork} />
+        </PressScale>
       ) : (
         <View style={styles.headerButton} />
       )}
 
-      <Pressable
+      <PressScale
+        noOrigin
         accessibilityRole="button"
         accessibilityLabel="Minimise player"
         hitSlop={space[3]}
         onPress={onClose}
-        style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}
+        scaleTo={0.86}
+        style={styles.headerButton}
       >
-        <IconChevronDown
-          size={icon.size}
-          strokeWidth={icon.strokeWidth}
-          color={color.textInverseSecondary}
-        />
-      </Pressable>
+        <Glass variant="thin" lite radius={HEADER_BUTTON / 2} style={StyleSheet.absoluteFill} />
+        <IconChevronDown size={icon.size} strokeWidth={2} color={color.onArtwork} />
+      </PressScale>
     </View>
   );
 }
@@ -402,22 +414,25 @@ function FooterButton({
 }) {
   const styles = useThemedStyles(makeStyles);
   return (
-    <Pressable
+    <PressScale
+      noOrigin
       accessibilityRole="button"
       accessibilityLabel={label}
       onPress={onPress}
-      style={({ pressed }) => [styles.footerButton, pressed && styles.pressed]}
+      scaleTo={0.92}
+      style={styles.footerButton}
     >
+      <Glass variant="thin" lite radius={radius.full} style={StyleSheet.absoluteFill} />
       {glyph}
       <Text style={styles.footerLabel}>{label}</Text>
-    </Pressable>
+    </PressScale>
   );
 }
 
 const makeStyles = (color: Palette) =>
   StyleSheet.create({
     // Full-bleed, no radius: this is the whole screen, not a panel inset in one.
-    root: { flex: 1, backgroundColor: color.panel },
+    root: { flex: 1, backgroundColor: color.background },
 
     header: {
       flexDirection: 'row',
@@ -426,7 +441,13 @@ const makeStyles = (color: Palette) =>
       paddingHorizontal: layout.panelPadding,
       paddingVertical: space[3],
     },
-    headerButton: { padding: space[1] },
+    headerButton: {
+      width: HEADER_BUTTON,
+      height: HEADER_BUTTON,
+      borderRadius: radius.full,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
 
     artArea: {
       flex: 1,
@@ -439,8 +460,8 @@ const makeStyles = (color: Palette) =>
 
     meta: { flexDirection: 'row', alignItems: 'flex-start' },
     metaText: { flex: 1 },
-    title: { ...type.display, color: color.textInverse },
-    artist: { ...type.meta, color: color.textInverseSecondary, marginTop: space[1] },
+    title: { ...type.title3, fontSize: 22, color: color.onArtwork },
+    artist: { ...type.body, color: withAlpha(color.onArtwork, 0.7), marginTop: space[1] },
     heart: { marginLeft: space[4], paddingTop: space[1] },
 
     badgeRow: { marginTop: space[4], alignItems: 'center' },
@@ -454,10 +475,8 @@ const makeStyles = (color: Palette) =>
     badgeCapsule: {
       paddingHorizontal: space[3],
       paddingVertical: space[1],
-      borderRadius: layout.dockRadius,
-      borderWidth: hairline,
-      borderColor: color.panelLine,
-      backgroundColor: withAlpha(color.panelRaised, layout.floatingOpacity),
+      borderRadius: radius.full,
+      backgroundColor: withAlpha(color.onArtwork, 0.12),
     },
     progress: { marginTop: space[2], marginBottom: space[5] },
 
@@ -471,9 +490,10 @@ const makeStyles = (color: Palette) =>
       alignItems: 'center',
       gap: space[2],
       paddingVertical: space[2],
-      paddingHorizontal: space[2],
+      paddingHorizontal: space[4],
+      borderRadius: radius.full,
     },
-    footerLabel: { ...type.label, color: color.textInverseSecondary },
+    footerLabel: { ...type.callout, color: color.onArtwork },
 
     pressed: { opacity: 0.6 },
   });

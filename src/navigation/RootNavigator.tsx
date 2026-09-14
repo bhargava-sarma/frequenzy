@@ -1,8 +1,10 @@
 import { useMemo } from 'react';
+import { StyleSheet } from 'react-native';
 import { NavigationContainer, DefaultTheme, type Theme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
+import { BlurTarget, BlurTargetScope } from '../components/BlurTarget';
 import { TabBar } from '../components/TabBar';
 import { AlbumScreen } from '../screens/AlbumScreen';
 import { ArtistScreen } from '../screens/ArtistScreen';
@@ -78,34 +80,54 @@ function buildNavigationTheme(color: Palette, dark: boolean): Theme {
   };
 }
 
+/**
+ * Each tab's stack sits inside a named blur target.
+ *
+ * The dock is rendered by the tab navigator beside its screens, never inside
+ * them, which is exactly the relationship a real blur on Android needs: a
+ * blurring view may not live inside the content it blurs. One target per tab
+ * rather than one around the whole navigator, because there is no element
+ * that wraps the screens without also wrapping the dock.
+ *
+ * Wrapping is purely visual — the target is a plain container to layout and
+ * gestures, and falls back to a View where blur is unavailable.
+ */
+const tabTarget = (routeName: string) => `tab:${routeName}`;
+
 function LibraryNavigator() {
   return (
-    <LibraryStack.Navigator screenOptions={screenOptions}>
-      <LibraryStack.Screen name="Artists" component={LibraryScreen} />
-      <LibraryStack.Screen name="Artist" component={ArtistScreen} />
-      <LibraryStack.Screen name="Album" component={AlbumScreen} />
-      <LibraryStack.Screen name="Playlist" component={PlaylistScreen} />
-    </LibraryStack.Navigator>
+    <BlurTarget name={tabTarget('Library')} style={styles.fill}>
+      <LibraryStack.Navigator screenOptions={screenOptions}>
+        <LibraryStack.Screen name="Artists" component={LibraryScreen} />
+        <LibraryStack.Screen name="Artist" component={ArtistScreen} />
+        <LibraryStack.Screen name="Album" component={AlbumScreen} />
+        <LibraryStack.Screen name="Playlist" component={PlaylistScreen} />
+      </LibraryStack.Navigator>
+    </BlurTarget>
   );
 }
 
 function SearchNavigator() {
   return (
-    <SearchStack.Navigator screenOptions={screenOptions}>
-      <SearchStack.Screen name="SearchHome" component={SearchScreen} />
-      <SearchStack.Screen name="Artist" component={ArtistScreen} />
-      <SearchStack.Screen name="Album" component={AlbumScreen} />
-    </SearchStack.Navigator>
+    <BlurTarget name={tabTarget('Search')} style={styles.fill}>
+      <SearchStack.Navigator screenOptions={screenOptions}>
+        <SearchStack.Screen name="SearchHome" component={SearchScreen} />
+        <SearchStack.Screen name="Artist" component={ArtistScreen} />
+        <SearchStack.Screen name="Album" component={AlbumScreen} />
+      </SearchStack.Navigator>
+    </BlurTarget>
   );
 }
 
 function HomeNavigator() {
   return (
-    <HomeStack.Navigator screenOptions={screenOptions}>
-      <HomeStack.Screen name="HomeFeed" component={HomeScreen} />
-      <HomeStack.Screen name="Artist" component={ArtistScreen} />
-      <HomeStack.Screen name="Album" component={AlbumScreen} />
-    </HomeStack.Navigator>
+    <BlurTarget name={tabTarget('Home')} style={styles.fill}>
+      <HomeStack.Navigator screenOptions={screenOptions}>
+        <HomeStack.Screen name="HomeFeed" component={HomeScreen} />
+        <HomeStack.Screen name="Artist" component={ArtistScreen} />
+        <HomeStack.Screen name="Album" component={AlbumScreen} />
+      </HomeStack.Navigator>
+    </BlurTarget>
   );
 }
 
@@ -129,13 +151,25 @@ const tabScreenOptions = {
 
 function TabNavigator() {
   return (
-    <Tabs.Navigator screenOptions={tabScreenOptions} tabBar={(props) => <TabBar {...props} />}>
+    <Tabs.Navigator
+      screenOptions={tabScreenOptions}
+      tabBar={(props) => (
+        // Glass in the dock blurs whichever tab is on show.
+        <BlurTargetScope name={tabTarget(props.state.routes[props.state.index].name)}>
+          <TabBar {...props} />
+        </BlurTargetScope>
+      )}
+    >
       <Tabs.Screen name="Home" component={HomeNavigator} />
       <Tabs.Screen name="Search" component={SearchNavigator} />
       <Tabs.Screen name="Library" component={LibraryNavigator} />
     </Tabs.Navigator>
   );
 }
+
+const styles = StyleSheet.create({
+  fill: { flex: 1 },
+});
 
 export function RootNavigator() {
   const color = useTheme();

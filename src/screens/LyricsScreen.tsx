@@ -224,7 +224,7 @@ export function LyricsScreen() {
               time={line.time}
               active={i === index}
               styles={styles}
-              idleColor={color.textSecondary}
+              idleColor={color.onArtwork}
               activeColor={color.accent}
               onLayout={onLineLayout}
               onSeek={seekTo}
@@ -237,7 +237,9 @@ export function LyricsScreen() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-      <AmbientBackground />
+      {/* Same full-screen artwork colour as the player, so opening lyrics
+          reads as the player turning over rather than a new screen. */}
+      <AmbientBackground variant="immersive" />
 
       <ScreenHeader
         title="Lyrics"
@@ -381,7 +383,7 @@ const LyricRow = memo(function LyricRow({
 
 const makeStyles = (color: Palette) =>
   StyleSheet.create({
-    root: { flex: 1, backgroundColor: color.paper },
+    root: { flex: 1, backgroundColor: color.background },
     content: {
       paddingHorizontal: layout.screenPadding,
       // Half a screen of slack at each end so the first and last lines can
@@ -408,7 +410,9 @@ const makeStyles = (color: Palette) =>
       borderRadius: radius.md,
       overflow: 'hidden',
     },
-    line: { ...type.title, fontSize: 19, lineHeight: 28 },
+    // Big and bold, the way Apple Music sets sung lines: this screen is read
+    // at arm's length while the music plays, not studied.
+    line: { ...type.title1, fontSize: 26, lineHeight: 34 },
     roman: {
       ...type.meta,
       fontSize: 13,

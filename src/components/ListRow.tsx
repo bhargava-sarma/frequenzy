@@ -121,18 +121,21 @@ const makeStyles = (color: Palette) => StyleSheet.create({
     // No fill: an opaque row would paint over the ambient wash behind it, and
     // there is nothing underneath a row that needs hiding.
   },
+  // Inset under the text, not full width. Apple Music lets the artwork column
+  // run clean and draws the line only where the words are, which is what makes
+  // a list read as rows of songs rather than a table.
   separator: {
     borderBottomWidth: hairline,
-    borderBottomColor: color.paperLine,
+    borderBottomColor: color.separator,
   },
   pressed: { opacity: 0.6 },
 
   text: { flex: 1, marginLeft: space[3], justifyContent: 'center' },
   textNoArt: { marginLeft: 0 },
 
-  title: { ...type.body, color: color.textPrimary },
+  title: { ...type.body, fontFamily: type.headline.fontFamily, color: color.label },
   titleActive: { color: color.accent },
-  meta: { ...type.meta, color: color.textSecondary, marginTop: 2 },
+  meta: { ...type.subheadline, color: color.labelSecondary, marginTop: 2 },
 
   action: {
     marginLeft: space[3],
@@ -140,8 +143,8 @@ const makeStyles = (color: Palette) => StyleSheet.create({
     justifyContent: 'center',
   },
   queueButton: {
-    width: 24,
-    height: 24,
+    width: 28,
+    height: 28,
     borderRadius: radius.full,
     backgroundColor: color.accent,
     alignItems: 'center',

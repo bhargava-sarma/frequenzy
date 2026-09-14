@@ -1,10 +1,11 @@
 import { type ReactNode } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
-import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeOut, SlideInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { SectionHeader } from './SectionHeader';
-import { hairline, layout, motion, space, type } from '../theme/tokens';
+import { Glass } from './Glass';
+import { springs } from '../theme/motion';
+import { hairline, layout, motion, radius, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 
@@ -36,22 +37,46 @@ export function Sheet({ visible, onClose, title, detail, children }: SheetProps)
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
       {/* Tapping the scrim dismisses; the sheet itself swallows the press. */}
-      <Animated.View entering={FadeIn.duration(motion.durationBase)} style={styles.scrimLayer}>
+      <Animated.View
+        entering={FadeIn.duration(motion.durationBase)}
+        exiting={FadeOut.duration(motion.durationFast)}
+        style={styles.scrimLayer}
+      >
         <Pressable style={styles.scrim} onPress={onClose}>
           {/* The cap lives here, not on the sheet. A percentage resolves
               against the parent's height, and the sheet's parent was this
               wrapper — which is sized by its own content, so the cap either
               did nothing or clipped the sheet to less than its content and
               cut the last row in half. The scrim below has a real height. */}
+          {/* Springs up from below rather than fading in place, so it reads
+              as a card lifted into view — the same physics as the player. */}
           <Animated.View
-            entering={FadeInDown.duration(motion.durationScreen)}
+            entering={SlideInDown.springify()
+              .damping(springs.gentle.damping ?? 20)
+              .stiffness(springs.gentle.stiffness ?? 180)}
             style={styles.riser}
           >
             <Pressable
               style={[styles.sheet, { paddingBottom: space[3] + insets.bottom }]}
               onPress={() => {}}
             >
-              <SectionHeader title={title} count={detail} surface="panel" />
+              <Glass
+                variant="prominent"
+                shadow
+                radius={radius.xl}
+                style={StyleSheet.absoluteFill}
+              />
+              <View style={styles.grabber} />
+              <View style={styles.header}>
+                <Text style={styles.title} numberOfLines={1}>
+                  {title}
+                </Text>
+                {detail != null && (
+                  <Text style={styles.detail} numberOfLines={1}>
+                    {detail}
+                  </Text>
+                )}
+              </View>
               {children}
             </Pressable>
           </Animated.View>
@@ -115,7 +140,7 @@ const makeStyles = (color: Palette) =>
     scrimLayer: { flex: 1 },
     scrim: {
       flex: 1,
-      backgroundColor: '#000000AA',
+      backgroundColor: color.scrim,
       justifyContent: 'flex-end',
       padding: space[3],
     },
@@ -127,15 +152,32 @@ const makeStyles = (color: Palette) =>
       // Shrinks into the riser's cap, which is what gives a long list inside
       // a bounded height to scroll within instead of growing past the screen.
       flexShrink: 1,
-      backgroundColor: color.panel,
-      borderRadius: layout.dockRadius,
-      borderWidth: hairline,
-      borderColor: color.panelLine,
+      // The fill, rim and shadow all come from the Glass layer inside.
+      borderRadius: radius.xl,
       overflow: 'hidden',
       // Bottom padding is applied inline, adding the gesture bar inset: the
       // sheet sits at the very bottom of the screen, so without it the last
       // row is under the system navigation.
     },
+    grabber: {
+      alignSelf: 'center',
+      width: 36,
+      height: 5,
+      borderRadius: radius.full,
+      backgroundColor: color.labelTertiary,
+      marginTop: space[2],
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      justifyContent: 'space-between',
+      gap: space[3],
+      paddingHorizontal: layout.panelPadding,
+      paddingTop: space[3],
+      paddingBottom: space[2],
+    },
+    title: { ...type.title3, color: color.label, flexShrink: 1 },
+    detail: { ...type.subheadline, color: color.labelSecondary },
     option: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -144,9 +186,9 @@ const makeStyles = (color: Palette) =>
       paddingHorizontal: layout.panelPadding,
       paddingVertical: space[4],
     },
-    optionLine: { borderBottomWidth: hairline, borderBottomColor: color.panelLine },
-    optionLabel: { ...type.body, color: color.textInverse, flexShrink: 1 },
-    optionDetail: { ...type.numeral, color: color.textInverseSecondary },
+    optionLine: { borderBottomWidth: hairline, borderBottomColor: color.separator },
+    optionLabel: { ...type.body, color: color.label, flexShrink: 1 },
+    optionDetail: { ...type.numeral, color: color.labelSecondary },
     pressed: { opacity: 0.6 },
     disabled: { opacity: 0.4 },
     body: { paddingHorizontal: layout.panelPadding, paddingTop: space[3] },

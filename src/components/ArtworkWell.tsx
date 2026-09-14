@@ -1,7 +1,7 @@
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { Image } from 'expo-image';
 
-import { hairline, motion, radius, space, type } from '../theme/tokens';
+import { hairline, motion, radius, space, type, withAlpha } from '../theme/tokens';
 import { useTheme } from '../theme/ThemeProvider';
 import { IconDisc } from './icons';
 
@@ -39,11 +39,17 @@ export function ArtworkWell({
 }: ArtworkWellProps) {
   const color = useTheme();
   const onPanel = surface === 'panel';
+  // Radius grows with the artwork, the way Apple Music rounds a thumbnail
+  // a little and a hero cover a lot — one fixed radius looks pinched on a
+  // large cover and blobby on a small one.
   const frame = {
     width: size,
     height: size,
-    borderRadius: size <= 48 ? radius.sm : radius.md,
+    borderRadius: size <= 56 ? radius.sm : size <= 180 ? radius.md : radius.lg,
   };
+  // Only large covers float. A shadow under every 48px thumbnail in a list
+  // is hundreds of shadow passes for depth nobody can see at that size.
+  const lifted = size >= 160;
 
   return (
     <View
@@ -53,6 +59,21 @@ export function ArtworkWell({
         {
           backgroundColor: onPanel ? color.panelRaised : color.paperDim,
           borderColor: onPanel ? color.panelLine : color.paperLine,
+        },
+        lifted && {
+          boxShadow: [
+            {
+              offsetX: 0,
+              offsetY: Math.round(size * 0.06),
+              blurRadius: Math.round(size * 0.14),
+              spreadDistance: 0,
+              color: withAlpha(color.shadow, 0.45),
+            },
+          ],
+          // An outset shadow is drawn outside the view, and overflow: hidden
+          // clips it away on Android. The image carries its own radius, so
+          // nothing needs clipping here.
+          overflow: 'visible' as const,
         },
         style,
       ]}

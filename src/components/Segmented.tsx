@@ -1,46 +1,37 @@
 import { Pressable, StyleSheet, Text } from 'react-native';
-import Animated, { LinearTransition } from 'react-native-reanimated';
 
-import { hairline, layout, motion, space, type } from '../theme/tokens';
+import { Glass } from './Glass';
+import { SlidingPill } from './SlidingPill';
+import { layout, radius, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useThemedStyles } from '../theme/ThemeProvider';
-import { Frosted } from './Frosted';
 
 /**
- * Mode switch, in the uppercase label style.
+ * Mode switch: a glass capsule with a pill that slides to the selection.
  *
- * Spans the full width with its segments sharing it evenly, and carries the
- * dock's corner radius. Sized to its labels it sat as a small chip floating in
- * a wide row, which lined up with nothing; matching the dock's geometry makes
- * every control on a screen read as the same family of hardware.
- *
- * The selected segment carries the accent fill. On the original light palette
- * a dark panel fill did this job and left the accent free, but on a dark
- * ground the panel colors sit within a few percent of the floor and a selected
- * segment simply disappeared. Selection is listed as one of the accent's jobs
- * in the color tokens, so this spends it where it was always allowed.
+ * Spans the full width with its segments sharing it evenly. The pill is the
+ * only moving part and it springs, stretching as it travels, so switching
+ * reads as one continuous gesture rather than a highlight jumping between
+ * boxes.
  */
 export interface SegmentedProps<T extends string> {
   options: readonly { value: T; label: string }[];
   value: T;
   onChange: (value: T) => void;
-  /** Which surface it sits on, so the border and labels contrast correctly. */
+  /**
+   * Which surface it sits on. Kept for existing call sites; glass reads the
+   * same over either, so it no longer changes the rendering.
+   */
   surface?: 'paper' | 'panel';
 }
 
-export function Segmented<T extends string>({
-  options,
-  value,
-  onChange,
-  surface = 'paper',
-}: SegmentedProps<T>) {
+export function Segmented<T extends string>({ options, value, onChange }: SegmentedProps<T>) {
   const styles = useThemedStyles(makeStyles);
-  const onPanel = surface === 'panel';
+  const selectedIndex = options.findIndex((option) => option.value === value);
 
   return (
-    // Frosted rather than a flat tint: this is one of the floating surfaces,
-    // and it sits directly over a scrolling list on the library screen.
-    <Frosted surface="panel" style={[styles.root, onPanel && styles.rootPanel]}>
+    <Glass variant="thin" blur radius={radius.full} style={styles.root}>
+      <SlidingPill index={selectedIndex} count={options.length} />
       {options.map((option) => {
         const selected = option.value === value;
         return (
@@ -49,32 +40,18 @@ export function Segmented<T extends string>({
             accessibilityRole="tab"
             accessibilityState={{ selected }}
             onPress={() => onChange(option.value)}
-            style={({ pressed }) => [
-              styles.segment,
-              pressed && !selected && styles.pressed,
-            ]}
+            style={({ pressed }) => [styles.segment, pressed && !selected && styles.pressed]}
           >
-            {/* The fill is a sibling rather than a background on the segment
-                so it can transition between positions instead of cutting. */}
-            {selected && (
-              <Animated.View
-                style={styles.fill}
-                layout={LinearTransition.duration(motion.durationBase)}
-              />
-            )}
             <Text
-              style={[
-                styles.label,
-                onPanel && styles.labelPanel,
-                selected && styles.labelSelected,
-              ]}
+              style={[styles.label, selected && styles.labelSelected]}
+              numberOfLines={1}
             >
               {option.label}
             </Text>
           </Pressable>
         );
       })}
-    </Frosted>
+    </Glass>
   );
 }
 
@@ -83,31 +60,15 @@ const makeStyles = (color: Palette) =>
     root: {
       flexDirection: 'row',
       alignSelf: 'stretch',
-      borderWidth: hairline,
-      borderColor: color.paperLine,
-      borderRadius: layout.dockRadius,
-      // Clips the selected fill and the blur to the outer radius.
-      overflow: 'hidden',
+      minHeight: layout.pillHeight + 6,
     },
     segment: {
       flex: 1,
       paddingHorizontal: space[3],
-      paddingVertical: space[2],
-      minHeight: 40,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    fill: {
-      position: 'absolute',
-      left: 0,
-      right: 0,
-      top: 0,
-      bottom: 0,
-      backgroundColor: color.accent,
-    },
-    rootPanel: { borderColor: color.panelLine },
     pressed: { opacity: 0.6 },
-    label: { ...type.label, color: color.textSecondary },
-    labelPanel: { color: color.textInverseSecondary },
-    labelSelected: { color: color.accentInk },
+    label: { ...type.callout, color: color.labelSecondary },
+    labelSelected: { color: color.label },
   });

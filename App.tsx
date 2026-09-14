@@ -6,6 +6,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
 
 import { ArtworkAccentBridge } from './src/components/ArtworkAccentBridge';
+import { GlassProvider } from './src/components/BlurTarget';
 import { PlayerOverlay } from './src/components/PlayerOverlay';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { startScrobbler } from './src/player/scrobbler';
@@ -18,14 +19,21 @@ import { ThemeProvider, useTheme, useThemeControls } from './src/theme/ThemeProv
  * GestureHandlerRootView must wrap everything, and sit above SafeAreaProvider:
  * gestures registered outside it silently never fire on Android, which is the
  * kind of failure that looks like a broken swipe rather than missing setup.
+ *
+ * GlassProvider holds the named blur targets. On Android a glass surface can
+ * only really blur content that sits inside a target it is not itself part
+ * of, so the navigator registers one per tab and the floating dock — which
+ * the tab navigator renders outside its screens — blurs whichever is showing.
  */
 export default function App() {
   return (
     <GestureHandlerRootView style={styles.fill}>
       <ThemeProvider>
-        <SafeAreaProvider>
-          <AppContent />
-        </SafeAreaProvider>
+        <GlassProvider>
+          <SafeAreaProvider>
+            <AppContent />
+          </SafeAreaProvider>
+        </GlassProvider>
       </ThemeProvider>
     </GestureHandlerRootView>
   );
@@ -42,9 +50,9 @@ function AppContent() {
   const initPlayer = usePlayerStore((state) => state.init);
 
   /**
-   * Manrope carries the tracked-out uppercase labels the design leans on.
-   * Render nothing until it's resident — swapping the face mid-render reflows
-   * every label and reads as a flash of the wrong typeface.
+   * Manrope, in the five weights the type scale uses. Render nothing until
+   * they are resident — swapping the face mid-render reflows every title and
+   * reads as a flash of the wrong typeface.
    *
    * The files live in assets/ and are required directly rather than pulled
    * from an @expo-google-fonts package. A new dependency would move the
@@ -54,6 +62,9 @@ function AppContent() {
   const [fontsLoaded] = useFonts({
     Manrope_400Regular: require('./assets/fonts/Manrope_400Regular.ttf'),
     Manrope_500Medium: require('./assets/fonts/Manrope_500Medium.ttf'),
+    Manrope_600SemiBold: require('./assets/fonts/Manrope_600SemiBold.ttf'),
+    Manrope_700Bold: require('./assets/fonts/Manrope_700Bold.ttf'),
+    Manrope_800ExtraBold: require('./assets/fonts/Manrope_800ExtraBold.ttf'),
   });
 
   useEffect(() => {

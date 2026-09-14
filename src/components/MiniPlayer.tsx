@@ -2,7 +2,11 @@ import { useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import TrackPlayer, { useActiveMediaItem, useIsPlaying, useProgress } from '@rntp/player';
 
+import Animated, { FadeInDown, useAnimatedStyle } from 'react-native-reanimated';
+
 import { ArtworkWell } from './ArtworkWell';
+import { PressScale } from './Pressable';
+import { springs, useSpringValue } from '../theme/motion';
 import {
   IconPlayerPauseFilled,
   IconPlayerPlayFilled,
@@ -10,7 +14,7 @@ import {
   IconPlayerSkipForward,
 } from './icons';
 import { usePlayerUiStore } from '../store/usePlayerUiStore';
-import { hairline, icon, radius, space, type } from '../theme/tokens';
+import { icon, radius, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 
@@ -42,13 +46,20 @@ export function MiniPlayer() {
   const progress = useProgress(1);
   const [trackWidth, setTrackWidth] = useState(0);
 
+  // The artwork settles smaller while paused and springs back on play — the
+  // same cue Apple Music gives on the full player, carried down to the dock.
+  const artScale = useSpringValue(isPlaying ? 1 : 0.86, springs.gentle);
+  const artStyle = useAnimatedStyle(() => ({ transform: [{ scale: artScale.value }] }));
+
   if (!activeItem) return null;
 
   const ratio =
     progress.duration > 0 ? Math.min(1, Math.max(0, progress.position / progress.duration)) : 0;
 
   return (
-    <View style={styles.root}>
+    // Rises into the dock the first time something plays, instead of the dock
+    // jumping taller in a single frame.
+    <Animated.View entering={new FadeInDown().springify().damping(springs.gentle.damping ?? 20)} style={styles.root}>
       <Pressable
         ref={bodyRef}
         style={({ pressed }) => [styles.body, pressed && styles.pressed]}
@@ -62,11 +73,13 @@ export function MiniPlayer() {
         accessibilityRole="button"
         accessibilityLabel={`Now playing: ${activeItem.title ?? 'track'}. Open player.`}
       >
-        <ArtworkWell
-          uri={typeof activeItem.artworkUrl === 'string' ? activeItem.artworkUrl : undefined}
-          size={36}
-          surface="panel"
-        />
+        <Animated.View style={artStyle}>
+          <ArtworkWell
+            uri={typeof activeItem.artworkUrl === 'string' ? activeItem.artworkUrl : undefined}
+            size={44}
+            surface="panel"
+          />
+        </Animated.View>
 
         <View style={styles.text}>
           <Text style={styles.title} numberOfLines={1}>
@@ -87,24 +100,26 @@ export function MiniPlayer() {
               <IconPlayerSkipBack
                 size={icon.sizeSmall}
                 strokeWidth={icon.strokeWidth}
-                color={color.textInverse}
+                color={color.label}
               />
             }
           />
 
-          <Pressable
+          <PressScale
+            noOrigin
             accessibilityRole="button"
             accessibilityLabel={isPlaying ? 'Pause' : 'Play'}
             hitSlop={space[2]}
             onPress={() => (isPlaying ? TrackPlayer.pause() : TrackPlayer.play())}
-            style={({ pressed }) => [styles.playButton, pressed && styles.pressed]}
+            scaleTo={0.84}
+            style={styles.playButton}
           >
             {isPlaying ? (
               <IconPlayerPauseFilled size={icon.size} color={color.accentInk} />
             ) : (
               <IconPlayerPlayFilled size={icon.size} color={color.accentInk} />
             )}
-          </Pressable>
+          </PressScale>
 
           <Control
             label="Next"
@@ -113,7 +128,7 @@ export function MiniPlayer() {
               <IconPlayerSkipForward
                 size={icon.sizeSmall}
                 strokeWidth={icon.strokeWidth}
-                color={color.textInverse}
+                color={color.label}
               />
             }
           />
@@ -145,7 +160,7 @@ export function MiniPlayer() {
           />
         )}
       </View>
-    </View>
+    </Animated.View>
   );
 }
 
@@ -160,15 +175,17 @@ function Control({
 }) {
   const styles = useThemedStyles(makeStyles);
   return (
-    <Pressable
+    <PressScale
+      noOrigin
       accessibilityRole="button"
       accessibilityLabel={label}
       hitSlop={space[2]}
       onPress={onPress}
-      style={({ pressed }) => [styles.control, pressed && styles.pressed]}
+      scaleTo={0.8}
+      style={styles.control}
     >
       {glyph}
-    </Pressable>
+    </PressScale>
   );
 }
 
@@ -185,15 +202,15 @@ const makeStyles = (color: Palette) =>
     pressed: { opacity: 0.6 },
 
     text: { flex: 1, marginLeft: space[3], marginRight: space[2] },
-    title: { ...type.body, color: color.textInverse },
-    artist: { ...type.meta, color: color.textInverseSecondary, marginTop: 1 },
+    title: { ...type.callout, color: color.label },
+    artist: { ...type.caption, color: color.labelSecondary, marginTop: 2 },
 
     transport: { flexDirection: 'row', alignItems: 'center', gap: space[1] },
     control: { padding: space[1] },
 
     playButton: {
-      width: 34,
-      height: 34,
+      width: 38,
+      height: 38,
       borderRadius: radius.full,
       backgroundColor: color.accent,
       alignItems: 'center',
@@ -202,12 +219,12 @@ const makeStyles = (color: Palette) =>
 
     progressTrack: {
       height: TRACK_HEIGHT,
-      backgroundColor: color.panelLine,
-      borderBottomWidth: hairline,
-      borderBottomColor: color.panelLine,
+      marginHorizontal: space[4],
+      borderRadius: radius.full,
+      backgroundColor: color.fillSecondary,
       justifyContent: 'center',
     },
-    progressFill: { height: '100%', backgroundColor: color.accent },
+    progressFill: { height: '100%', borderRadius: radius.full, backgroundColor: color.accent },
     knob: {
       position: 'absolute',
       width: KNOB_SIZE,

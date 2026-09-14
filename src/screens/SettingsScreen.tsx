@@ -101,7 +101,7 @@ export function SettingsScreen() {
             <Text style={styles.hint}>
               {artworkAccentEnabled
                 ? 'Highlights take their colour from the current cover, adjusted to stay legible on this theme.'
-                : 'Highlights stay burnt orange, as the design spec fixes them.'}
+                : 'Highlights stay Apple Music red, whatever is playing.'}
             </Text>
           </View>
 

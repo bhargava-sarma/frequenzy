@@ -1,27 +1,31 @@
+import { memo } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
+import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { StackActions } from '@react-navigation/native';
 
-import { Frosted } from './Frosted';
+import { Glass } from './Glass';
 import { MiniPlayer } from './MiniPlayer';
-import { hairline, icon, layout, space } from '../theme/tokens';
+import { SlidingPill } from './SlidingPill';
+import { useToggleProgress } from '../theme/motion';
+import { icon, layout, radius, space } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import { emitSearchRequested } from '../utils/tabEvents';
 import { IconHome, IconLibrary, IconSearch } from './icons';
 
 /**
- * Floating dock — navigation and the mini-player as one object.
+ * Floating liquid-glass dock — navigation and the mini-player as one object.
  *
- * The bar used to be a full-width strip pinned to the bottom edge, which made
- * it read as screen chrome. Inset from all three edges with a large radius, it
- * reads instead as a single piece of hardware resting on top of the library —
- * which is what the mini-player was already trying to be on its own.
+ * Inset from all three edges and fully rounded, it reads as a single piece of
+ * glass resting on the library rather than as screen chrome. It is one of the
+ * few surfaces allowed a real blur: it floats over everything, and the
+ * blurred list moving behind it is what makes it read as glass at all.
  *
- * Icon-only, three items, no labels. Active state is carried by icon color
- * alone: no background pill and no underline, so the dock stays flat rather
- * than reading like stock Material.
+ * The active tab sits on a sliding pill that springs between icons, stretching
+ * as it travels, and the active icon swells slightly — so switching tabs is a
+ * movement you can follow rather than a colour that changes.
  *
  * Because it floats over the list, screens have to reserve room for it — that
  * height is exported as DOCK_CLEARANCE rather than each screen guessing.
@@ -33,19 +37,15 @@ const ICONS = {
   Library: IconLibrary,
 } as const;
 
-/** Inset from the screen edges on all three sides. */
-const DOCK_MARGIN = space[3];
-
 /**
  * Bottom padding a scrolling screen needs so its last row clears the dock.
  *
  * Deliberately generous: it covers the dock with the mini-player showing, so
  * the final row stays reachable whether or not something is playing.
  */
-export const DOCK_CLEARANCE = 140;
+export const DOCK_CLEARANCE = 164;
 
 export function TabBar({ state, navigation }: BottomTabBarProps) {
-  const color = useTheme();
   const styles = useThemedStyles(makeStyles);
   const insets = useSafeAreaInsets();
 
@@ -56,10 +56,12 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
       // scrollable rather than being swallowed by a full-width container.
       pointerEvents="box-none"
     >
-      <Frosted style={styles.dock}>
+      <Glass variant="regular" blur shadow radius={layout.dockRadius} style={styles.dock}>
         <MiniPlayer />
 
         <View style={styles.bar}>
+          <SlidingPill index={state.index} count={state.routes.length} inset={4} />
+
           {state.routes.map((route, index) => {
             const focused = state.index === index;
             const Icon = ICONS[route.name as keyof typeof ICONS];
@@ -102,39 +104,63 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
                   if (route.name === 'Search') emitSearchRequested();
                 }}
               >
-                <Icon
-                  size={22}
-                  strokeWidth={icon.strokeWidth}
-                  color={focused ? color.textInverse : color.textInverseSecondary}
-                />
+                <TabIcon Icon={Icon} focused={focused} />
               </Pressable>
             );
           })}
         </View>
-      </Frosted>
+      </Glass>
     </View>
   );
 }
 
-const makeStyles = (color: Palette) =>
+/** Swells a little and brightens when its tab is chosen, on a spring. */
+const TabIcon = memo(function TabIcon({
+  Icon,
+  focused,
+}: {
+  Icon: (typeof ICONS)[keyof typeof ICONS];
+  focused: boolean;
+}) {
+  const color = useTheme();
+  const on = useToggleProgress(focused);
+
+  const style = useAnimatedStyle(() => ({
+    transform: [{ scale: 1 + 0.12 * on.value }],
+    opacity: 0.62 + 0.38 * on.value,
+  }));
+
+  return (
+    <Animated.View style={style}>
+      <Icon
+        size={24}
+        strokeWidth={focused ? 2 : icon.strokeWidth}
+        color={focused ? color.label : color.labelSecondary}
+      />
+    </Animated.View>
+  );
+});
+
+const makeStyles = (_color: Palette) =>
   StyleSheet.create({
     root: {
       position: 'absolute',
-      left: DOCK_MARGIN,
-      right: DOCK_MARGIN,
+      left: layout.dockMargin,
+      right: layout.dockMargin,
     },
     dock: {
-      // Fill comes from Frosted, which picks blur or a tint per build.
-      borderRadius: layout.dockRadius,
-      borderWidth: hairline,
-      borderColor: color.panelLine,
       // Clips the mini-player's artwork and progress line to the radius, so
       // the dock stays one shape rather than a stack of rectangles.
       overflow: 'hidden',
+      borderRadius: layout.dockRadius,
     },
     bar: {
       flexDirection: 'row',
-      paddingVertical: space[3],
+      marginHorizontal: space[2],
+      marginBottom: space[2],
+      marginTop: space[1],
+      height: 50,
+      borderRadius: radius.full,
     },
     item: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   });

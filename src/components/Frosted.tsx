@@ -1,57 +1,19 @@
-import React, { type ReactNode } from 'react';
-import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
-import { requireOptionalNativeModule } from 'expo-modules-core';
+import { type ReactNode } from 'react';
+import { StyleSheet, type StyleProp, type ViewStyle } from 'react-native';
 
-import { withAlpha } from '../theme/tokens';
-import { useTheme, useThemeControls } from '../theme/ThemeProvider';
-
-/**
- * A translucent surface — blurred where the platform can, tinted where it can't.
- *
- * expo-blur is a native module, so it only exists in a binary built after it
- * was added. Reloading JS against an older build would otherwise render an
- * unimplemented native view where the dock should be, so this asks the module
- * registry at runtime and falls back to a heavier tint when the answer is no.
- * That keeps a JS-only reload working and lets the blur appear by itself once
- * a new build is installed, with no code change.
- *
- * The fallback is deliberately more opaque than the blurred version. Blur
- * separates a surface from what is behind it; without it, only opacity can do
- * that job, and 75% over a moving list reads as a rendering fault rather than
- * as glass.
- */
+import { Glass } from './Glass';
+import { realBlurSupported } from './BlurTarget';
+import { useTheme } from '../theme/ThemeProvider';
 
 /**
- * Resolved once at module load. The native module cannot appear or disappear
- * during a session — only a new binary changes the answer.
- */
-const HAS_NATIVE_BLUR = requireOptionalNativeModule('ExpoBlur') != null;
-
-/**
- * Required lazily, and only when the native side is actually present.
+ * The previous glass surface, now a thin wrapper over Glass.
  *
- * expo-blur resolves its native view manager at import time, so a static
- * import would reach for a component this binary may not have. Requiring it
- * behind the check means a build without blur never loads the module at all.
+ * Kept so existing call sites — the dock, the search field, the segmented
+ * control, the current lyric line — keep working unchanged until they are
+ * restyled onto Glass directly. It always asks for real blur: whether that
+ * happens is decided by where the surface sits (see BlurTarget.tsx), and a
+ * surface inside blurrable content simply fakes it.
  */
-const BlurView: React.ComponentType<{
-  intensity?: number;
-  tint?: 'light' | 'dark';
-  style?: StyleProp<ViewStyle>;
-}> | null = HAS_NATIVE_BLUR
-  ? // eslint-disable-next-line @typescript-eslint/no-require-imports
-    (require('expo-blur').BlurView as never)
-  : null;
-
-/**
- * How much extra tint a surface takes when it can't blur.
- *
- * Blur is what separates a floating surface from what passes behind it.
- * Without it only opacity can do that job, so an unblurred surface is pushed
- * most of the way to solid rather than left at the user's setting, where it
- * reads as a rendering fault rather than as glass.
- */
-const OPAQUE_FALLBACK = 0.94;
 
 export interface FrostedProps {
   children?: ReactNode;
@@ -61,10 +23,9 @@ export interface FrostedProps {
   /**
    * Overrides the tint colour and its strength.
    *
-   * Surfaces take the palette and the user's opacity setting, which is right
-   * for the dock and the search field — they are the app's own chrome. A
-   * highlight is not: it has to read as a highlight at a strength of its own,
-   * independent of how transparent the chrome is set to be.
+   * Surfaces take the palette and the user's Tint setting, which is right for
+   * the app's own chrome. A highlight is not: it has to read as a highlight
+   * at a strength of its own, independent of how transparent the chrome is.
    */
   tintColor?: string;
   tintOpacity?: number;
@@ -78,46 +39,28 @@ export function Frosted({
   tintOpacity,
 }: FrostedProps) {
   const color = useTheme();
-  const { resolved, blurIntensity, surfaceOpacity } = useThemeControls();
 
-  const base = tintColor ?? (surface === 'panel' ? color.panel : color.paper);
-  const alpha = tintOpacity ?? surfaceOpacity;
-  const blurring = BlurView != null && blurIntensity > 0;
-
-  if (!blurring) {
-    return (
-      <View
-        style={[
-          style,
-          {
-            // An overridden tint is already chosen for its own job, so it is
-            // not pushed toward opaque the way a chrome surface is.
-            backgroundColor: withAlpha(
-              base,
-              tintOpacity != null ? alpha : Math.max(alpha, OPAQUE_FALLBACK),
-            ),
-          },
-        ]}
-      >
-        {children}
-      </View>
-    );
-  }
+  // Frosted never rounded anything its caller didn't, so the radius comes
+  // from the style rather than Glass's default.
+  const flat = StyleSheet.flatten(style);
+  const cornerRadius = typeof flat?.borderRadius === 'number' ? flat.borderRadius : 0;
 
   return (
-    <View style={style}>
-      {/* The blur sits behind the tint rather than carrying it, so the tint
-          colour stays a palette token instead of expo-blur's fixed presets. */}
-      <BlurView
-        intensity={blurIntensity}
-        tint={resolved === 'dark' ? 'dark' : 'light'}
-        style={StyleSheet.absoluteFill}
-      />
-      <View style={[StyleSheet.absoluteFill, { backgroundColor: withAlpha(base, alpha) }]} />
+    <Glass
+      variant="regular"
+      blur
+      radius={cornerRadius}
+      style={style}
+      tintColor={tintColor ?? (surface === 'paper' ? color.paper : undefined)}
+      tintOpacity={tintOpacity}
+    >
       {children}
-    </View>
+    </Glass>
   );
 }
 
-/** Whether this build can actually blur. Surfaced for the settings screen. */
-export const blurAvailable = HAS_NATIVE_BLUR;
+/**
+ * Whether this build and device can actually blur. Surfaced for the settings
+ * screen. False on Android below 12, where glass is always tinted.
+ */
+export const blurAvailable = realBlurSupported;

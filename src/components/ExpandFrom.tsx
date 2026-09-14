@@ -1,15 +1,14 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { StyleSheet, useWindowDimensions } from 'react-native';
 import Animated, {
-  Easing,
   interpolate,
   useAnimatedStyle,
   useSharedValue,
-  withTiming,
+  withSpring,
 } from 'react-native-reanimated';
 
 import { useTransitionStore } from '../store/useTransitionStore';
-import { motion } from '../theme/tokens';
+import { springs } from '../theme/motion';
 
 /**
  * Grows a screen's content out of whatever was pressed to open it.
@@ -46,11 +45,10 @@ export function ExpandFrom({ children }: { children: ReactNode }) {
 
   const progress = useSharedValue(0);
 
+  // A clamped spring: it arrives with the momentum of a spring but can never
+  // overshoot, which at screen size would push content past its own edges.
   useEffect(() => {
-    progress.value = withTiming(1, {
-      duration: motion.durationScreen,
-      easing: Easing.bezier(...motion.easing),
-    });
+    progress.value = withSpring(1, springs.screen);
   }, [progress]);
 
   const offset = origin

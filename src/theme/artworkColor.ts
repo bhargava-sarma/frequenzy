@@ -1,31 +1,41 @@
 import { decode } from 'jpeg-js';
 
+import type { ArtworkPalette } from './tokens';
+
 /**
- * Pulls a usable accent colour out of album artwork.
+ * Pulls usable colour out of album artwork: one accent, plus a four-colour
+ * palette the background mesh is painted from.
  *
  * Done in JavaScript rather than with a native colour-extraction module on
  * purpose: a native module means a new build every time, and this runs on a
  * 64px thumbnail that Navidrome already returns as JPEG at around 1.5 KB.
  * Decoding that costs a few milliseconds and needs no rebuild.
  *
- * The colour is then conditioned rather than used raw. A dominant colour taken
- * straight off a cover is frequently near-black, near-white, or so desaturated
- * it reads as a mistake, and it has to sit legibly on whichever surface the
- * user has chosen — so saturation and lightness are pinned into a band that
- * works on both palettes while the hue, which is the part that actually says
- * "this album", is left alone.
+ * Colours are conditioned rather than used raw. A colour taken straight off a
+ * cover is frequently near-black, near-white, or so desaturated it reads as a
+ * mistake, and it has to sit well on whichever theme the user has chosen — so
+ * saturation and lightness are pinned into bands per role while the hue,
+ * which is the part that actually says "this album", is left alone.
+ *
+ * The cover is decoded and analysed once per cover art id. Conditioning for a
+ * theme is cheap and cached separately, so switching theme never refetches.
  */
 
+export type { ArtworkPalette };
+
 export interface ArtworkAccent {
-  /** Conditioned accent, safe as a fill on either surface. */
+  /** Conditioned accent, legible as text on the theme's ground and as a fill. */
   accent: string;
   /** Text/icon colour to place on top of `accent`. */
   accentInk: string;
 }
 
-/** Cheap in-memory cache. Cover art ids are stable, so this never invalidates. */
-const cache = new Map<string, ArtworkAccent>();
-const inFlight = new Map<string, Promise<ArtworkAccent | null>>();
+export interface ArtworkColors {
+  /** Null when the cover has no usable hue — the fixed accent stays. */
+  accent: ArtworkAccent | null;
+  /** Always present: a monochrome cover yields a neutral palette. */
+  palette: ArtworkPalette;
+}
 
 // ---------------------------------------------------------------------------
 // Colour space
@@ -112,149 +122,346 @@ function contrast(a: string, b: string): number {
  * Picks whichever ink actually contrasts better against this fill.
  *
  * A fixed luminance cut looks right until a fill lands near it, where both
- * inks are poor and the rule still confidently returns one — measured against
- * a sample of real covers the worst case came out at 3.0:1. Comparing the two
+ * inks are poor and the rule still confidently returns one. Comparing the two
  * candidates can't do worse than the better of them by definition.
  */
 function pickInk(fill: string): string {
   return contrast(INK_DARK, fill) >= contrast(INK_LIGHT, fill) ? INK_DARK : INK_LIGHT;
 }
 
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
 // ---------------------------------------------------------------------------
-// Extraction
+// Analysis (theme-independent, once per cover)
 // ---------------------------------------------------------------------------
 
 /** Hue buckets, so near-identical shades vote together rather than splitting. */
 const HUE_BUCKETS = 24;
 
-/**
- * Picks the most present vivid hue.
- *
- * Weighted by saturation rather than by raw pixel count: album art is mostly
- * background, and counting alone reliably returns the black or white behind
- * the subject. Pixels too dark, too pale or too grey to carry a hue are
- * skipped entirely rather than dragged toward one.
- */
-function dominantHue(pixels: Uint8Array, width: number, height: number): Hsl | null {
-  const weights = new Float64Array(HUE_BUCKETS);
-  const satSums = new Float64Array(HUE_BUCKETS);
-  const lightSums = new Float64Array(HUE_BUCKETS);
-  const counts = new Float64Array(HUE_BUCKETS);
+/** Buckets two hues must be apart to count as different colours (≈45°). */
+const DISTINCT_BUCKETS = 3;
 
-  const total = width * height;
-  for (let i = 0; i < total; i++) {
-    const offset = i * 4;
-    const hsl = rgbToHsl(pixels[offset], pixels[offset + 1], pixels[offset + 2]);
+interface Analysis {
+  /** Most present vivid hue, weighted by saturation. */
+  vibrant: Hsl | null;
+  /** Hue covering the most pixels. */
+  dominant: Hsl | null;
+  /** Most present hue distinct from both of the above. */
+  secondary: Hsl | null;
+  /** Hue of the cover's dark regions. */
+  dark: Hsl | null;
+  /** Mean lightness, used to shape a neutral palette for monochrome covers. */
+  meanLightness: number;
+}
 
-    if (hsl.s < 0.18) continue;
-    if (hsl.l < 0.12 || hsl.l > 0.92) continue;
+function bucketOf(h: number): number {
+  return Math.min(HUE_BUCKETS - 1, Math.floor(h * HUE_BUCKETS));
+}
 
-    const bucket = Math.min(HUE_BUCKETS - 1, Math.floor(hsl.h * HUE_BUCKETS));
-    const weight = hsl.s * hsl.s;
+function bucketDistance(a: number, b: number): number {
+  const d = Math.abs(a - b);
+  return Math.min(d, HUE_BUCKETS - d);
+}
 
-    weights[bucket] += weight;
-    satSums[bucket] += hsl.s;
-    lightSums[bucket] += hsl.l;
-    counts[bucket] += 1;
-  }
-
-  let best = -1;
-  let bestWeight = 0;
-  for (let i = 0; i < HUE_BUCKETS; i++) {
-    if (weights[i] > bestWeight) {
-      bestWeight = weights[i];
-      best = i;
-    }
-  }
-
-  if (best < 0 || counts[best] === 0) return null;
-
+function averaged(bucket: number, sats: Float64Array, lights: Float64Array, counts: Float64Array): Hsl {
   return {
-    h: (best + 0.5) / HUE_BUCKETS,
-    s: satSums[best] / counts[best],
-    l: lightSums[best] / counts[best],
+    h: (bucket + 0.5) / HUE_BUCKETS,
+    s: sats[bucket] / counts[bucket],
+    l: lights[bucket] / counts[bucket],
   };
 }
 
 /**
- * Forces the extracted colour into a band that reads on both surfaces.
+ * One pass over the pixels, several votes.
  *
- * Only the hue survives untouched. A pastel cover would otherwise give an
- * accent invisible on paper, and a near-black one an accent invisible on
- * panel; clamping both ends means every album gets a colour of its own that
- * still behaves like an accent.
- *
- * The band is deliberately washed out — high lightness, modest saturation.
- * Fully saturated album colours shout: a scarlet cover turns every control on
- * the screen scarlet, which reads as an alert rather than as a highlight. Held
- * near the top of the lightness range the hue is still obvious while the
- * colour behaves like tinted white.
+ * The vivid vote is weighted by saturation squared, as the accent always was:
+ * album art is mostly background, and counting alone reliably returns the
+ * black or white behind the subject. The dominant vote counts pixels, because
+ * the mesh should also carry the colour the cover is mostly made of. Pixels
+ * too dark, too pale or too grey to carry a hue are skipped rather than
+ * dragged toward one.
  */
-function condition(hsl: Hsl, mode: 'light' | 'dark'): ArtworkAccent {
-  const s =
-    mode === 'dark'
-      ? Math.min(0.45, Math.max(0.22, hsl.s * 0.6))
-      : Math.min(0.5, Math.max(0.28, hsl.s * 0.7));
+function analyse(pixels: Uint8Array, width: number, height: number): Analysis {
+  const vivid = new Float64Array(HUE_BUCKETS);
+  const population = new Float64Array(HUE_BUCKETS);
+  const sats = new Float64Array(HUE_BUCKETS);
+  const lights = new Float64Array(HUE_BUCKETS);
+  const counts = new Float64Array(HUE_BUCKETS);
 
-  /**
-   * Pale on dark so it reads as light tinted by the cover; deeper on the light
-   * palette, where a pale fill would vanish into paper.
-   *
-   * Both bands deliberately avoid the middle of the lightness range. A fill
-   * sitting there contrasts poorly with black and white alike, so there is no
-   * ink that reads well on it — the fix is to not produce one.
-   */
-  const l =
-    mode === 'dark'
-      ? Math.min(0.86, Math.max(0.74, hsl.l + 0.25))
-      : Math.min(0.46, Math.max(0.34, hsl.l - 0.08));
+  const darkWeights = new Float64Array(HUE_BUCKETS);
+  const darkSats = new Float64Array(HUE_BUCKETS);
+  const darkLights = new Float64Array(HUE_BUCKETS);
+  const darkCounts = new Float64Array(HUE_BUCKETS);
 
-  const accent = hslToHex({ h: hsl.h, s, l });
-  return { accent, accentInk: pickInk(accent) };
+  let lightnessSum = 0;
+  const total = width * height;
+
+  for (let i = 0; i < total; i++) {
+    const offset = i * 4;
+    const hsl = rgbToHsl(pixels[offset], pixels[offset + 1], pixels[offset + 2]);
+    lightnessSum += hsl.l;
+
+    if (hsl.s < 0.12) continue;
+    const bucket = bucketOf(hsl.h);
+
+    if (hsl.l >= 0.06 && hsl.l < 0.38 && hsl.s >= 0.15) {
+      darkWeights[bucket] += hsl.s;
+      darkSats[bucket] += hsl.s;
+      darkLights[bucket] += hsl.l;
+      darkCounts[bucket] += 1;
+    }
+
+    if (hsl.l < 0.1 || hsl.l > 0.94) continue;
+
+    population[bucket] += 1;
+    if (hsl.s >= 0.18 && hsl.l >= 0.12 && hsl.l <= 0.92) vivid[bucket] += hsl.s * hsl.s;
+    sats[bucket] += hsl.s;
+    lights[bucket] += hsl.l;
+    counts[bucket] += 1;
+  }
+
+  const argmax = (weights: Float64Array, skip?: (bucket: number) => boolean) => {
+    let best = -1;
+    let bestWeight = 0;
+    for (let b = 0; b < HUE_BUCKETS; b++) {
+      if (skip?.(b)) continue;
+      if (weights[b] > bestWeight) {
+        bestWeight = weights[b];
+        best = b;
+      }
+    }
+    return best;
+  };
+
+  // A bucket with only a handful of pixels is a highlight or noise, not a
+  // colour the cover is made of.
+  const minPopulation = total * 0.01;
+
+  const vibrantBucket = argmax(vivid);
+  const dominantBucket = argmax(population);
+  const secondaryBucket = argmax(
+    population,
+    (b) =>
+      population[b] < minPopulation ||
+      (vibrantBucket >= 0 && bucketDistance(b, vibrantBucket) < DISTINCT_BUCKETS) ||
+      (dominantBucket >= 0 && bucketDistance(b, dominantBucket) < DISTINCT_BUCKETS),
+  );
+  const darkBucket = argmax(darkWeights);
+
+  return {
+    vibrant: vibrantBucket >= 0 ? averaged(vibrantBucket, sats, lights, counts) : null,
+    dominant:
+      dominantBucket >= 0 && population[dominantBucket] >= minPopulation
+        ? averaged(dominantBucket, sats, lights, counts)
+        : null,
+    secondary: secondaryBucket >= 0 ? averaged(secondaryBucket, sats, lights, counts) : null,
+    dark: darkBucket >= 0 ? averaged(darkBucket, darkSats, darkLights, darkCounts) : null,
+    meanLightness: total > 0 ? lightnessSum / total : 0.5,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Conditioning (per theme)
+// ---------------------------------------------------------------------------
+
+/**
+ * Forces the vivid hue into an accent that is still vivid but legible.
+ *
+ * The accent is used as text (the playing row's title) on the theme's ground
+ * as well as a fill, so lightness is walked until it clears a contrast floor
+ * against that ground. Hue survives untouched; a yellow cover on the light
+ * theme ends up as a deep ochre rather than an invisible yellow.
+ */
+function conditionAccent(hsl: Hsl, mode: 'light' | 'dark'): ArtworkAccent {
+  const s = clamp(hsl.s * 1.1, 0.55, 0.9);
+
+  if (mode === 'dark') {
+    let l = clamp(hsl.l, 0.56, 0.68);
+    let hex = hslToHex({ h: hsl.h, s, l });
+    while (contrast(hex, '#000000') < 5.5 && l < 0.82) {
+      l += 0.02;
+      hex = hslToHex({ h: hsl.h, s, l });
+    }
+    return { accent: hex, accentInk: pickInk(hex) };
+  }
+
+  let l = clamp(hsl.l, 0.36, 0.5);
+  let hex = hslToHex({ h: hsl.h, s, l });
+  while (contrast(hex, '#FFFFFF') < 4 && l > 0.22) {
+    l -= 0.02;
+    hex = hslToHex({ h: hsl.h, s, l });
+  }
+  return { accent: hex, accentInk: pickInk(hex) };
+}
+
+interface Band {
+  s: [number, number];
+  l: [number, number];
 }
 
 /**
- * Fetches the thumbnail and extracts an accent, or null if anything fails.
+ * Saturation and lightness bands per mesh role.
  *
- * Failure is always non-fatal: the caller falls back to the fixed accent, and
- * a cover that won't decode is not worth an error anywhere in the UI.
+ * On black the mesh is rich and mid-dark, so white text over it stays
+ * readable and the blobs glow rather than glare. On white it is pastel, so
+ * black text stays readable and the ground still reads as white.
  */
-export async function extractAccent(
-  url: string,
-  cacheKey: string,
-  mode: 'light' | 'dark',
-): Promise<ArtworkAccent | null> {
-  const key = `${cacheKey}:${mode}`;
+const MESH_BANDS: Record<'light' | 'dark', Record<keyof ArtworkPalette, Band>> = {
+  dark: {
+    vibrant: { s: [0.55, 0.9], l: [0.45, 0.6] },
+    dominant: { s: [0.4, 0.8], l: [0.34, 0.5] },
+    muted: { s: [0.25, 0.6], l: [0.3, 0.46] },
+    deep: { s: [0.35, 0.7], l: [0.14, 0.24] },
+  },
+  light: {
+    vibrant: { s: [0.55, 0.9], l: [0.62, 0.72] },
+    dominant: { s: [0.45, 0.8], l: [0.7, 0.8] },
+    muted: { s: [0.3, 0.65], l: [0.78, 0.87] },
+    deep: { s: [0.4, 0.75], l: [0.5, 0.6] },
+  },
+};
 
-  const cached = cache.get(key);
-  if (cached) return cached;
+function inBand(hsl: Hsl, band: Band): string {
+  return hslToHex({
+    h: hsl.h,
+    s: hsl.s === 0 ? 0 : clamp(hsl.s, band.s[0], band.s[1]),
+    l: clamp(hsl.l, band.l[0], band.l[1]),
+  });
+}
 
-  const existing = inFlight.get(key);
+function rotate(hsl: Hsl, turns: number): Hsl {
+  return { ...hsl, h: (hsl.h + turns + 1) % 1 };
+}
+
+/**
+ * Builds the four mesh colours, filling gaps from what the cover did have.
+ *
+ * A cover with one hue still gets a mesh that moves: the missing roles are
+ * neighbouring hues of the one it has, which reads as a single colour with
+ * depth rather than as unrelated colours invented for it. A cover with no hue
+ * at all gets greys — a black-and-white cover should not glow pink.
+ */
+function conditionPalette(analysis: Analysis, mode: 'light' | 'dark'): ArtworkPalette {
+  const bands = MESH_BANDS[mode];
+  const anchor = analysis.vibrant ?? analysis.dominant ?? analysis.secondary ?? analysis.dark;
+
+  if (!anchor) {
+    const grey = (l: number): Hsl => ({ h: 0, s: 0, l });
+    const base = analysis.meanLightness;
+    return {
+      vibrant: inBand(grey(base), bands.vibrant),
+      dominant: inBand(grey(base - 0.05), bands.dominant),
+      muted: inBand(grey(base + 0.05), bands.muted),
+      deep: inBand(grey(0), bands.deep),
+    };
+  }
+
+  const vibrant = analysis.vibrant ?? anchor;
+  const dominant = analysis.dominant ?? rotate(anchor, -1 / 24);
+  const muted = analysis.secondary ?? rotate(dominant, 1 / 12);
+  const deep = analysis.dark ?? dominant;
+
+  return {
+    vibrant: inBand(vibrant, bands.vibrant),
+    dominant: inBand(dominant, bands.dominant),
+    muted: inBand(muted, bands.muted),
+    deep: inBand(deep, bands.deep),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Caches and entry points
+// ---------------------------------------------------------------------------
+
+/**
+ * Bounded so a long session through a big library can't grow these without
+ * limit. Map iterates in insertion order, so the first key is the oldest.
+ */
+const MAX_CACHED_COVERS = 400;
+
+function remember<V>(map: Map<string, V>, key: string, value: V) {
+  map.set(key, value);
+  while (map.size > MAX_CACHED_COVERS) {
+    const oldest = map.keys().next();
+    if (oldest.done) break;
+    map.delete(oldest.value);
+  }
+}
+
+/** Theme-independent analysis per cover art id. Null means the cover failed. */
+const analysisCache = new Map<string, Analysis | null>();
+const inFlight = new Map<string, Promise<Analysis | null>>();
+/** Conditioned results per `${cacheKey}:${mode}`. */
+const colorsCache = new Map<string, ArtworkColors>();
+
+async function analysisFor(url: string, cacheKey: string): Promise<Analysis | null> {
+  if (analysisCache.has(cacheKey)) return analysisCache.get(cacheKey) ?? null;
+
+  const existing = inFlight.get(cacheKey);
   if (existing) return existing;
 
   const work = (async () => {
     try {
       const response = await fetch(url);
+      // Not cached: a network failure is worth retrying on the next play.
       if (!response.ok) return null;
 
       const buffer = await response.arrayBuffer();
       // useTArray keeps the output as a Uint8Array rather than a Buffer shim,
       // which React Native does not provide.
       const image = decode(new Uint8Array(buffer), { useTArray: true });
-
-      const hsl = dominantHue(image.data, image.width, image.height);
-      if (!hsl) return null;
-
-      const accent = condition(hsl, mode);
-      cache.set(key, accent);
-      return accent;
+      const result = analyse(image.data, image.width, image.height);
+      remember(analysisCache, cacheKey, result);
+      return result;
     } catch {
       return null;
     } finally {
-      inFlight.delete(key);
+      inFlight.delete(cacheKey);
     }
   })();
 
-  inFlight.set(key, work);
+  inFlight.set(cacheKey, work);
   return work;
+}
+
+/**
+ * Fetches the thumbnail and returns the accent and mesh palette for a theme,
+ * or null if the cover could not be fetched or decoded.
+ *
+ * Failure is always non-fatal: the caller falls back to the fixed accent and
+ * palette, and a cover that won't decode is not worth an error anywhere.
+ */
+export async function extractArtworkColors(
+  url: string,
+  cacheKey: string,
+  mode: 'light' | 'dark',
+): Promise<ArtworkColors | null> {
+  const key = `${cacheKey}:${mode}`;
+  const cached = colorsCache.get(key);
+  if (cached) return cached;
+
+  const analysis = await analysisFor(url, cacheKey);
+  if (!analysis) return null;
+
+  const colors: ArtworkColors = {
+    accent: analysis.vibrant ? conditionAccent(analysis.vibrant, mode) : null,
+    palette: conditionPalette(analysis, mode),
+  };
+  remember(colorsCache, key, colors);
+  return colors;
+}
+
+/**
+ * The accent alone — the original entry point, kept for existing callers.
+ *
+ * Null when the cover has no vivid hue, as before; the palette for the same
+ * cover is cached alongside, so asking for it afterwards costs nothing.
+ */
+export async function extractAccent(
+  url: string,
+  cacheKey: string,
+  mode: 'light' | 'dark',
+): Promise<ArtworkAccent | null> {
+  const colors = await extractArtworkColors(url, cacheKey, mode);
+  return colors?.accent ?? null;
 }
