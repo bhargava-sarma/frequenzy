@@ -1,23 +1,21 @@
-import { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { useCallback, useRef, useState } from 'react';
+import { StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { runOnJS, useSharedValue } from 'react-native-reanimated';
+import { runOnJS } from 'react-native-reanimated';
 
-import { hairline, layout, radius, space, type } from '../theme/tokens';
+import { space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
+import { haptics } from '../utils/haptics';
 
 /**
- * A continuous control, for settings that are a degree rather than a choice.
+ * A fader: a recessed slot with a scale printed under it and a gripped cap
+ * riding in it.
  *
- * Written rather than pulled in: the community slider is a native module, so
- * adding it would mean another build, and this needs a track, a fill and a
- * knob — all of which this app already draws on the progress bar.
- *
- * The fill is driven by React state rather than an animated style. A settings
- * slider is dragged for a second at a time and its value has to reach the
- * theme provider anyway, so there is nothing to gain from keeping it off the
- * JS thread and a worklet's worth of complexity to lose.
+ * Values snap to `step` and the phone ticks on each detent, so a setting can
+ * be dialled by feel. The fill is plain React state: a settings fader is
+ * dragged for a second at a time and its value has to reach the store
+ * anyway, so there's nothing to gain from keeping it off the JS thread.
  */
 export interface SliderProps {
   label: string;
@@ -27,12 +25,13 @@ export interface SliderProps {
   readout?: string;
   min?: number;
   max?: number;
-  /** Values snap to this. Keeps the readout from jittering. */
   step?: number;
   disabled?: boolean;
 }
 
-const KNOB_SIZE = 18;
+const CAP_WIDTH = 14;
+const CAP_HEIGHT = 24;
+const SCALE_MARKS = 11;
 
 export function Slider({
   label,
@@ -46,28 +45,39 @@ export function Slider({
 }: SliderProps) {
   const color = useTheme();
   const styles = useThemedStyles(makeStyles);
+  const [width, setWidth] = useState(0);
+  const last = useRef(value);
 
-  const [trackWidth, setTrackWidth] = useState(0);
-  const width = useSharedValue(0);
-  width.value = trackWidth;
-
-  function commit(x: number) {
-    if (trackWidth <= 0) return;
-    const ratio = Math.min(1, Math.max(0, x / trackWidth));
-    const raw = min + ratio * (max - min);
-    const snapped = Math.round(raw / step) * step;
-    // Rounded to kill floating-point dust like 0.30000000000000004.
-    onChange(Number(Math.min(max, Math.max(min, snapped)).toFixed(4)));
-  }
+  const commit = useCallback(
+    (x: number) => {
+      if (width <= 0) return;
+      const ratio = Math.min(1, Math.max(0, x / width));
+      const raw = min + ratio * (max - min);
+      const snapped = Math.round(raw / step) * step;
+      // Rounded to kill floating-point dust like 0.30000000000000004.
+      const next = Number(Math.min(max, Math.max(min, snapped)).toFixed(4));
+      if (next !== last.current) {
+        last.current = next;
+        haptics.tick();
+        onChange(next);
+      }
+    },
+    [width, min, max, step, onChange],
+  );
 
   const pan = Gesture.Pan()
-    .enabled(!disabled && trackWidth > 0)
-    // Responds on touch so a tap sets the value rather than needing a drag.
+    .enabled(!disabled && width > 0)
     .minDistance(0)
+    .hitSlop({ top: 10, bottom: 10 })
     .onBegin((event) => runOnJS(commit)(event.x))
     .onUpdate((event) => runOnJS(commit)(event.x));
 
   const ratio = max > min ? Math.min(1, Math.max(0, (value - min) / (max - min))) : 0;
+  last.current = value;
+
+  const onLayout = useCallback((event: LayoutChangeEvent) => {
+    setWidth(Math.round(event.nativeEvent.layout.width));
+  }, []);
 
   return (
     <View style={[styles.root, disabled && styles.disabled]}>
@@ -77,30 +87,31 @@ export function Slider({
       </View>
 
       <GestureDetector gesture={pan}>
-        {/* Padding is the hit area; the track itself stays thin. */}
-        <View style={styles.hitArea}>
-          <View
-            style={styles.track}
-            onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)}
-          >
-            <View style={[styles.fill, { width: `${ratio * 100}%` }]} />
-            {trackWidth > 0 && (
-              <View
-                style={[
-                  styles.knob,
-                  {
-                    left: Math.min(
-                      trackWidth - KNOB_SIZE,
-                      Math.max(0, ratio * trackWidth - KNOB_SIZE / 2),
-                    ),
-                    backgroundColor: color.accent,
-                  },
-                ]}
-              />
-            )}
+        <View style={styles.hitArea} onLayout={onLayout}>
+          <View style={styles.slot}>
+            <View style={[styles.fill, { width: `${ratio * 100}%`, backgroundColor: color.accent }]} />
           </View>
+          {width > 0 && (
+            <View
+              style={[
+                styles.cap,
+                { left: Math.min(width - CAP_WIDTH, Math.max(0, ratio * width - CAP_WIDTH / 2)) },
+              ]}
+            >
+              <View style={styles.capLine} />
+            </View>
+          )}
         </View>
       </GestureDetector>
+
+      <View style={styles.scale}>
+        {Array.from({ length: SCALE_MARKS }, (_, i) => (
+          <View
+            key={i}
+            style={[styles.mark, (i === 0 || i === SCALE_MARKS - 1 || i === (SCALE_MARKS - 1) / 2) && styles.markMajor]}
+          />
+        ))}
+      </View>
     </View>
   );
 }
@@ -109,30 +120,43 @@ const makeStyles = (color: Palette) =>
   StyleSheet.create({
     root: { paddingVertical: space[2] },
     disabled: { opacity: 0.4 },
-
     header: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      marginBottom: space[2],
+      marginBottom: space[1],
     },
-    label: { ...type.label, color: color.textSecondary },
-    readout: { ...type.numeral, color: color.textSecondary },
-
-    hitArea: { paddingVertical: space[3], justifyContent: 'center' },
-    track: {
-      height: layout.progressHeight,
-      borderRadius: radius.sm,
-      backgroundColor: color.paperLine,
-      justifyContent: 'center',
+    label: { ...type.callout, color: color.label },
+    readout: { ...type.labelBold, color: color.accent },
+    hitArea: { height: CAP_HEIGHT + 8, justifyContent: 'center' },
+    slot: {
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: color.surfaceSunken,
+      borderWidth: 1,
+      borderColor: color.separator,
+      overflow: 'hidden',
     },
-    fill: { height: '100%', backgroundColor: color.accent, borderRadius: radius.sm },
-    knob: {
+    fill: { height: '100%' },
+    cap: {
       position: 'absolute',
-      width: KNOB_SIZE,
-      height: KNOB_SIZE,
-      borderRadius: KNOB_SIZE / 2,
-      borderWidth: hairline,
-      borderColor: color.paperLine,
+      width: CAP_WIDTH,
+      height: CAP_HEIGHT,
+      borderRadius: 4,
+      backgroundColor: color.surfaceRaised,
+      borderWidth: 1,
+      borderColor: color.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+      boxShadow: [{ offsetX: 0, offsetY: 1, blurRadius: 3, color: '#00000033' }],
     },
+    capLine: { width: 6, height: 1.5, borderRadius: 1, backgroundColor: color.accent },
+    scale: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      paddingHorizontal: CAP_WIDTH / 2 - 0.5,
+      marginTop: 2,
+    },
+    mark: { width: 1, height: 4, backgroundColor: color.border },
+    markMajor: { height: 7, backgroundColor: color.labelTertiary },
   });

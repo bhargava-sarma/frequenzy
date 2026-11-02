@@ -3,14 +3,14 @@ import type { NavigatorScreenParams } from '@react-navigation/native';
 /**
  * Route parameter types.
  *
- * Artist and Album appear in more than one stack — you can reach an album by
- * browsing the library or by searching — so their params are declared once
- * and reused rather than duplicated per navigator.
+ * Every tab carries the same detail screens, so following a link from a
+ * track, an album or a chart stays inside the tab you were in — Search
+ * results open in Search, Home shelves in Home — and back returns there.
  */
 
 export interface AlbumRouteParams {
   albumId: string;
-  /** Shown as the header title before the album loads, to avoid a blank bar. */
+  /** Shown before the album loads, to avoid a blank bar. */
   albumName?: string;
 }
 
@@ -20,12 +20,9 @@ export interface ArtistRouteParams {
 }
 
 /**
- * Reserved id for the favourites view.
- *
- * Navidrome exposes starred tracks through getStarred2 rather than as a
- * playlist, so they never appear in getPlaylists. Rather than build a second
- * near-identical screen, the playlist screen accepts this sentinel and reads
- * from the other endpoint. Real playlist ids are UUIDs, so it cannot collide.
+ * Reserved id for the favourites view. Navidrome exposes starred tracks
+ * through getStarred2 rather than as a playlist; real playlist ids are
+ * UUIDs, so this cannot collide.
  */
 export const LIKED_PLAYLIST_ID = '__liked__';
 
@@ -34,34 +31,29 @@ export interface PlaylistRouteParams {
   playlistName?: string;
 }
 
-export type LibraryStackParamList = {
-  Artists: undefined;
-  Artist: ArtistRouteParams;
+export interface GenreRouteParams {
+  genre: string;
+  /** The tile colour it was opened from, so the page matches what was tapped. */
+  hue?: string;
+}
+
+/** The screens every tab can push. */
+export type DetailRoutes = {
   Album: AlbumRouteParams;
+  Artist: ArtistRouteParams;
   Playlist: PlaylistRouteParams;
+  Genre: GenreRouteParams;
+  History: undefined;
+  Stats: undefined;
 };
 
-export type SearchStackParamList = {
-  SearchHome: undefined;
-  Artist: ArtistRouteParams;
-  Album: AlbumRouteParams;
-};
+export type HomeStackParamList = { HomeFeed: undefined } & DetailRoutes;
+export type SearchStackParamList = { SearchHome: undefined } & DetailRoutes;
+export type LibraryStackParamList = { LibraryHome: undefined } & DetailRoutes;
 
-export type HomeStackParamList = {
-  HomeFeed: undefined;
-  Artist: ArtistRouteParams;
-  Album: AlbumRouteParams;
-};
+/** Any tab stack — detail screens type their navigation against this. */
+export type AnyStackParamList = HomeStackParamList & SearchStackParamList & LibraryStackParamList;
 
-/**
- * Three tabs, not four.
- *
- * The queue used to sit here, but a queue is a property of what's playing
- * rather than a place in the library — you go to it from the player, the way
- * every other music app arranges it. Giving it a permanent slot next to Home
- * and Library also spent a quarter of the nav on a screen that is empty until
- * something is playing.
- */
 export type TabParamList = {
   Home: NavigatorScreenParams<HomeStackParamList>;
   Search: NavigatorScreenParams<SearchStackParamList>;
@@ -70,9 +62,8 @@ export type TabParamList = {
 
 export type RootStackParamList = {
   Tabs: NavigatorScreenParams<TabParamList>;
-  /** Reached from Home. */
   Settings: undefined;
-  /** Development-only surfaces, not part of the shipped app. */
+  /** Development-only surfaces. */
   Diagnostics: undefined;
   Showcase: undefined;
 };

@@ -1,398 +1,621 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
-  Pressable,
   RefreshControl,
   StyleSheet,
-  TextInput,
-  useWindowDimensions,
   View,
+  useWindowDimensions,
+  type ListRenderItem,
 } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
+import { AlbumActionsSheet } from '../components/AlbumActionsSheet';
 import { AlbumTile } from '../components/AlbumTile';
-import { AmbientBackground } from '../components/AmbientBackground';
-import { Sheet, SheetBody } from '../components/Sheet';
+import { AlphabetRail, indexLetter } from '../components/AlphabetRail';
+import { Chip, ChipRow } from '../components/Chip';
+import { IconButton } from '../components/IconButton';
+import {
+  IconAlbum,
+  IconArrowsShuffle,
+  IconCategory,
+  IconLayoutGrid,
+  IconLayoutList,
+  IconPencil,
+  IconPlayerPlayFilled,
+  IconPlaylist,
+  IconPlus,
+  IconTrash,
+  IconUser,
+} from '../components/icons';
 import { ListRow } from '../components/ListRow';
+import { PromptSheet } from '../components/PromptSheet';
+import { TabScaffold } from '../components/Scaffold';
 import { ScreenHeader } from '../components/ScreenHeader';
-import { Segmented } from '../components/Segmented';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenState';
+import { SearchField } from '../components/SearchField';
+import { Sheet, SheetRow } from '../components/Sheet';
 import { DOCK_CLEARANCE } from '../components/TabBar';
 import { useArtwork } from '../hooks/useArtwork';
-import { HEAVY_LIST_PROPS, trackItemLayout } from '../hooks/usePagedList';
 import { useLibraryData } from '../hooks/useLibraryData';
-import type { LibraryStackParamList } from '../navigation/types';
+import { trackItemLayout } from '../hooks/usePagedList';
+import { LIKED_PLAYLIST_ID, type LibraryStackParamList } from '../navigation/types';
+import { EmptyMixError, playLiked } from '../player/mixes';
+import { usePlayerStore, shuffleList } from '../store/usePlayerStore';
 import { usePlaylistStore } from '../store/usePlaylistStore';
-import { Button, ButtonRow } from '../components/Button';
-import { IconPlus } from '../components/icons';
-import { hairline, icon, layout, motion, radius, space, type } from '../theme/tokens';
-import type { Palette } from '../theme/tokens';
-import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
-import { formatDuration, pluralize } from '../utils/time';
+import { useServerStore } from '../store/useServerStore';
+import {
+  useSettingsStore,
+  type AlbumSort,
+  type LibraryMode,
+} from '../store/useSettingsStore';
+import { errorMessage, toast } from '../store/useToastStore';
+import { layout, space } from '../theme/tokens';
+import type { AlbumSummary, ArtistSummary, Genre, Playlist } from '../types/subsonic';
+import { haptics } from '../utils/haptics';
+import { formatLength, pluralize } from '../utils/time';
 
 /**
- * The complete library — by artist, by album, or by playlist.
+ * The whole collection — playlists, albums, artists, genres.
  *
- * Albums are a grid rather than a list: this is where you come to find one you
- * already have in mind, and scanning a few hundred covers is far faster by
- * artwork than by reading a few hundred lines of text.
+ * Albums are a grid by default: this is where you come to find one you
+ * already have in mind, and scanning covers is far faster than reading
+ * names. Every list filters as you type, albums sort any way the server's
+ * fields allow, and artists carry an A–Z strip for the long scroll.
  *
- * Rows are revealed a page at a time. The data still arrives in one request —
- * Subsonic has no cursor for the artist index, and the album list is paged
- * into the cache already — but mounting 573 rows is what actually costs, and
- * there is no reason to build rows nobody has scrolled to.
+ * Each mode loads on first visit, not at launch: the full album list is
+ * paged out of the server 500 at a time and is worth paying for only when
+ * someone actually opens it.
  */
 
-type Mode = 'playlists' | 'albums' | 'artists';
-
-const MODES = [
-  { value: 'playlists' as const, label: 'Playlists' },
-  { value: 'albums' as const, label: 'Albums' },
-  { value: 'artists' as const, label: 'Artists' },
+const MODES: { value: LibraryMode; label: string; icon: typeof IconAlbum }[] = [
+  { value: 'playlists', label: 'Playlists', icon: IconPlaylist },
+  { value: 'albums', label: 'Albums', icon: IconAlbum },
+  { value: 'artists', label: 'Artists', icon: IconUser },
+  { value: 'genres', label: 'Genres', icon: IconCategory },
 ];
 
-const GRID_COLUMNS = 2;
+const SORTS: { value: AlbumSort; label: string }[] = [
+  { value: 'name', label: 'A–Z' },
+  { value: 'artist', label: 'Artist' },
+  { value: 'year', label: 'Year' },
+  { value: 'newest', label: 'Added' },
+  { value: 'recent', label: 'Played' },
+  { value: 'frequent', label: 'Most played' },
+  { value: 'random', label: 'Random' },
+];
 
-/** Shown immediately. */
-const FIRST_PAGE = 10;
-/** Added by each press of Load more. */
-const PAGE_SIZE = 50;
+const collate = (a?: string, b?: string) =>
+  (a ?? '').localeCompare(b ?? '', undefined, { sensitivity: 'base', numeric: true });
+
+const time = (iso?: string) => (iso ? Date.parse(iso) || 0 : 0);
+
+function sortAlbums(albums: AlbumSummary[], sort: AlbumSort, seed: number): AlbumSummary[] {
+  const copy = [...albums];
+  switch (sort) {
+    case 'artist':
+      return copy.sort(
+        (a, b) => collate(a.artist, b.artist) || (a.year ?? 0) - (b.year ?? 0) || collate(a.name, b.name),
+      );
+    case 'year':
+      return copy.sort((a, b) => (b.year ?? 0) - (a.year ?? 0) || collate(a.name, b.name));
+    case 'newest':
+      return copy.sort((a, b) => time(b.created) - time(a.created));
+    case 'recent':
+      return copy.sort((a, b) => time(b.played) - time(a.played));
+    case 'frequent':
+      return copy.sort((a, b) => (b.playCount ?? 0) - (a.playCount ?? 0) || collate(a.name, b.name));
+    case 'random':
+      // Seeded by a counter the reroll key bumps, so re-renders don't reshuffle.
+      return seed >= 0 ? shuffleList(copy) : copy;
+    default:
+      return copy.sort((a, b) => collate(a.name, b.name));
+  }
+}
 
 export function LibraryScreen() {
-  const color = useTheme();
-  const styles = useThemedStyles(makeStyles);
   const navigation = useNavigation<NativeStackNavigationProp<LibraryStackParamList>>();
-  const insets = useSafeAreaInsets();
   const artworkUrl = useArtwork();
   const { width } = useWindowDimensions();
 
-  const [mode, setMode] = useState<Mode>('playlists');
+  const mode = useSettingsStore((state) => state.libraryMode);
+  const sort = useSettingsStore((state) => state.albumSort);
+  const view = useSettingsStore((state) => state.albumView);
+  const update = useSettingsStore((state) => state.update);
 
-  /**
-   * Stable openers, so the memoised rows are not handed a fresh closure on
-   * every render and re-rendered for nothing. Each takes its subject as an
-   * argument rather than closing over it, which is what keeps the identity
-   * the same across renders.
-   */
-  const openAlbum = useCallback(
-    (albumId: string, albumName: string) =>
-      navigation.navigate('Album', { albumId, albumName }),
-    [navigation],
-  );
-  const openPlaylist = useCallback(
-    (playlistId: string, playlistName: string) =>
-      navigation.navigate('Playlist', { playlistId, playlistName }),
-    [navigation],
-  );
-  const openArtist = useCallback(
-    (artistId: string, artistName: string) =>
-      navigation.navigate('Artist', { artistId, artistName }),
-    [navigation],
-  );
-  const [visible, setVisible] = useState(FIRST_PAGE);
+  const [filter, setFilter] = useState('');
+  const deferredFilter = useDeferredValue(filter.trim().toLowerCase());
+  const [seed, setSeed] = useState(0);
+  const [albumTarget, setAlbumTarget] = useState<AlbumSummary | null>(null);
+  const [playlistTarget, setPlaylistTarget] = useState<Playlist | null>(null);
+  const [prompt, setPrompt] = useState<'create' | 'rename' | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Playlist | null>(null);
 
-  /**
-   * Latches per mode on first visit.
-   *
-   * getAllAlbums pages the entire library out of the server 500 at a time and
-   * caches ~1.5 MB of JSON. Paying that on every launch for a mode you might
-   * not open isn't worth it; paying it once, on the visit that needs it, is.
-   */
-  const [requested, setRequested] = useState<Record<Mode, boolean>>({
-    playlists: true,
-    albums: false,
-    artists: false,
+  /** Latches per mode on first visit. */
+  const [requested, setRequested] = useState<Record<LibraryMode, boolean>>({
+    playlists: mode === 'playlists',
+    albums: mode === 'albums',
+    artists: mode === 'artists',
+    genres: mode === 'genres',
   });
 
-  const tileSize = Math.floor(
-    (width - layout.screenPadding * 2 - space[3] * (GRID_COLUMNS - 1)) / GRID_COLUMNS,
-  );
-
-  const artists = useLibraryData(
-    (library, forceRefresh) =>
-      requested.artists ? library.getArtists({ forceRefresh }) : Promise.resolve([]),
-    [requested.artists],
-  );
   const albums = useLibraryData(
-    (library, forceRefresh) =>
-      requested.albums ? library.getAllAlbums({ forceRefresh }) : Promise.resolve([]),
+    (library, forceRefresh) => (requested.albums ? library.getAllAlbums({ forceRefresh }) : Promise.resolve([])),
     [requested.albums],
   );
+  const artists = useLibraryData(
+    (library, forceRefresh) => (requested.artists ? library.getArtists({ forceRefresh }) : Promise.resolve([])),
+    [requested.artists],
+  );
+  const genres = useLibraryData(
+    (library, forceRefresh) => (requested.genres ? library.getGenres({ forceRefresh }) : Promise.resolve([])),
+    [requested.genres],
+  );
 
-  /**
-   * Playlists come from their own store rather than this screen.
-   *
-   * They are the one collection the app writes to, and an edit made from a
-   * track row or inside a playlist has to show up here too — three screens
-   * each holding a copy would disagree the moment one of them changed.
-   */
   const playlists = usePlaylistStore((state) => state.playlists);
   const playlistError = usePlaylistStore((state) => state.error);
+  const playlistsLoading = usePlaylistStore((state) => state.loading);
   const loadPlaylists = usePlaylistStore((state) => state.load);
   const createPlaylist = usePlaylistStore((state) => state.create);
-
-  const [creating, setCreating] = useState(false);
-  const [draftName, setDraftName] = useState('');
+  const renamePlaylist = usePlaylistStore((state) => state.rename);
+  const removePlaylist = usePlaylistStore((state) => state.remove);
+  const client = useServerStore((state) => state.client);
+  const playNow = usePlayerStore((state) => state.playNow);
+  const shufflePlay = usePlayerStore((state) => state.shufflePlay);
 
   useEffect(() => {
     if (requested.playlists) void loadPlaylists();
   }, [requested.playlists, loadPlaylists]);
 
-  function switchMode(next: Mode) {
+  function switchMode(next: LibraryMode) {
     setRequested((current) => ({ ...current, [next]: true }));
-    setVisible(FIRST_PAGE);
-    setMode(next);
+    setFilter('');
+    update({ libraryMode: next });
   }
 
-  const total =
-    mode === 'artists'
-      ? (artists.data?.length ?? 0)
-      : mode === 'albums'
-        ? (albums.data?.length ?? 0)
-        : playlists.length;
+  // --- Derived lists --------------------------------------------------------
 
-  const loading =
-    mode === 'artists'
-      ? artists.loading
-      : mode === 'albums'
-        ? albums.loading
-        : playlists.length === 0 && playlistError == null;
+  const shownAlbums = useMemo(() => {
+    const sorted = sortAlbums(albums.data ?? [], sort, sort === 'random' ? seed : -1);
+    if (!deferredFilter) return sorted;
+    return sorted.filter(
+      (album) =>
+        album.name.toLowerCase().includes(deferredFilter) ||
+        (album.artist ?? '').toLowerCase().includes(deferredFilter) ||
+        String(album.year ?? '').includes(deferredFilter),
+    );
+  }, [albums.data, sort, seed, deferredFilter]);
 
-  const error =
-    mode === 'artists' ? artists.error : mode === 'albums' ? albums.error : playlistError;
+  const shownArtists = useMemo(() => {
+    const list = artists.data ?? [];
+    if (!deferredFilter) return list;
+    return list.filter((artist) => artist.name.toLowerCase().includes(deferredFilter));
+  }, [artists.data, deferredFilter]);
 
-  const refresh =
-    mode === 'artists' ? artists.refresh : mode === 'albums' ? albums.refresh : loadPlaylists;
+  const shownGenres = useMemo(() => {
+    const list = genres.data ?? [];
+    if (!deferredFilter) return list;
+    return list.filter((genre) => genre.value.toLowerCase().includes(deferredFilter));
+  }, [genres.data, deferredFilter]);
 
-  const shownArtists = useMemo(
-    () => (artists.data ?? []).slice(0, visible),
-    [artists.data, visible],
+  const shownPlaylists = useMemo(() => {
+    if (!deferredFilter) return playlists;
+    return playlists.filter((playlist) => playlist.name.toLowerCase().includes(deferredFilter));
+  }, [playlists, deferredFilter]);
+
+  // --- Actions ----------------------------------------------------------------
+
+  const openAlbum = useCallback(
+    (album: AlbumSummary) => navigation.navigate('Album', { albumId: album.id, albumName: album.name }),
+    [navigation],
   );
-  const shownAlbums = useMemo(() => (albums.data ?? []).slice(0, visible), [albums.data, visible]);
-  const shownPlaylists = useMemo(() => playlists.slice(0, visible), [playlists, visible]);
+  const openArtist = useCallback(
+    (artist: ArtistSummary) => navigation.navigate('Artist', { artistId: artist.id, artistName: artist.name }),
+    [navigation],
+  );
+  const openPlaylist = useCallback(
+    (playlist: Playlist) =>
+      navigation.navigate('Playlist', { playlistId: playlist.id, playlistName: playlist.name }),
+    [navigation],
+  );
 
-  const footer =
-    visible < total ? (
-      <View style={styles.loadMore}>
-        <Button
-          label={`Load ${Math.min(PAGE_SIZE, total - visible)} more`}
-          fullWidth
-          onPress={() => setVisible((count) => count + PAGE_SIZE)}
-        />
-      </View>
-    ) : (
-      <View style={styles.listEnd} />
-    );
+  async function playPlaylist(playlist: Playlist, shuffled: boolean) {
+    setPlaylistTarget(null);
+    try {
+      if (playlist.id === LIKED_PLAYLIST_ID) {
+        await playLiked(shuffled);
+        return;
+      }
+      if (!client) return;
+      const songs = (await client.getPlaylist(playlist.id)).playlist.entry ?? [];
+      if (songs.length === 0) {
+        toast.show('This playlist is empty', { icon: 'info' });
+        return;
+      }
+      const source = { kind: 'playlist' as const, label: playlist.name };
+      if (shuffled) await shufflePlay(songs, source);
+      else await playNow(songs, 0, source);
+    } catch (error) {
+      if (error instanceof EmptyMixError) toast.show(error.message, { icon: 'info' });
+      else toast.error("Couldn't play playlist", { detail: errorMessage(error) });
+    }
+  }
 
-  const renderEmpty = useCallback(() => {
-    if (loading) return <LoadingState label="Loading library" />;
-    if (error) return <ErrorState message={error} onRetry={refresh} />;
-    return (
-      <EmptyState label="Nothing here" hint="Check that Navidrome has scanned your library." />
-    );
-  }, [loading, error, refresh]);
+  // --- A–Z rail ---------------------------------------------------------------
 
-  const refreshControl = (
-    <RefreshControl
-      refreshing={loading && total > 0}
-      onRefresh={refresh}
-      tintColor={color.textSecondary}
+  const listRef = useRef<FlatList<ArtistSummary>>(null);
+  const letterIndex = useMemo(() => {
+    const map = new Map<string, number>();
+    shownArtists.forEach((artist, index) => {
+      const letter = indexLetter(artist.name);
+      if (!map.has(letter)) map.set(letter, index);
+    });
+    return map;
+  }, [shownArtists]);
+  const letters = useMemo(() => [...letterIndex.keys()], [letterIndex]);
+  const jumpTo = useCallback(
+    (letter: string) => {
+      const index = letterIndex.get(letter);
+      if (index != null) listRef.current?.scrollToIndex({ index, animated: false });
+    },
+    [letterIndex],
+  );
+
+  // --- Render -----------------------------------------------------------------
+
+  const gridColumns = 2;
+  const tile = Math.floor((width - layout.screenPadding * 2 - space[3] * (gridColumns - 1)) / gridColumns);
+
+  const total =
+    mode === 'albums'
+      ? (albums.data?.length ?? 0)
+      : mode === 'artists'
+        ? (artists.data?.length ?? 0)
+        : mode === 'genres'
+          ? (genres.data?.length ?? 0)
+          : playlists.length;
+  const unit = mode === 'albums' ? 'album' : mode === 'artists' ? 'artist' : mode === 'genres' ? 'genre' : 'playlist';
+
+  const status =
+    mode === 'albums' ? albums : mode === 'artists' ? artists : mode === 'genres' ? genres : null;
+  const loading = status ? status.loading && !status.data?.length : playlistsLoading && playlists.length === 0;
+  const error = status ? status.error : playlistError;
+  const refresh = status ? status.refresh : () => void loadPlaylists();
+
+  const emptyComponent = loading ? (
+    <LoadingState label="Loading library" />
+  ) : error ? (
+    <ErrorState message={error} onRetry={refresh} />
+  ) : (
+    <EmptyState
+      label={deferredFilter ? 'No matches' : 'Nothing here'}
+      hint={deferredFilter ? `Nothing matched “${filter.trim()}”.` : 'Check that Navidrome has scanned your library.'}
     />
   );
 
-  /**
-   * The switch lives outside the list rather than in its header.
-   *
-   * Inside, it inherited whichever contentContainerStyle the active mode used
-   * — and the album grid adds horizontal padding the row lists don't — so the
-   * tabs visibly changed width every time you switched. Out here its geometry
-   * is the screen's, which is fixed.
-   */
-  const shell = (children: React.ReactNode) => (
-    <View style={[styles.root, { paddingTop: insets.top }]}>
-      <AmbientBackground />
+  const header = (
+    <View>
       <ScreenHeader
+        eyebrow={total > 0 ? `${pluralize(total, unit).toUpperCase()}` : 'COLLECTION'}
         title="Library"
-        action={
+        trailing={
           mode === 'playlists' ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="New playlist"
-              hitSlop={space[3]}
-              onPress={() => {
-                setDraftName('');
-                setCreating(true);
-              }}
-            >
-              <IconPlus
-                size={icon.size}
-                strokeWidth={icon.strokeWidth}
-                color={color.textSecondary}
-              />
-            </Pressable>
+            <IconButton icon={IconPlus} accessibilityLabel="New playlist" variant="surface" onPress={() => setPrompt('create')} />
+          ) : mode === 'albums' ? (
+            <IconButton
+              icon={view === 'grid' ? IconLayoutList : IconLayoutGrid}
+              accessibilityLabel={view === 'grid' ? 'Show as list' : 'Show as grid'}
+              variant="surface"
+              onPress={() => update({ albumView: view === 'grid' ? 'list' : 'grid' })}
+            />
           ) : undefined
         }
       />
-      <View style={styles.switch}>
-        <Segmented options={MODES} value={mode} onChange={switchMode} />
-      </View>
-      {/* Keyed on the mode so switching crossfades the list rather than
-          swapping it in a single frame. */}
-      <Animated.View
-        key={mode}
-        style={styles.list}
-        entering={FadeIn.duration(motion.durationBase)}
-      >
-        {children}
-      </Animated.View>
-
-      <Sheet visible={creating} onClose={() => setCreating(false)} title="New playlist">
-        <SheetBody>
-          <TextInput
-            style={styles.input}
-            value={draftName}
-            onChangeText={setDraftName}
-            placeholder="Playlist name"
-            placeholderTextColor={color.textInverseSecondary}
-            autoFocus
-            returnKeyType="done"
+      <ChipRow style={styles.modes}>
+        {MODES.map((option) => (
+          <Chip
+            key={option.value}
+            label={option.label}
+            icon={option.icon}
+            selected={mode === option.value}
+            onPress={() => switchMode(option.value)}
           />
-          <View style={styles.sheetActions}>
-            <ButtonRow>
-              <Button
-                label="Create"
-                variant="primary"
-                disabled={draftName.trim().length === 0}
-                onPress={() => {
-                  void createPlaylist(draftName);
-                  setCreating(false);
-                }}
-              />
-              <Button label="Cancel" onPress={() => setCreating(false)} />
-            </ButtonRow>
-          </View>
-        </SheetBody>
-      </Sheet>
+        ))}
+      </ChipRow>
+      <SearchField
+        value={filter}
+        onChangeText={setFilter}
+        placeholder={`Filter ${unit}s`}
+      />
+      {mode === 'albums' && (
+        <ChipRow style={styles.sorts}>
+          {SORTS.map((option) => (
+            <Chip
+              key={option.value}
+              label={option.label}
+              selected={sort === option.value}
+              onPress={() => {
+                if (option.value === 'random' && sort === 'random') setSeed((n) => n + 1);
+                update({ albumSort: option.value });
+              }}
+            />
+          ))}
+        </ChipRow>
+      )}
     </View>
   );
 
-  if (mode === 'albums') {
-    return shell(
+  const refreshControl = <RefreshControl refreshing={false} onRefresh={refresh} />;
+
+  let body: React.ReactNode;
+  if (mode === 'albums' && view === 'grid') {
+    body = (
       <FlatList
+        key="albums-grid"
         data={shownAlbums}
-        {...HEAVY_LIST_PROPS}
-        // Distinct keys per mode so switching starts a fresh list rather than
-        // carrying a scroll offset from a list of a different shape.
-        key="albums"
-        numColumns={GRID_COLUMNS}
+        numColumns={gridColumns}
         keyExtractor={(album) => album.id}
-        ListEmptyComponent={renderEmpty}
-        ListFooterComponent={footer}
-        columnWrapperStyle={styles.column}
-        contentContainerStyle={shownAlbums.length ? styles.gridContent : styles.emptyContainer}
+        columnWrapperStyle={styles.gridRow}
         renderItem={({ item }) => (
           <AlbumTile
             title={item.name}
             subtitle={item.artist}
-            artworkUri={artworkUrl(item.coverArt, 400)}
-            size={tileSize}
-            onPress={() => openAlbum(item.id, item.name)}
+            artworkUri={artworkUrl(item.coverArt, 300)}
+            size={tile}
+            year={item.year}
+            onPress={() => openAlbum(item)}
+            onLongPress={() => setAlbumTarget(item)}
           />
         )}
+        ListEmptyComponent={emptyComponent}
+        contentContainerStyle={styles.list}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        initialNumToRender={8}
+        maxToRenderPerBatch={8}
+        windowSize={7}
+        removeClippedSubviews
         refreshControl={refreshControl}
-      />,
+      />
     );
-  }
-
-  if (mode === 'playlists') {
-    return shell(
+  } else if (mode === 'albums') {
+    body = (
       <FlatList
-        data={shownPlaylists}
-        {...HEAVY_LIST_PROPS}
+        key="albums-list"
+        data={shownAlbums}
+        keyExtractor={(album) => album.id}
         getItemLayout={trackItemLayout}
-        key="playlists"
-        keyExtractor={(playlist) => playlist.id}
-        ListEmptyComponent={renderEmpty}
-        ListFooterComponent={footer}
-        contentContainerStyle={shownPlaylists.length ? styles.listContent : styles.emptyContainer}
         renderItem={({ item, index }) => (
           <ListRow
             title={item.name}
-            meta={[
+            subtitle={[item.artist, item.year].filter(Boolean).join(' · ')}
+            artworkUri={artworkUrl(item.coverArt)}
+            trailingText={item.songCount != null ? `${item.songCount} TRK` : undefined}
+            last={index === shownAlbums.length - 1}
+            onPress={() => openAlbum(item)}
+            onLongPress={() => setAlbumTarget(item)}
+            onMore={() => setAlbumTarget(item)}
+          />
+        )}
+        ListEmptyComponent={emptyComponent}
+        contentContainerStyle={styles.list}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        initialNumToRender={14}
+        windowSize={9}
+        removeClippedSubviews
+        refreshControl={refreshControl}
+      />
+    );
+  } else if (mode === 'artists') {
+    const renderArtist: ListRenderItem<ArtistSummary> = ({ item, index }) => (
+      <ListRow
+        title={item.name}
+        subtitle={item.albumCount ? pluralize(item.albumCount, 'album') : undefined}
+        artworkUri={artworkUrl(item.coverArt)}
+        round
+        starred={Boolean(item.starred)}
+        last={index === shownArtists.length - 1}
+        onPress={() => openArtist(item)}
+      />
+    );
+    body = (
+      <View style={styles.fill}>
+        <FlatList
+          ref={listRef}
+          key="artists"
+          data={shownArtists}
+          keyExtractor={(artist) => artist.id}
+          getItemLayout={trackItemLayout}
+          renderItem={renderArtist}
+          ListEmptyComponent={emptyComponent}
+          contentContainerStyle={[styles.list, styles.railGutter]}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          initialNumToRender={14}
+          windowSize={9}
+          removeClippedSubviews
+          refreshControl={refreshControl}
+          onScrollToIndexFailed={() => {}}
+        />
+        {!deferredFilter && <AlphabetRail letters={letters} onSelect={jumpTo} top={space[2]} bottom={DOCK_CLEARANCE - 24} />}
+      </View>
+    );
+  } else if (mode === 'genres') {
+    body = (
+      <FlatList
+        key="genres"
+        data={shownGenres}
+        keyExtractor={(genre) => genre.value}
+        getItemLayout={trackItemLayout}
+        renderItem={({ item, index }: { item: Genre; index: number }) => (
+          <ListRow
+            title={item.value}
+            subtitle={[
+              item.albumCount ? pluralize(item.albumCount, 'album') : null,
               item.songCount != null ? pluralize(item.songCount, 'track') : null,
-              item.duration ? formatDuration(item.duration) : null,
             ]
               .filter(Boolean)
               .join(' · ')}
-            artworkUri={artworkUrl(item.coverArt)}
-            last={index === shownPlaylists.length - 1}
-            onPress={() => openPlaylist(item.id, item.name)}
+            leading="index"
+            index={index + 1}
+            last={index === shownGenres.length - 1}
+            onPress={() => navigation.navigate('Genre', { genre: item.value })}
           />
         )}
+        ListEmptyComponent={emptyComponent}
+        contentContainerStyle={styles.list}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         refreshControl={refreshControl}
-      />,
+      />
+    );
+  } else {
+    body = (
+      <FlatList
+        key="playlists"
+        data={shownPlaylists}
+        keyExtractor={(playlist) => playlist.id}
+        getItemLayout={trackItemLayout}
+        renderItem={({ item, index }) => {
+          const liked = item.id === LIKED_PLAYLIST_ID;
+          return (
+            <ListRow
+              title={item.name}
+              subtitle={[
+                item.songCount != null ? pluralize(item.songCount, 'track') : null,
+                item.duration ? formatLength(item.duration) : null,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+              artworkUri={artworkUrl(item.coverArt)}
+              starred={liked}
+              last={index === shownPlaylists.length - 1}
+              onPress={() => openPlaylist(item)}
+              onLongPress={() => setPlaylistTarget(item)}
+              onMore={() => setPlaylistTarget(item)}
+            />
+          );
+        }}
+        ListEmptyComponent={emptyComponent}
+        contentContainerStyle={styles.list}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        refreshControl={refreshControl}
+      />
     );
   }
 
-  return shell(
-    <FlatList
-      data={shownArtists}
-      {...HEAVY_LIST_PROPS}
-      getItemLayout={trackItemLayout}
-      key="artists"
-      keyExtractor={(artist) => artist.id}
-      ListEmptyComponent={renderEmpty}
-      ListFooterComponent={footer}
-      contentContainerStyle={shownArtists.length ? styles.listContent : styles.emptyContainer}
-      renderItem={({ item, index }) => (
-        <ListRow
-          title={item.name}
-          meta={item.albumCount != null ? pluralize(item.albumCount, 'album') : undefined}
-          artworkUri={artworkUrl(item.coverArt)}
-          last={index === shownArtists.length - 1}
-          onPress={() => openArtist(item.id, item.name)}
+  const editable = playlistTarget != null && playlistTarget.id !== LIKED_PLAYLIST_ID;
+
+  return (
+    <TabScaffold>
+      {header}
+      {/* Keyed on mode and view, so switching crossfades instead of cutting. */}
+      <Animated.View key={`${mode}:${view}`} style={styles.fill} entering={FadeIn.duration(180)}>
+        {body}
+      </Animated.View>
+
+      <AlbumActionsSheet visible={albumTarget != null} onClose={() => setAlbumTarget(null)} album={albumTarget} />
+
+      <Sheet
+        visible={playlistTarget != null && prompt == null && confirmDelete == null}
+        onClose={() => setPlaylistTarget(null)}
+        title={playlistTarget?.name}
+        subtitle={playlistTarget?.songCount != null ? pluralize(playlistTarget.songCount, 'track') : undefined}
+        artworkUri={artworkUrl(playlistTarget?.coverArt, 120) ?? null}
+      >
+        {playlistTarget && (
+          <>
+            <SheetRow label="Play" icon={IconPlayerPlayFilled} onPress={() => void playPlaylist(playlistTarget, false)} />
+            <SheetRow label="Shuffle" icon={IconArrowsShuffle} onPress={() => void playPlaylist(playlistTarget, true)} last={!editable} />
+            {editable && <SheetRow label="Rename" icon={IconPencil} onPress={() => setPrompt('rename')} />}
+            {editable && (
+              <SheetRow
+                label="Delete playlist"
+                icon={IconTrash}
+                tone="destructive"
+                last
+                onPress={() => setConfirmDelete(playlistTarget)}
+              />
+            )}
+          </>
+        )}
+      </Sheet>
+
+      <Sheet
+        visible={confirmDelete != null}
+        onClose={() => {
+          setConfirmDelete(null);
+          setPlaylistTarget(null);
+        }}
+        title={`Delete ${confirmDelete?.name ?? 'playlist'}?`}
+        subtitle="This removes it from Navidrome for every client."
+      >
+        <SheetRow
+          label="Delete"
+          icon={IconTrash}
+          tone="destructive"
+          onPress={() => {
+            const target = confirmDelete;
+            setConfirmDelete(null);
+            setPlaylistTarget(null);
+            if (!target) return;
+            void removePlaylist(target.id)
+              .then(() => {
+                haptics.success();
+                toast.show(`Deleted ${target.name}`, { icon: 'playlist' });
+              })
+              .catch((e) => toast.error("Couldn't delete", { detail: errorMessage(e) }));
+          }}
         />
-      )}
-      refreshControl={refreshControl}
-      contentInsetAdjustmentBehavior="never"
-    />,
+        <SheetRow
+          label="Keep it"
+          last
+          onPress={() => {
+            setConfirmDelete(null);
+            setPlaylistTarget(null);
+          }}
+        />
+      </Sheet>
+
+      <PromptSheet
+        visible={prompt != null}
+        onClose={() => {
+          setPrompt(null);
+          setPlaylistTarget(null);
+        }}
+        title={prompt === 'rename' ? 'Rename playlist' : 'New playlist'}
+        placeholder="Playlist name"
+        initialValue={prompt === 'rename' ? (playlistTarget?.name ?? '') : ''}
+        confirmLabel={prompt === 'rename' ? 'Save' : 'Create'}
+        onConfirm={async (name) => {
+          try {
+            if (prompt === 'rename' && playlistTarget) {
+              await renamePlaylist(playlistTarget.id, name);
+              toast.show('Renamed', { icon: 'playlist', detail: name });
+            } else {
+              const created = await createPlaylist(name);
+              haptics.success();
+              toast.success(`Created ${name}`, { icon: 'playlist' });
+              if (created) openPlaylist(created);
+            }
+          } catch (error) {
+            toast.error('Something went wrong', { detail: errorMessage(error) });
+            throw error;
+          }
+        }}
+      />
+    </TabScaffold>
   );
 }
 
-const makeStyles = (color: Palette) =>
-  StyleSheet.create({
-    root: { flex: 1, backgroundColor: color.paper },
-    list: { flex: 1 },
-    switch: {
-      paddingHorizontal: layout.screenPadding,
-      paddingTop: space[4],
-      paddingBottom: space[4],
-    },
-
-    listContent: {},
-    input: {
-      ...type.body,
-      color: color.textInverse,
-      height: 48,
-      paddingHorizontal: space[3],
-      borderWidth: hairline,
-      borderColor: color.panelLine,
-      borderRadius: radius.sm,
-      backgroundColor: color.panelRaised,
-    },
-    sheetActions: { marginTop: space[4], paddingBottom: space[3] },
-    gridContent: { paddingHorizontal: layout.screenPadding },
-    column: { gap: space[3], marginBottom: space[5] },
-
-    loadMore: {
-      paddingHorizontal: layout.screenPadding,
-      paddingTop: space[5],
-      paddingBottom: DOCK_CLEARANCE,
-    },
-    listEnd: { height: DOCK_CLEARANCE },
-
-    emptyContainer: { flexGrow: 1, paddingBottom: DOCK_CLEARANCE },
-  });
+const styles = StyleSheet.create({
+  fill: { flex: 1 },
+  modes: { marginBottom: space[3] },
+  sorts: { marginBottom: space[2] },
+  list: { paddingBottom: DOCK_CLEARANCE, flexGrow: 1 },
+  railGutter: { paddingRight: 18 },
+  gridRow: { gap: space[3], paddingHorizontal: layout.screenPadding, marginBottom: space[4] },
+});

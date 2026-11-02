@@ -15,14 +15,24 @@ import {
 import type {
   AlbumList2Response,
   AlbumResponse,
+  ArtistInfo2Response,
   ArtistResponse,
   ArtistsResponse,
+  GenresResponse,
+  LyricsListResponse,
   PlaylistResponse,
   PlaylistsResponse,
+  RandomSongsResponse,
+  ScanStatusResponse,
+  SimilarSongs2Response,
+  SimilarSongsResponse,
+  SongResponse,
+  SongsByGenreResponse,
   Starred2Response,
   SearchResult3Response,
   SubsonicEnvelope,
   SubsonicResponseBody,
+  TopSongsResponse,
 } from '../types/subsonic';
 
 export type QueryValue = string | number | boolean | undefined | (string | number)[];
@@ -119,7 +129,11 @@ export class SubsonicClient {
     this.staggerMs = options.staggerMs ?? 400;
     this.requestTimeoutMs = options.requestTimeoutMs ?? 15000;
     this.connectionTtlMs = options.connectionTtlMs ?? 5 * 60 * 1000;
-    this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
+    // Wrapped rather than stored bare: invoked as `this.fetchImpl(...)`, a
+    // browser's fetch receives the client as its receiver and throws "Illegal
+    // invocation". React Native's fetch doesn't care, which is why this only
+    // ever surfaced on the web.
+    this.fetchImpl = options.fetchImpl ?? ((input, init) => globalThis.fetch(input, init));
     this.onConnectionChange = options.onConnectionChange;
     this.log = options.log ?? (() => {});
   }
@@ -515,12 +529,24 @@ export class SubsonicClient {
    * callers wanting the whole library must page with `offset`.
    */
   async getAlbumList2(
-    options: { type?: string; size?: number; offset?: number } = {},
+    options: {
+      type?: string;
+      size?: number;
+      offset?: number;
+      /** Required by type=byGenre. */
+      genre?: string;
+      /** Required by type=byYear. */
+      fromYear?: number;
+      toYear?: number;
+    } = {},
   ): Promise<AlbumList2Response> {
     return this.request<AlbumList2Response>('getAlbumList2', {
       type: options.type ?? 'alphabeticalByName',
       size: options.size ?? 500,
       offset: options.offset ?? 0,
+      genre: options.genre,
+      fromYear: options.fromYear,
+      toYear: options.toYear,
     });
   }
 
@@ -530,9 +556,85 @@ export class SubsonicClient {
       artistCount?: number;
       albumCount?: number;
       songCount?: number;
+      artistOffset?: number;
+      albumOffset?: number;
+      songOffset?: number;
     } = {},
   ): Promise<SearchResult3Response> {
     return this.request<SearchResult3Response>('search3', { query, ...options });
+  }
+
+  /** One track with every field the server knows — path, bitrate, plays. */
+  async getSong(id: string): Promise<SongResponse> {
+    return this.request<SongResponse>('getSong', { id });
+  }
+
+  async getGenres(): Promise<GenresResponse> {
+    return this.request<GenresResponse>('getGenres');
+  }
+
+  async getSongsByGenre(
+    genre: string,
+    options: { count?: number; offset?: number } = {},
+  ): Promise<SongsByGenreResponse> {
+    return this.request<SongsByGenreResponse>('getSongsByGenre', {
+      genre,
+      count: options.count ?? 100,
+      offset: options.offset ?? 0,
+    });
+  }
+
+  /** Random tracks, optionally narrowed to a genre or a span of years. */
+  async getRandomSongs(
+    options: { size?: number; genre?: string; fromYear?: number; toYear?: number } = {},
+  ): Promise<RandomSongsResponse> {
+    return this.request<RandomSongsResponse>('getRandomSongs', {
+      size: options.size ?? 50,
+      genre: options.genre,
+      fromYear: options.fromYear,
+      toYear: options.toYear,
+    });
+  }
+
+  /**
+   * An artist's most popular tracks. Navidrome answers from Last.fm, so
+   * this is empty when the server has no agent configured — callers treat
+   * empty as "unknown", never as an error.
+   */
+  async getTopSongs(artist: string, count = 10): Promise<TopSongsResponse> {
+    return this.request<TopSongsResponse>('getTopSongs', { artist, count });
+  }
+
+  /** Tracks similar to an artist — the seed of an artist radio. */
+  async getSimilarSongs2(artistId: string, count = 50): Promise<SimilarSongs2Response> {
+    return this.request<SimilarSongs2Response>('getSimilarSongs2', { id: artistId, count });
+  }
+
+  /** Tracks similar to a song, album or artist id — the seed of a track radio. */
+  async getSimilarSongs(id: string, count = 50): Promise<SimilarSongsResponse> {
+    return this.request<SimilarSongsResponse>('getSimilarSongs', { id, count });
+  }
+
+  async getArtistInfo2(id: string, count = 12): Promise<ArtistInfo2Response> {
+    return this.request<ArtistInfo2Response>('getArtistInfo2', {
+      id,
+      count,
+      includeNotPresent: false,
+    });
+  }
+
+  /** OpenSubsonic: lyrics embedded in the file or beside it on the server. */
+  async getLyricsBySongId(id: string): Promise<LyricsListResponse> {
+    return this.request<LyricsListResponse>('getLyricsBySongId', { id });
+  }
+
+  async getScanStatus(): Promise<ScanStatusResponse> {
+    return this.request<ScanStatusResponse>('getScanStatus');
+  }
+
+  /** Admin only; a regular account gets a NotAuthorized ApiError. */
+  async startScan(): Promise<ScanStatusResponse> {
+    return this.request<ScanStatusResponse>('startScan');
   }
 
   async getPlaylists(): Promise<PlaylistsResponse> {
@@ -603,6 +705,22 @@ export class SubsonicClient {
 
   async deletePlaylist(id: string): Promise<void> {
     await this.request('deletePlaylist', { id });
+  }
+
+  /**
+   * Replaces a playlist's tracks wholesale, in the given order.
+   *
+   * `createPlaylist` with an existing `playlistId` overwrites the song list
+   * — the only way the Subsonic API offers to reorder one, since
+   * updatePlaylist can only append and remove.
+   */
+  async replacePlaylistSongs(playlistId: string, songIds: string[]): Promise<void> {
+    await this.request('createPlaylist', { playlistId, songId: songIds });
+  }
+
+  /** 1-5 stars, or 0 to clear. */
+  async setRating(id: string, rating: number): Promise<void> {
+    await this.request('setRating', { id, rating: Math.max(0, Math.min(5, Math.round(rating))) });
   }
 
   /**

@@ -42,4 +42,7 @@ export const cacheKeys = {
   /** Shelf lists, keyed by the server-side ordering that produced them. */
   albumsByType: (type: string, size: number) =>
     `v${CACHE_VERSION}:albums:${type}:${size}`,
+  genres: () => `v${CACHE_VERSION}:genres`,
+  albumsByGenre: (genre: string) => `v${CACHE_VERSION}:albumsByGenre:${genre}`,
+  artistInfo: (id: string) => `v${CACHE_VERSION}:artistInfo:${id}`,
 } as const;

@@ -1,52 +1,71 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
-  useWindowDimensions,
   View,
+  useWindowDimensions,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useActiveMediaItem, useIsPlaying } from '@rntp/player';
 
-import { AmbientBackground } from '../components/AmbientBackground';
+import { AlbumActionsSheet } from '../components/AlbumActionsSheet';
+import { IconButton } from '../components/IconButton';
+import {
+  IconArrowsShuffle,
+  IconChartBar,
+  IconHeart,
+  IconHistory,
+  IconSettings,
+} from '../components/icons';
+import { Label } from '../components/Label';
 import { ListRow } from '../components/ListRow';
+import { Panel } from '../components/Panel';
+import { StatTile } from '../components/Readouts';
+import { TabScaffold } from '../components/Scaffold';
 import { ScreenHeader } from '../components/ScreenHeader';
+import { ErrorState, LoadingState } from '../components/ScreenState';
 import { SectionHeader } from '../components/SectionHeader';
 import { Segmented } from '../components/Segmented';
-import { EmptyState, ErrorState, LoadingState } from '../components/ScreenState';
 import { Shelf } from '../components/Shelf';
 import { DOCK_CLEARANCE } from '../components/TabBar';
-import { IconSettings } from '../components/icons';
-import { getTopTracks, type ChartWindow, type TopTrack } from '../data/playHistory';
+import { MIX_HUES, MixCard, QuickKey } from '../components/Tiles';
+import { TrackActionsSheet } from '../components/TrackActionsSheet';
+import {
+  getListeningStats,
+  getPlaysToday,
+  onPlayHistoryChanged,
+  type ChartWindow,
+  type ListeningStats,
+  type TopTrack,
+} from '../data/playHistory';
 import { useArtwork } from '../hooks/useArtwork';
 import { useLibraryData } from '../hooks/useLibraryData';
-import type { HomeStackParamList, RootStackParamList } from '../navigation/types';
-import { icon, layout, space, type } from '../theme/tokens';
+import { LIKED_PLAYLIST_ID, type HomeStackParamList, type RootStackParamList } from '../navigation/types';
+import { DECADES, EmptyMixError, decadeLabel, playMix, shuffleLibrary } from '../player/mixes';
+import { extrasOf } from '../player/trackMapping';
+import { usePlaylistStore } from '../store/usePlaylistStore';
+import { useServerStore } from '../store/useServerStore';
+import { errorMessage, toast } from '../store/useToastStore';
+import { layout, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
-import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
-import type { AlbumSummary } from '../types/subsonic';
-import { pluralize } from '../utils/time';
+import { useThemedStyles } from '../theme/ThemeProvider';
+import type { AlbumSummary, Child } from '../types/subsonic';
+import { formatEyebrowDate, formatListening, greeting, pluralize } from '../utils/time';
 
 /**
- * Home — your own charts, then album shelves.
+ * Home — the front panel.
  *
- * Playlists used to live here; they moved to Library, which is where a list
- * you maintain belongs. What's left is everything you don't maintain: what you
- * have been playing, what the server added recently, and a random shelf.
+ * Read top to bottom like a device: a few readouts (what you've played,
+ * how long, how many days running), a bank of function keys, generated
+ * mixes as coloured cards, your chart, then shelves of albums in the
+ * orderings only the server knows.
  */
 
-/** How many albums each shelf asks for. Enough to scroll, not enough to stall. */
 const SHELF_SIZE = 20;
-
-/**
- * Play-derived orderings reshuffle as you listen, so a day-long TTL would
- * show a "recently played" shelf that's a day out of date. Ten minutes keeps
- * it honest without refetching on every visit.
- */
+/** Play-derived orderings reshuffle as you listen; a day's TTL would lie. */
 const SHELF_TTL_MS = 10 * 60 * 1000;
 
 const WINDOWS = [
@@ -56,196 +75,370 @@ const WINDOWS = [
   { value: 'year' as const, label: 'Year' },
 ];
 
+/** Decades offered as mixes; ones the library lacks just say so when pressed. */
+const MIX_DECADES = DECADES.filter((decade) => decade >= 1970);
+
 export function HomeScreen() {
-  const color = useTheme();
   const styles = useThemedStyles(makeStyles);
   const navigation = useNavigation<NativeStackNavigationProp<HomeStackParamList>>();
-  // Settings lives on the root stack, two navigators up. navigate() bubbles
-  // to find it, but the Home stack's types don't know the route exists.
   const rootNavigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const insets = useSafeAreaInsets();
   const artworkUrl = useArtwork();
   const { width } = useWindowDimensions();
+  const activeItem = useActiveMediaItem();
+  const isPlaying = useIsPlaying();
+  const activeId = extrasOf(activeItem)?.subsonicId;
+  const info = useServerStore((state) => state.info);
 
-  // Two and a half tiles across, so the cut-off third is visibly a hint that
-  // the shelf scrolls rather than looking like a short list that ended.
-  const tileSize = Math.round((width - layout.screenPadding * 2 - space[3] * 2) / 2.4);
+  const tileSize = Math.round((width - layout.screenPadding * 2 - space[3] * 2) / 2.35);
+  const mixWidth = Math.round((width - layout.screenPadding * 2 - space[3] * 2) / 2.5);
 
-  const {
-    data: shelves,
-    loading,
-    error,
-    refresh,
-  } = useLibraryData(
+  const shelves = useLibraryData(
     (library, forceRefresh) =>
       Promise.all([
         library.getAlbumsByType('newest', SHELF_SIZE, { forceRefresh }),
         library.getAlbumsByType('recent', SHELF_SIZE, { forceRefresh, ttlMs: SHELF_TTL_MS }),
         library.getAlbumsByType('frequent', SHELF_SIZE, { forceRefresh, ttlMs: SHELF_TTL_MS }),
-        library.getAlbumsByType('random', SHELF_SIZE, { forceRefresh }),
-      ]).then(([newest, recent, frequent, random]) => ({ newest, recent, frequent, random })),
+      ]).then(([newest, recent, frequent]) => ({ newest, recent, frequent })),
     [],
   );
+  // Separate so the reroll key reshuffles only this shelf.
+  const random = useLibraryData(
+    (library, forceRefresh) => library.getAlbumsByType('random', SHELF_SIZE, { forceRefresh }),
+    [],
+  );
+  const genres = useLibraryData((library, forceRefresh) => library.getGenres({ forceRefresh }), []);
 
+  const playlists = usePlaylistStore((state) => state.playlists);
+  const loadPlaylists = usePlaylistStore((state) => state.load);
+  const likedCount = playlists.find((p) => p.id === LIKED_PLAYLIST_ID)?.songCount;
+
+  const [stats, setStats] = useState<ListeningStats | null>(null);
+  const [today, setToday] = useState(0);
   const [chartWindow, setChartWindow] = useState<ChartWindow>('week');
-  const [topTracks, setTopTracks] = useState<TopTrack[]>([]);
+  const [chart, setChart] = useState<TopTrack[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [albumTarget, setAlbumTarget] = useState<AlbumSummary | null>(null);
+  const [trackTarget, setTrackTarget] = useState<Child | null>(null);
 
-  const loadCharts = useCallback(() => {
-    void getTopTracks(chartWindow, 5).then(setTopTracks);
+  useEffect(() => {
+    void loadPlaylists();
+  }, [loadPlaylists]);
+
+  const loadStats = useCallback(() => {
+    void getListeningStats('week', { top: 1 }).then(setStats);
+    void getPlaysToday().then(setToday);
+  }, []);
+
+  const loadChart = useCallback(() => {
+    void getListeningStats(chartWindow, { top: 5 }).then((result) => setChart(result.topTracks));
   }, [chartWindow]);
 
   /**
-   * Reload whenever Home comes back into view.
-   *
-   * Home lives in a tab navigator and never unmounts, so a mount-only effect
-   * ran exactly once per launch — which is why the charts looked broken: plays
-   * were being recorded correctly and simply never re-read.
+   * Re-read whenever Home comes into view, and whenever a play is logged
+   * while it is. Home lives in a tab and never unmounts, so a mount-only
+   * read showed the numbers from launch forever.
    */
-  useFocusEffect(loadCharts);
+  useFocusEffect(
+    useCallback(() => {
+      loadStats();
+      loadChart();
+      return onPlayHistoryChanged(() => {
+        loadStats();
+        loadChart();
+      });
+    }, [loadStats, loadChart]),
+  );
 
-  function openAlbum(album: AlbumSummary) {
-    navigation.navigate('Album', { albumId: album.id, albumName: album.name });
+  const refresh = useCallback(() => {
+    shelves.refresh();
+    random.refresh();
+    genres.refresh();
+    void loadPlaylists();
+    loadStats();
+    loadChart();
+  }, [shelves, random, genres, loadPlaylists, loadStats, loadChart]);
+
+  const openAlbum = useCallback(
+    (album: AlbumSummary) => navigation.navigate('Album', { albumId: album.id, albumName: album.name }),
+    [navigation],
+  );
+
+  async function startMix(key: string, start: () => Promise<number>, label: string) {
+    if (busy) return;
+    setBusy(key);
+    try {
+      const count = await start();
+      toast.show(`Playing ${label}`, { icon: 'radio', detail: pluralize(count, 'track') });
+    } catch (error) {
+      if (error instanceof EmptyMixError) toast.show(error.message, { icon: 'info' });
+      else toast.error("Couldn't start the mix", { detail: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
   }
 
-  if (loading && !shelves) {
-    return (
-      <View style={[styles.root, { paddingTop: insets.top }]}>
-        <LoadingState label="Loading library" />
-      </View>
-    );
-  }
+  const mixes = useMemo(() => {
+    const fromGenres = (genres.data ?? []).slice(0, 5).map((genre) => ({
+      key: `g:${genre.value}`,
+      title: genre.value,
+      caption: genre.songCount != null ? `${genre.songCount} tracks` : 'Genre',
+      start: () => playMix({ label: genre.value, genre: genre.value }),
+    }));
+    const fromDecades = MIX_DECADES.slice(-4)
+      .reverse()
+      .map((decade) => ({
+        key: `d:${decade}`,
+        title: `The ${decadeLabel(decade)}`,
+        caption: `${decade}–${decade + 9}`,
+        start: () =>
+          playMix({ label: `The ${decadeLabel(decade)}`, fromYear: decade, toYear: decade + 9 }),
+      }));
+    return [
+      {
+        key: 'discover',
+        title: 'Discover',
+        caption: 'At random',
+        start: () => playMix({ label: 'Discover', size: 100 }),
+      },
+      ...fromGenres,
+      ...fromDecades,
+    ];
+  }, [genres.data]);
 
-  if (error && !shelves) {
-    return (
-      <View style={[styles.root, { paddingTop: insets.top }]}>
-        <ErrorState message={error} onRetry={refresh} />
-      </View>
-    );
-  }
+  const [listenValue, listenUnit] = formatListening(stats?.seconds ?? 0);
+  const loadingFirst = shelves.loading && !shelves.data;
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top }]}>
-      {/* Lower intensity than the player: this screen is for reading. */}
-      <AmbientBackground />
-
-      <ScreenHeader
-        title="Home"
-        action={
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Settings"
-            hitSlop={space[3]}
-            onPress={() => rootNavigation.navigate('Settings')}
-            style={({ pressed }) => (pressed ? styles.pressed : null)}
-          >
-            <IconSettings
-              size={icon.size}
-              strokeWidth={icon.strokeWidth}
-              color={color.textSecondary}
-            />
-          </Pressable>
-        }
-      />
-
+    <TabScaffold>
       <ScrollView
         contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl
-            refreshing={loading && shelves != null}
-            onRefresh={() => {
-              refresh();
-              loadCharts();
-            }}
-            tintColor={color.textSecondary}
-          />
+          <RefreshControl refreshing={shelves.loading && shelves.data != null} onRefresh={refresh} />
         }
       >
-        <SectionHeader title="Your top tracks" />
-        <View style={styles.chartSwitch}>
-          <Segmented options={WINDOWS} value={chartWindow} onChange={setChartWindow} />
+        <ScreenHeader
+          eyebrow={formatEyebrowDate()}
+          title={greeting()}
+          hero
+          trailing={
+            <IconButton
+              icon={IconSettings}
+              accessibilityLabel="Settings"
+              variant="surface"
+              onPress={() => rootNavigation.navigate('Settings')}
+            />
+          }
+        />
+
+        <View style={styles.stats}>
+          <StatTile label="Today" value={String(today)} unit={today === 1 ? 'PLAY' : 'PLAYS'} />
+          <StatTile label="7 days" value={listenValue} unit={listenUnit} />
+          <StatTile
+            label="Streak"
+            value={String(stats?.streak ?? 0)}
+            unit={(stats?.streak ?? 0) === 1 ? 'DAY' : 'DAYS'}
+            accent={(stats?.streak ?? 0) >= 3}
+          />
         </View>
 
-        {topTracks.length === 0 ? (
-          <View style={styles.chartEmpty}>
-            <Text style={styles.chartHint}>Play something.</Text>
-          </View>
-        ) : (
-          topTracks.map((track, index) => (
-            <ListRow
-              key={track.songId}
-              title={track.title}
-              // Plays only. The artist is already on the cover beside it, and
-              // the one thing a chart row has to say is how often you played it.
-              meta={pluralize(track.plays, 'play')}
-              artworkUri={artworkUrl(track.coverArt)}
-              last={index === topTracks.length - 1}
-              // Opens the album rather than playing: a chart is something you
-              // read, and a row that starts music on a glance is hostile.
-              onPress={
-                track.albumId
-                  ? () => navigation.navigate('Album', { albumId: track.albumId! })
-                  : undefined
+        <View style={styles.keys}>
+          <View style={styles.keyRow}>
+            <QuickKey
+              icon={IconArrowsShuffle}
+              label="Shuffle all"
+              caption="Whole library"
+              primary
+              busy={busy === 'all'}
+              onPress={() => void startMix('all', shuffleLibrary, 'everything on shuffle')}
+            />
+            <QuickKey
+              icon={IconHeart}
+              label="Liked"
+              caption={likedCount != null ? pluralize(likedCount, 'track') : 'Favourites'}
+              onPress={() =>
+                navigation.navigate('Playlist', { playlistId: LIKED_PLAYLIST_ID, playlistName: 'Liked songs' })
               }
             />
-          ))
-        )}
+          </View>
+          <View style={styles.keyRow}>
+            <QuickKey
+              icon={IconHistory}
+              label="History"
+              caption="Recently played"
+              onPress={() => navigation.navigate('History')}
+            />
+            <QuickKey
+              icon={IconChartBar}
+              label="Stats"
+              caption={stats ? `${stats.plays} plays this week` : 'Listening'}
+              onPress={() => navigation.navigate('Stats')}
+            />
+          </View>
+        </View>
 
-        {shelves && (
+        <SectionHeader index="01" title="Mixes" detail={`${mixes.length} READY`} />
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.mixes}
+        >
+          {mixes.map((mix, index) => (
+            <MixCard
+              key={mix.key}
+              index={index + 1}
+              title={mix.title}
+              caption={busy === mix.key ? 'Building…' : mix.caption}
+              hue={MIX_HUES[index % MIX_HUES.length]}
+              width={mixWidth}
+              onPress={() => void startMix(mix.key, mix.start, mix.title)}
+            />
+          ))}
+        </ScrollView>
+
+        <SectionHeader
+          index="02"
+          title="Your chart"
+          action="Stats"
+          onAction={() => navigation.navigate('Stats')}
+        />
+        <Panel padded={false} style={styles.chart}>
+          <View style={styles.chartSwitch}>
+            <Segmented options={WINDOWS} value={chartWindow} onChange={setChartWindow} size="sm" />
+          </View>
+          {chart.length === 0 ? (
+            <View style={styles.chartEmpty}>
+              <Text style={styles.chartHint}>
+                Nothing played {chartWindow === 'day' ? 'today' : `this ${chartWindow}`} yet.
+              </Text>
+            </View>
+          ) : (
+            chart.map((track, index) => {
+              const song: Child = {
+                id: track.songId,
+                isDir: false,
+                title: track.title,
+                artist: track.artist,
+                albumId: track.albumId,
+                coverArt: track.coverArt,
+              };
+              return (
+                <ListRow
+                  key={track.songId}
+                  rank={index + 1}
+                  title={track.title}
+                  subtitle={track.artist}
+                  artworkUri={artworkUrl(track.coverArt)}
+                  active={track.songId === activeId}
+                  playing={isPlaying}
+                  trailingText={`${track.plays}×`}
+                  last={index === chart.length - 1}
+                  onPress={() =>
+                    track.albumId
+                      ? navigation.navigate('Album', { albumId: track.albumId })
+                      : setTrackTarget(song)
+                  }
+                  onLongPress={() => setTrackTarget(song)}
+                  onMore={() => setTrackTarget(song)}
+                />
+              );
+            })
+          )}
+        </Panel>
+
+        {loadingFirst && <LoadingState label="Loading library" />}
+        {shelves.error && !shelves.data && <ErrorState message={shelves.error} onRetry={shelves.refresh} />}
+
+        {shelves.data && (
           <>
             <Shelf
+              index="03"
               title="Recently added"
-              albums={shelves.newest}
+              albums={shelves.data.newest}
               tileSize={tileSize}
               artworkUri={artworkUrl}
               onSelect={openAlbum}
+              onLongPress={setAlbumTarget}
+              showYear
             />
-            {/* Both of these stay empty until enough has been scrobbled, and
-                Shelf renders nothing rather than a labelled empty strip. */}
             <Shelf
+              index="04"
               title="Recently played"
-              albums={shelves.recent}
+              albums={shelves.data.recent}
               tileSize={tileSize}
               artworkUri={artworkUrl}
               onSelect={openAlbum}
+              onLongPress={setAlbumTarget}
             />
             <Shelf
+              index="05"
               title="Most played"
-              albums={shelves.frequent}
+              albums={shelves.data.frequent}
               tileSize={tileSize}
               artworkUri={artworkUrl}
               onSelect={openAlbum}
-            />
-            {/* Rerolls on pull-to-refresh rather than on every render, so it
-                works as a shelf you can return to rather than a slot machine. */}
-            <Shelf
-              title="From the shelf"
-              albums={shelves.random}
-              tileSize={tileSize}
-              artworkUri={artworkUrl}
-              onSelect={openAlbum}
+              onLongPress={setAlbumTarget}
             />
           </>
         )}
-
-        {!shelves && topTracks.length === 0 && (
-          <EmptyState
-            label="Nothing here yet"
-            hint="Check that Navidrome has scanned your library."
+        {random.data && (
+          <Shelf
+            index="06"
+            title="From the shelf"
+            albums={random.data}
+            tileSize={tileSize}
+            artworkUri={artworkUrl}
+            onSelect={openAlbum}
+            onLongPress={setAlbumTarget}
+            action="Reroll"
+            onAction={random.refresh}
+            showYear
           />
         )}
+
+        <View style={styles.footer}>
+          <Label tone="tertiary" size={9.5}>
+            {[
+              'FQ-1',
+              // The build hash Navidrome appends in brackets is noise here.
+              info?.type ? `${info.type} ${(info.version ?? '').replace(/\s*\(.*\)$/, '')}`.trim() : null,
+              'lossless',
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </Label>
+        </View>
       </ScrollView>
-    </View>
+
+      <AlbumActionsSheet
+        visible={albumTarget != null}
+        onClose={() => setAlbumTarget(null)}
+        album={albumTarget}
+      />
+      <TrackActionsSheet
+        visible={trackTarget != null}
+        onClose={() => setTrackTarget(null)}
+        song={trackTarget}
+      />
+    </TabScaffold>
   );
 }
 
 const makeStyles = (color: Palette) =>
   StyleSheet.create({
-    root: { flex: 1, backgroundColor: color.paper },
     content: { paddingBottom: DOCK_CLEARANCE },
-
-    chartSwitch: { paddingHorizontal: layout.screenPadding, paddingBottom: space[4] },
-    chartEmpty: { paddingHorizontal: layout.screenPadding, paddingBottom: space[4] },
-    chartHint: { ...type.meta, color: color.textSecondary, lineHeight: 18 },
-
-    pressed: { opacity: 0.6 },
+    stats: {
+      flexDirection: 'row',
+      gap: space[2],
+      paddingHorizontal: layout.screenPadding,
+      marginTop: space[3],
+    },
+    keys: { paddingHorizontal: layout.screenPadding, marginTop: space[3], gap: space[2] },
+    keyRow: { flexDirection: 'row', gap: space[2] },
+    mixes: { paddingHorizontal: layout.screenPadding, gap: space[3] },
+    chart: { marginHorizontal: layout.screenPadding },
+    chartSwitch: { padding: space[3], paddingBottom: space[2] },
+    chartEmpty: { paddingHorizontal: space[4], paddingBottom: space[4], paddingTop: space[2] },
+    chartHint: { ...type.footnote, color: color.labelSecondary },
+    footer: { alignItems: 'center', paddingTop: space[8] },
   });

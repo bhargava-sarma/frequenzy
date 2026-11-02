@@ -1,6 +1,5 @@
 import {
   createContext,
-  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -9,7 +8,6 @@ import {
   type ReactNode,
 } from 'react';
 import { useColorScheme } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   cancelAnimation,
   interpolateColor,
@@ -19,290 +17,230 @@ import {
   type DerivedValue,
   type SharedValue,
 } from 'react-native-reanimated';
+import { create } from 'zustand';
 
-import { fallbackArtworkPalette, palettes, type ArtworkPalette, type Palette } from './tokens';
-import type { ArtworkAccent } from './artworkColor';
+import type { ArtworkColorSet } from './artworkColor';
 import { timings } from './motion';
+import {
+  buildPalette,
+  fallbackArtworkPalette,
+  modeOf,
+  presetAccent,
+  type AccentPair,
+  type ArtworkPalette,
+  type Palette,
+  type ThemeMode,
+  type ThemeName,
+} from './tokens';
+import { useSettingsStore } from '../store/useSettingsStore';
+
+/** Secondary and tertiary text on the immersive screens' artwork ground. */
+const IMMERSIVE_SECONDARY = '#C6C4BD';
+const IMMERSIVE_TERTIARY = '#96948E';
 
 /**
  * Live theme.
  *
  * Two contexts, split by how often they change and who cares:
  *
- *   - The theme context carries the palette and the user's preferences.
- *     Nearly every component reads it, and it changes when the theme flips
- *     or the accent moves to a new track — once, not per frame.
- *   - The artwork context carries the background mesh colours and the shared
- *     values that crossfade them. Only backgrounds read it, so a track change
- *     re-renders a handful of gradient views rather than the whole tree.
+ *   - The theme context carries the palette and the few appearance
+ *     settings components draw with (blur, tint, reduced motion). Nearly
+ *     everything reads it; it changes when the theme flips or the accent
+ *     moves to a new track — once, not per frame.
+ *   - The artwork context carries the ambient mesh colours and the shared
+ *     value that crossfades them. Only backgrounds read it, so a track
+ *     change re-renders a handful of gradient views rather than the tree.
  *
- * Colour transitions happen on the UI thread. The accent used to fade by
- * stepping a new palette through React twenty times, re-rendering every
- * themed component four times a second for five seconds; now `color.accent`
- * changes once, and anything that wants the change to be smooth reads
- * useAnimatedAccent() instead.
- *
- * Styles are built per palette and cached, so switching is a re-render rather
- * than a rebuild of every StyleSheet on every render.
+ * The player is always a dark, immersive face — over artwork colour, white
+ * type is the only thing that reads everywhere — so the provider also
+ * builds an "immersive" palette with the accent conditioned for a dark
+ * ground, and <ImmersiveScope> swaps it in for everything inside it.
  */
 
-export type ThemePreference = 'system' | 'light' | 'dark';
+// ---------------------------------------------------------------------------
+// Live artwork colours
+// ---------------------------------------------------------------------------
 
-const STORAGE_KEY = 'settings.theme';
-const ACCENT_KEY = 'settings.artworkAccent';
-const AMBIENT_KEY = 'settings.ambient';
-const BLUR_INTENSITY_KEY = 'settings.blurIntensity';
-const SURFACE_OPACITY_KEY = 'settings.surfaceOpacity';
+interface ArtworkColorStore {
+  colors: ArtworkColorSet | null;
+  /**
+   * A cover with no vivid hue keeps the previous accent rather than snapping
+   * to the preset: the UI never loses its highlight colour mid-session, and
+   * a monochrome cover still contributes its greys to the mesh.
+   */
+  setColors: (next: ArtworkColorSet | null) => void;
+}
+
+export const useArtworkColorStore = create<ArtworkColorStore>((set, get) => ({
+  colors: null,
+  setColors: (next) => {
+    const previous = get().colors;
+    if (!next) {
+      if (previous) set({ colors: null });
+      return;
+    }
+    const merged: ArtworkColorSet = {
+      light: { ...next.light, accent: next.light.accent ?? previous?.light.accent ?? null },
+      dark: { ...next.dark, accent: next.dark.accent ?? previous?.dark.accent ?? null },
+    };
+    set({ colors: merged });
+  },
+}));
+
+// ---------------------------------------------------------------------------
+// Contexts
+// ---------------------------------------------------------------------------
 
 interface ThemeContextValue {
   palette: Palette;
-  /** What the user chose, which may be "follow the OS". */
-  preference: ThemePreference;
-  /** What that resolved to right now. */
-  resolved: 'light' | 'dark';
-  setPreference: (preference: ThemePreference) => void;
-  /** Whether the accent and the background follow the current artwork. */
-  artworkAccentEnabled: boolean;
-  setArtworkAccentEnabled: (enabled: boolean) => void;
-  /** Strength of the background mesh. 0 turns it off entirely. */
-  ambientIntensity: number;
-  setAmbientIntensity: (intensity: number) => void;
-  /** How hard glass surfaces blur, 0-100. Zero is the same as off. */
+  name: ThemeName;
+  resolved: ThemeMode;
+  /** The always-dark palette the player, queue and lyrics use. */
+  immersivePalette: Palette;
   blurIntensity: number;
-  setBlurIntensity: (intensity: number) => void;
-  /** How strongly glass is tinted, 0-1. 0.75 is the designed default. */
   surfaceOpacity: number;
-  setSurfaceOpacity: (opacity: number) => void;
-  /**
-   * Pushed in by the bridge that watches what's playing.
-   *
-   * Lives here rather than in its own context so the accent arrives already
-   * folded into the palette. Every component reads `color.accent` already, so
-   * nothing had to learn about artwork to follow it.
-   */
-  setArtworkAccent: (accent: ArtworkAccent | null) => void;
-  /** The mesh palette for the current cover, conditioned for `resolved`. */
-  setArtworkPalette: (palette: ArtworkPalette | null) => void;
+  ambientIntensity: number;
+  reduceMotion: boolean;
+  gridPaper: boolean;
+  /** True inside ImmersiveScope. */
+  immersive: boolean;
 }
 
+const fallbackPalette = buildPalette('dark', presetAccent('orange', 'dark'));
+
 const ThemeContext = createContext<ThemeContextValue>({
-  palette: palettes.dark,
-  preference: 'dark',
+  palette: fallbackPalette,
+  name: 'dark',
   resolved: 'dark',
-  setPreference: () => {},
-  artworkAccentEnabled: true,
-  setArtworkAccentEnabled: () => {},
-  ambientIntensity: 1,
-  setAmbientIntensity: () => {},
+  immersivePalette: fallbackPalette,
   blurIntensity: 40,
-  setBlurIntensity: () => {},
   surfaceOpacity: 0.75,
-  setSurfaceOpacity: () => {},
-  setArtworkAccent: () => {},
-  setArtworkPalette: () => {},
+  ambientIntensity: 0.8,
+  reduceMotion: false,
+  gridPaper: true,
+  immersive: false,
 });
 
+export interface MeshLayer {
+  /** Conditioned for the app's theme — the wash behind lists. */
+  mesh: ArtworkPalette;
+  /** Conditioned for dark — the player's immersive background. */
+  immersive: ArtworkPalette;
+}
+
 interface MeshLayers {
-  a: ArtworkPalette;
-  b: ArtworkPalette;
+  a: MeshLayer;
+  b: MeshLayer;
 }
 
 interface ArtworkContextValue {
-  /** The palette the mesh is showing or heading to. */
-  palette: ArtworkPalette;
-  /** False when the fallback palette is in use. */
+  current: MeshLayer;
   fromArtwork: boolean;
-  /** Two colour sets the mesh crossfades between. */
   layers: MeshLayers;
   /** 0 shows layer a, 1 shows layer b. */
   mix: SharedValue<number>;
-  accentFrom: SharedValue<string>;
-  accentTo: SharedValue<string>;
-  accentProgress: SharedValue<number>;
 }
 
 const ArtworkContext = createContext<ArtworkContextValue | null>(null);
 
-function paletteKey(palette: ArtworkPalette): string {
-  return `${palette.vibrant}${palette.dominant}${palette.muted}${palette.deep}`;
-}
+const paletteKey = (p: ArtworkPalette) => `${p.vibrant}${p.dominant}${p.muted}${p.deep}`;
+const layerKey = (layer: MeshLayer) => `${paletteKey(layer.mesh)}|${paletteKey(layer.immersive)}`;
+
+// ---------------------------------------------------------------------------
+// Provider
+// ---------------------------------------------------------------------------
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const systemScheme = useColorScheme();
-  const [preference, setPreferenceState] = useState<ThemePreference>('dark');
-  const [artworkAccentEnabled, setArtworkAccentEnabledState] = useState(true);
-  const [ambientIntensity, setAmbientIntensityState] = useState(1);
-  const [blurIntensity, setBlurIntensityState] = useState(40);
-  const [surfaceOpacity, setSurfaceOpacityState] = useState(0.75);
-  const [artworkAccent, setArtworkAccentState] = useState<ArtworkAccent | null>(null);
-  const [artworkPalette, setArtworkPaletteState] = useState<ArtworkPalette | null>(null);
+  const theme = useSettingsStore((s) => s.theme);
+  const accentMode = useSettingsStore((s) => s.accentMode);
+  const accentPreset = useSettingsStore((s) => s.accentPreset);
+  const blur = useSettingsStore((s) => s.blur);
+  const tint = useSettingsStore((s) => s.tint);
+  const ambient = useSettingsStore((s) => s.ambient);
+  const reduceMotion = useSettingsStore((s) => s.reduceMotion);
+  const gridPaper = useSettingsStore((s) => s.gridPaper);
+  const artworkColors = useArtworkColorStore((s) => s.colors);
 
-  const setArtworkAccent = useCallback((next: ArtworkAccent | null) => {
-    setArtworkAccentState((current) =>
-      current && next && current.accent === next.accent && current.accentInk === next.accentInk
-        ? current
-        : next,
-    );
-  }, []);
+  const name: ThemeName =
+    theme === 'system' ? (systemScheme === 'light' ? 'light' : 'dark') : theme;
+  const mode = modeOf(name);
+  const art = accentMode === 'artwork' ? artworkColors : null;
 
-  const setArtworkPalette = useCallback((next: ArtworkPalette | null) => {
-    setArtworkPaletteState((current) =>
-      current && next && paletteKey(current) === paletteKey(next) ? current : next,
-    );
-  }, []);
+  const accentFor = (m: ThemeMode): AccentPair =>
+    art?.[m].accent ?? presetAccent(accentPreset, m);
 
-  // Read the stored choice once. Until it lands the app renders dark, which
-  // is the default anyway, so there is no flash to guard against.
-  useEffect(() => {
-    let cancelled = false;
-    void AsyncStorage.getItem(STORAGE_KEY).then((stored) => {
-      if (cancelled) return;
-      if (stored === 'system' || stored === 'light' || stored === 'dark') {
-        setPreferenceState(stored);
-      }
-    });
-    void AsyncStorage.getItem(ACCENT_KEY).then((stored) => {
-      if (!cancelled && stored != null) setArtworkAccentEnabledState(stored === 'true');
-    });
-    void AsyncStorage.getItem(AMBIENT_KEY).then((stored) => {
-      const parsed = stored != null ? Number(stored) : NaN;
-      if (!cancelled && Number.isFinite(parsed)) setAmbientIntensityState(parsed);
-    });
-    void AsyncStorage.getItem(BLUR_INTENSITY_KEY).then((stored) => {
-      const parsed = stored != null ? Number(stored) : NaN;
-      if (!cancelled && Number.isFinite(parsed)) setBlurIntensityState(parsed);
-    });
-    void AsyncStorage.getItem(SURFACE_OPACITY_KEY).then((stored) => {
-      const parsed = stored != null ? Number(stored) : NaN;
-      if (!cancelled && Number.isFinite(parsed)) setSurfaceOpacityState(parsed);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const light = accentFor('light');
+  const dark = accentFor('dark');
 
-  const setPreference = useCallback((next: ThemePreference) => {
-    setPreferenceState(next);
-    // Fire and forget: the UI has already changed, and a failed write costs
-    // the preference on next launch rather than anything the user is doing now.
-    void AsyncStorage.setItem(STORAGE_KEY, next);
-  }, []);
+  const palette = useMemo(
+    () => buildPalette(name, mode === 'light' ? light : dark),
+    // The accent pairs are compared by value, so a re-render with the same
+    // colours keeps the same palette object — the style cache depends on it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [name, mode, light.accent, light.accentInk, dark.accent, dark.accentInk],
+  );
 
-  const setArtworkAccentEnabled = useCallback((enabled: boolean) => {
-    setArtworkAccentEnabledState(enabled);
-    if (!enabled) {
-      setArtworkAccentState(null);
-      setArtworkPaletteState(null);
-    }
-    void AsyncStorage.setItem(ACCENT_KEY, String(enabled));
-  }, []);
+  const immersivePalette = useMemo(
+    () => {
+      const base = mode === 'dark' ? palette : buildPalette('dark', dark);
+      // The immersive screens sit on the artwork's colours, not on near-black,
+      // so the quieter text steps are lifted to keep their contrast there.
+      return { ...base, labelSecondary: IMMERSIVE_SECONDARY, labelTertiary: IMMERSIVE_TERTIARY };
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mode, palette, dark.accent, dark.accentInk],
+  );
 
-  const setAmbientIntensity = useCallback((intensity: number) => {
-    setAmbientIntensityState(intensity);
-    void AsyncStorage.setItem(AMBIENT_KEY, String(intensity));
-  }, []);
+  // --- Mesh, crossfaded on the UI thread ----------------------------------
 
-  const setBlurIntensity = useCallback((intensity: number) => {
-    setBlurIntensityState(intensity);
-    void AsyncStorage.setItem(BLUR_INTENSITY_KEY, String(intensity));
-  }, []);
+  const target = useMemo<MeshLayer>(
+    () => ({
+      mesh: art ? art[mode].palette : fallbackArtworkPalette(palette.accent, mode),
+      immersive: art ? art.dark.palette : fallbackArtworkPalette(immersivePalette.accent, 'dark'),
+    }),
+    [art, mode, palette.accent, immersivePalette.accent],
+  );
 
-  const setSurfaceOpacity = useCallback((opacity: number) => {
-    setSurfaceOpacityState(opacity);
-    void AsyncStorage.setItem(SURFACE_OPACITY_KEY, String(opacity));
-  }, []);
-
-  const resolved: 'light' | 'dark' =
-    preference === 'system' ? (systemScheme === 'light' ? 'light' : 'dark') : preference;
-
-  const palette = useMemo<Palette>(() => {
-    const base = palettes[resolved];
-    if (!artworkAccentEnabled || !artworkAccent) return base;
-    return { ...base, accent: artworkAccent.accent, accentInk: artworkAccent.accentInk };
-  }, [resolved, artworkAccentEnabled, artworkAccent]);
-
-  // --- Accent, animated on the UI thread ----------------------------------
-
-  const accentFrom = useSharedValue(palette.accent);
-  const accentTo = useSharedValue(palette.accent);
-  const accentProgress = useSharedValue(1);
-  const accentResolved = useRef(resolved);
-
-  useEffect(() => {
-    const themeFlipped = accentResolved.current !== resolved;
-    accentResolved.current = resolved;
-
-    if (themeFlipped) {
-      // The whole palette just changed under it; a slow fade of the accent
-      // alone would lag visibly behind everything else.
-      cancelAnimation(accentProgress);
-      accentFrom.value = palette.accent;
-      accentTo.value = palette.accent;
-      accentProgress.value = 1;
-      return;
-    }
-
-    if (accentTo.value === palette.accent) return;
-
-    // Starts from wherever an interrupted fade had got to, so skipping
-    // through tracks quickly never snaps the colour back.
-    const current = interpolateColor(
-      accentProgress.value,
-      [0, 1],
-      [accentFrom.value, accentTo.value],
-    );
-    accentFrom.value = String(current);
-    accentTo.value = palette.accent;
-    accentProgress.value = 0;
-    accentProgress.value = withTiming(1, timings.crossfade);
-  }, [palette.accent, resolved, accentFrom, accentTo, accentProgress]);
-
-  // --- Mesh palette, crossfaded on the UI thread --------------------------
-
-  const fromArtwork = artworkAccentEnabled && artworkPalette != null;
-  const meshPalette =
-    artworkAccentEnabled && artworkPalette ? artworkPalette : fallbackArtworkPalette[resolved];
-
-  const [layers, setLayers] = useState<MeshLayers>(() => ({ a: meshPalette, b: meshPalette }));
+  const [layers, setLayers] = useState<MeshLayers>(() => ({ a: target, b: target }));
   const mix = useSharedValue(0);
-  const shownKey = useRef(paletteKey(meshPalette));
-  const meshResolved = useRef(resolved);
+  const shownKey = useRef(layerKey(target));
+  const shownMode = useRef(mode);
   const pendingMix = useRef<number | null>(null);
 
   /**
    * Swaps the new colours into whichever layer is less visible, then fades
-   * toward it.
-   *
-   * At rest the hidden layer is fully transparent, so the swap itself is
-   * invisible and the fade does all the work. If a fade is interrupted, the
-   * less visible layer is at most half showing, which bounds the jump to a
-   * soft shift in an already soft background.
+   * toward it. At rest the hidden layer is fully transparent, so the swap is
+   * invisible and the fade does all the work; an interrupted fade bounds the
+   * jump to a soft shift in an already soft background.
    */
   useEffect(() => {
-    const key = paletteKey(meshPalette);
-    const themeFlipped = meshResolved.current !== resolved;
-    meshResolved.current = resolved;
+    const key = layerKey(target);
+    const flipped = shownMode.current !== mode;
+    shownMode.current = mode;
     if (key === shownKey.current) return;
     shownKey.current = key;
 
-    if (themeFlipped) {
+    if (flipped) {
+      // The whole palette just changed; a slow fade of the wash alone would
+      // lag visibly behind everything else.
       cancelAnimation(mix);
       mix.value = 0;
       pendingMix.current = null;
-      setLayers({ a: meshPalette, b: meshPalette });
+      setLayers({ a: target, b: target });
       return;
     }
 
     if (mix.value >= 0.5) {
       pendingMix.current = 0;
-      setLayers((current) => ({ a: meshPalette, b: current.b }));
+      setLayers((current) => ({ a: target, b: current.b }));
     } else {
       pendingMix.current = 1;
-      setLayers((current) => ({ a: current.a, b: meshPalette }));
+      setLayers((current) => ({ a: current.a, b: target }));
     }
-  }, [meshPalette, resolved, mix]);
+  }, [target, mode, mix]);
 
-  // Started after the new colours have committed, so the layer never begins
+  // Started after the new colours have committed, so a layer never begins
   // fading in while still showing the previous track's colours.
   useEffect(() => {
     if (pendingMix.current == null) return;
@@ -313,49 +251,22 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const value = useMemo<ThemeContextValue>(
     () => ({
       palette,
-      preference,
-      resolved,
-      setPreference,
-      artworkAccentEnabled,
-      setArtworkAccentEnabled,
-      ambientIntensity,
-      setAmbientIntensity,
-      blurIntensity,
-      setBlurIntensity,
-      surfaceOpacity,
-      setSurfaceOpacity,
-      setArtworkAccent,
-      setArtworkPalette,
+      name,
+      resolved: mode,
+      immersivePalette,
+      blurIntensity: blur,
+      surfaceOpacity: tint,
+      ambientIntensity: ambient,
+      reduceMotion,
+      gridPaper,
+      immersive: false,
     }),
-    [
-      palette,
-      preference,
-      resolved,
-      setPreference,
-      artworkAccentEnabled,
-      setArtworkAccentEnabled,
-      ambientIntensity,
-      setAmbientIntensity,
-      blurIntensity,
-      setBlurIntensity,
-      surfaceOpacity,
-      setSurfaceOpacity,
-      setArtworkAccent,
-      setArtworkPalette,
-    ],
+    [palette, name, mode, immersivePalette, blur, tint, ambient, reduceMotion, gridPaper],
   );
 
   const artwork = useMemo<ArtworkContextValue>(
-    () => ({
-      palette: meshPalette,
-      fromArtwork,
-      layers,
-      mix,
-      accentFrom,
-      accentTo,
-      accentProgress,
-    }),
-    [meshPalette, fromArtwork, layers, mix, accentFrom, accentTo, accentProgress],
+    () => ({ current: target, fromArtwork: art != null, layers, mix }),
+    [target, art, layers, mix],
   );
 
   return (
@@ -365,14 +276,39 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   );
 }
 
-/** The live palette. Use this instead of importing `color` from tokens. */
+/**
+ * Renders its children against the immersive (dark) palette.
+ *
+ * Context flows through portals, so sheets opened from inside — track
+ * actions from the player — come up dark too, matching what they rose from.
+ */
+export function ImmersiveScope({ children }: { children: ReactNode }) {
+  const parent = useContext(ThemeContext);
+  const value = useMemo<ThemeContextValue>(
+    () => ({
+      ...parent,
+      palette: parent.immersivePalette,
+      name: parent.immersivePalette.name,
+      resolved: 'dark',
+      immersive: true,
+    }),
+    [parent],
+  );
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
+}
+
+// ---------------------------------------------------------------------------
+// Hooks
+// ---------------------------------------------------------------------------
+
+/** The live palette. Use this instead of importing a palette from tokens. */
 export function useTheme(): Palette {
   return useContext(ThemeContext).palette;
 }
 
-/** Preference plumbing, for the settings screen and the accent bridge. */
-export function useThemeControls(): Omit<ThemeContextValue, 'palette'> {
-  const { palette: _palette, ...controls } = useContext(ThemeContext);
+/** Appearance values components draw with. Respects ImmersiveScope. */
+export function useThemeControls(): Omit<ThemeContextValue, 'palette' | 'immersivePalette'> {
+  const { palette: _p, immersivePalette: _i, ...controls } = useContext(ThemeContext);
   return controls;
 }
 
@@ -383,14 +319,17 @@ function useArtworkContext(): ArtworkContextValue {
 }
 
 /**
- * The current mesh palette as plain colours — artwork-derived when available
- * and enabled, otherwise the fallback. For static gradients (a hero backdrop,
- * a tile glow). Changes once per track; for a smooth background use
+ * The current mesh colours as plain values — for static gradients like a
+ * hero backdrop. Changes once per track; for a smooth background use
  * AmbientBackground, which crossfades.
  */
 export function useArtworkPalette(): ArtworkPalette & { fromArtwork: boolean } {
-  const { palette, fromArtwork } = useArtworkContext();
-  return useMemo(() => ({ ...palette, fromArtwork }), [palette, fromArtwork]);
+  const { current, fromArtwork } = useArtworkContext();
+  const { immersive } = useThemeControls();
+  return useMemo(
+    () => ({ ...(immersive ? current.immersive : current.mesh), fromArtwork }),
+    [current, fromArtwork, immersive],
+  );
 }
 
 /** The two crossfading colour layers behind AmbientBackground. */
@@ -400,35 +339,46 @@ export function useMeshLayers(): { layers: MeshLayers; mix: SharedValue<number> 
 }
 
 /**
- * The accent as a UI-thread value that fades between tracks.
+ * A colour as a UI-thread value that fades to each new target.
  *
- * Use in useAnimatedStyle for large accent fills that are on screen during a
- * track change — the play button, a progress fill — where the single-step
- * change of `color.accent` would read as a cut:
- *
- *   const accent = useAnimatedAccent();
- *   const fill = useAnimatedStyle(() => ({ backgroundColor: accent.value }));
+ * For large accent fills that are on screen during a track change — the
+ * play key, a progress fill — where a one-step change reads as a cut.
+ * Starts from wherever an interrupted fade had reached, so skipping quickly
+ * through tracks never snaps the colour back.
  */
-export function useAnimatedAccent(): DerivedValue<string> {
-  const { accentFrom, accentTo, accentProgress } = useArtworkContext();
+export function useAnimatedColor(target: string): DerivedValue<string> {
+  const from = useSharedValue(target);
+  const to = useSharedValue(target);
+  const progress = useSharedValue(1);
+
+  useEffect(() => {
+    if (to.value === target) return;
+    const current = interpolateColor(progress.value, [0, 1], [from.value, to.value]);
+    from.value = String(current);
+    to.value = target;
+    progress.value = 0;
+    progress.value = withTiming(1, timings.crossfade);
+  }, [target, from, to, progress]);
+
   return useDerivedValue(() =>
-    String(interpolateColor(accentProgress.value, [0, 1], [accentFrom.value, accentTo.value])),
+    String(interpolateColor(progress.value, [0, 1], [from.value, to.value])),
   );
+}
+
+/** The current accent, crossfading between tracks. */
+export function useAnimatedAccent(): DerivedValue<string> {
+  return useAnimatedColor(useTheme().accent);
 }
 
 /**
  * Per-palette style cache.
  *
- * Keyed on the factory function identity, which is why factories must live at
- * module scope — one declared inside a component would be a new function every
- * render and would never hit.
- *
- * The inner map is bounded. The accent changes with every track, so each play
- * produces a fresh palette object — and a Map keyed on those holds them alive
- * forever. Two entries is enough for the case that actually repeats: the
- * palette in use and the one just replaced.
+ * Keyed on the factory function identity, so factories must live at module
+ * scope. The inner map is bounded: the accent changes with every track, so
+ * each play produces a fresh palette, and two live at once (the app's and
+ * the player's) plus the two they replaced is all that ever repeats.
  */
-const MAX_CACHED_PALETTES = 2;
+const MAX_CACHED_PALETTES = 4;
 
 const styleCache = new WeakMap<object, Map<Palette, unknown>>();
 
@@ -444,8 +394,6 @@ export function useThemedStyles<T>(factory: (color: Palette) => T): T {
 
     const cached = byPalette.get(palette);
     if (cached) {
-      // Re-inserting marks it as most recent, so the eviction below always
-      // drops the least recently used rather than an arbitrary entry.
       byPalette.delete(palette);
       byPalette.set(palette, cached);
       return cached as T;
@@ -455,7 +403,6 @@ export function useThemedStyles<T>(factory: (color: Palette) => T): T {
     byPalette.set(palette, built);
 
     while (byPalette.size > MAX_CACHED_PALETTES) {
-      // Map iterates in insertion order, so the first key is the oldest.
       const oldest = byPalette.keys().next();
       if (oldest.done) break;
       byPalette.delete(oldest.value);

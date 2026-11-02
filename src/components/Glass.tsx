@@ -11,10 +11,10 @@ import {
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 
 import { blurNeedsTarget, realBlurSupported, useBlurTarget } from './BlurTarget';
+import { useSvgId } from '../utils/svgId';
 import {
   glass,
   glassBorderWidth,
-  hairline,
   radius as radii,
   withAlpha,
   type GlassVariant,
@@ -34,8 +34,11 @@ export type { GlassVariant };
  *      readable if the blur renders nothing.
  *   3. Sheen — a light gradient falling off from the top edge.
  *   4. Rim — a gradient stroke, bright along the top, faint along the bottom.
- *   5. Optional soft shadow, drawn outside the shape so it never shows through
- *      the translucent fill.
+ *   5. Inner glow — a second, fainter line just inside the rim. It is what
+ *      gives the pane a thickness: light catching the far edge of the glass
+ *      as well as the near one.
+ *   6. Optional soft shadow, drawn outside the shape so it never shows
+ *      through the translucent fill.
  *
  * The sheen and rim share one SVG, sized to the surface. react-native-svg on
  * Android renders each Svg into a bitmap of its own size, so a glass surface
@@ -72,6 +75,14 @@ const ANDROID_OVERLAY_INTENSITY = 4;
 
 /** Sheen fades out by this far down, however tall the surface. */
 const SHEEN_DEPTH = 56;
+
+/**
+ * A surface that asked for blur but can't have it (older Android, a modal
+ * window with no reachable target) floats over scrolling text. Unblurred,
+ * even a few percent of that text reads through crisp, which looks like a
+ * rendering fault rather than glass, so those surfaces go solid — what iOS
+ * itself does under Reduce Transparency.
+ */
 
 function blurStrength(userIntensity: number, scale: number) {
   const strength = userIntensity * scale;
@@ -134,8 +145,8 @@ export function Glass({
 }: GlassProps) {
   const color = useTheme();
   const { resolved, blurIntensity, surfaceOpacity } = useThemeControls();
-  const target = useBlurTarget();
   const material = glass[resolved][variant];
+  const target = useBlurTarget();
 
   const [size, setSize] = useState<{ width: number; height: number } | null>(null);
   const drawsSvg = !lite && (sheen || border);
@@ -168,7 +179,11 @@ export function Glass({
   const tintScale = 0.4 + 0.8 * surfaceOpacity;
   const alpha =
     tintOpacity ??
-    Math.min(0.98, (realBlur ? material.blurTint : material.fakeTint) * tintScale);
+    (realBlur
+      ? Math.min(0.98, material.blurTint * tintScale)
+      : blur
+        ? 1
+        : Math.min(0.98, material.fakeTint * tintScale));
   const tint = withAlpha(tintColor ?? color[material.tintSource], alpha);
 
   const shadowStyle: ViewStyle | null = shadow
@@ -223,6 +238,7 @@ export function Glass({
             sheen={sheen ? material.sheen : 0}
             rimTop={border ? material.borderTop : 0}
             rimBottom={border ? material.borderBottom : 0}
+            innerGlow={border ? material.innerGlow : 0}
           />
         )}
 
@@ -232,8 +248,9 @@ export function Glass({
               StyleSheet.absoluteFill,
               {
                 borderRadius: cornerRadius,
-                borderWidth: hairline * 2,
-                borderColor: withAlpha(color.glassHighlight, material.borderTop * 0.55),
+                borderWidth: 1,
+                borderColor: withAlpha(color.glassHighlight, material.borderTop * 0.5),
+                borderBottomColor: withAlpha(color.glassEdge, material.borderBottom),
               },
             ]}
           />
@@ -258,6 +275,7 @@ const GlassHighlights = React.memo(function GlassHighlights({
   sheen,
   rimTop,
   rimBottom,
+  innerGlow,
 }: {
   width: number;
   height: number;
@@ -267,18 +285,26 @@ const GlassHighlights = React.memo(function GlassHighlights({
   sheen: number;
   rimTop: number;
   rimBottom: number;
+  innerGlow: number;
 }) {
+  const sheenId = useSvgId('sheen');
+  const rimId = useSvgId('rim');
+  const glowId = useSvgId('glow');
   const stroke = glassBorderWidth;
   const inset = stroke / 2;
   const rim = Math.max(0, Math.min(radius, width / 2, height / 2) - inset);
   const drawRim = rimTop > 0 || rimBottom > 0;
+  // The inner line sits 1.5pt inside the rim, following the same curve.
+  const glowInset = inset + 1.5;
+  const glowRadius = Math.max(0, Math.min(radius, width / 2, height / 2) - glowInset);
+  const drawGlow = innerGlow > 0 && width > 8 && height > 8;
 
   return (
     <Svg width={width} height={height} style={StyleSheet.absoluteFill}>
       <Defs>
         {sheen > 0 && (
           <LinearGradient
-            id="sheen"
+            id={sheenId}
             x1="0"
             y1="0"
             x2="0"
@@ -290,14 +316,23 @@ const GlassHighlights = React.memo(function GlassHighlights({
           </LinearGradient>
         )}
         {drawRim && (
-          <LinearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+          <LinearGradient id={rimId} x1="0" y1="0" x2="0" y2="1">
             <Stop offset="0" stopColor={highlight} stopOpacity={rimTop} />
             <Stop offset="0.45" stopColor={highlight} stopOpacity={rimTop * 0.3} />
             <Stop offset="1" stopColor={edge} stopOpacity={rimBottom} />
           </LinearGradient>
         )}
+        {drawGlow && (
+          // Brightest at the bottom: light entering the top of the pane
+          // catches its lower inside edge, the way it does on real glass.
+          <LinearGradient id={glowId} x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor={highlight} stopOpacity={innerGlow * 0.4} />
+            <Stop offset="0.6" stopColor={highlight} stopOpacity={0} />
+            <Stop offset="1" stopColor={highlight} stopOpacity={innerGlow} />
+          </LinearGradient>
+        )}
       </Defs>
-      {sheen > 0 && <Rect x={0} y={0} width={width} height={height} fill="url(#sheen)" />}
+      {sheen > 0 && <Rect x={0} y={0} width={width} height={height} fill={`url(#${sheenId})`} />}
       {drawRim && (
         <Rect
           x={inset}
@@ -307,8 +342,21 @@ const GlassHighlights = React.memo(function GlassHighlights({
           rx={rim}
           ry={rim}
           fill="none"
-          stroke="url(#rim)"
+          stroke={`url(#${rimId})`}
           strokeWidth={stroke}
+        />
+      )}
+      {drawGlow && (
+        <Rect
+          x={glowInset}
+          y={glowInset}
+          width={Math.max(0, width - glowInset * 2)}
+          height={Math.max(0, height - glowInset * 2)}
+          rx={glowRadius}
+          ry={glowRadius}
+          fill="none"
+          stroke={`url(#${glowId})`}
+          strokeWidth={1}
         />
       )}
     </Svg>

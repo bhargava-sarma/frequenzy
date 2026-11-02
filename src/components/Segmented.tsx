@@ -1,37 +1,39 @@
-import { Pressable, StyleSheet, Text } from 'react-native';
+import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
-import { Glass } from './Glass';
 import { SlidingPill } from './SlidingPill';
-import { layout, radius, space, type } from '../theme/tokens';
+import { radius, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useThemedStyles } from '../theme/ThemeProvider';
+import { haptics } from '../utils/haptics';
 
 /**
- * Mode switch: a glass capsule with a pill that slides to the selection.
+ * A row of mode keys in a recessed well, with a raised key that slides to
+ * the selection — the function-select strip of a hardware panel.
  *
- * Spans the full width with its segments sharing it evenly. The pill is the
- * only moving part and it springs, stretching as it travels, so switching
- * reads as one continuous gesture rather than a highlight jumping between
- * boxes.
+ * Spans the full width with segments sharing it evenly. The pill springs and
+ * stretches as it travels, so switching reads as one movement.
  */
 export interface SegmentedProps<T extends string> {
   options: readonly { value: T; label: string }[];
   value: T;
   onChange: (value: T) => void;
-  /**
-   * Which surface it sits on. Kept for existing call sites; glass reads the
-   * same over either, so it no longer changes the rendering.
-   */
-  surface?: 'paper' | 'panel';
+  size?: 'sm' | 'md';
+  style?: StyleProp<ViewStyle>;
 }
 
-export function Segmented<T extends string>({ options, value, onChange }: SegmentedProps<T>) {
+export function Segmented<T extends string>({
+  options,
+  value,
+  onChange,
+  size = 'md',
+  style,
+}: SegmentedProps<T>) {
   const styles = useThemedStyles(makeStyles);
   const selectedIndex = options.findIndex((option) => option.value === value);
 
   return (
-    <Glass variant="thin" blur radius={radius.full} style={styles.root}>
-      <SlidingPill index={selectedIndex} count={options.length} />
+    <View style={[styles.root, size === 'sm' && styles.rootSmall, style]}>
+      <SlidingPill index={selectedIndex} count={options.length} inset={3} radius={radius.sm} />
       {options.map((option) => {
         const selected = option.value === value;
         return (
@@ -39,19 +41,21 @@ export function Segmented<T extends string>({ options, value, onChange }: Segmen
             key={option.value}
             accessibilityRole="tab"
             accessibilityState={{ selected }}
-            onPress={() => onChange(option.value)}
+            accessibilityLabel={option.label}
+            onPress={() => {
+              if (selected) return;
+              haptics.tick();
+              onChange(option.value);
+            }}
             style={({ pressed }) => [styles.segment, pressed && !selected && styles.pressed]}
           >
-            <Text
-              style={[styles.label, selected && styles.labelSelected]}
-              numberOfLines={1}
-            >
+            <Text style={[styles.label, selected && styles.labelSelected]} numberOfLines={1}>
               {option.label}
             </Text>
           </Pressable>
         );
       })}
-    </Glass>
+    </View>
   );
 }
 
@@ -60,15 +64,20 @@ const makeStyles = (color: Palette) =>
     root: {
       flexDirection: 'row',
       alignSelf: 'stretch',
-      minHeight: layout.pillHeight + 6,
+      height: 40,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: color.separator,
+      backgroundColor: color.surfaceSunken,
     },
+    rootSmall: { height: 34 },
     segment: {
       flex: 1,
-      paddingHorizontal: space[3],
+      paddingHorizontal: space[2],
       alignItems: 'center',
       justifyContent: 'center',
     },
     pressed: { opacity: 0.6 },
-    label: { ...type.callout, color: color.labelSecondary },
+    label: { ...type.labelBold, color: color.labelSecondary },
     labelSelected: { color: color.label },
   });

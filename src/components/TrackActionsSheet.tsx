@@ -1,129 +1,240 @@
-import { useState } from 'react';
-import { ScrollView } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Share, StyleSheet, View } from 'react-native';
 
 import { AddToPlaylistSheet } from './AddToPlaylistSheet';
-import { Sheet, SheetOption } from './Sheet';
+import {
+  IconAlbum,
+  IconCornerDownRight,
+  IconHeart,
+  IconHeartFilled,
+  IconInfoCircle,
+  IconListDetails,
+  IconPlayerPlayFilled,
+  IconPlaylistAdd,
+  IconRadio,
+  IconShare,
+  IconUser,
+  type IconComponent,
+} from './icons';
+import { Keycap, KeyRow } from './Keycap';
+import { Sheet, SheetRow } from './Sheet';
+import { TrackInfoSheet } from './TrackInfoSheet';
+import { useArtwork } from '../hooks/useArtwork';
 import { navigateToAlbum, navigateToArtist } from '../navigation/ref';
+import { EmptyMixError, startTrackRadio } from '../player/mixes';
+import { useFavoritesStore, useStarred } from '../store/useFavoritesStore';
 import { usePlayerStore } from '../store/usePlayerStore';
-import { useServerStore } from '../store/useServerStore';
+import { errorMessage, toast } from '../store/useToastStore';
+import { layout, space } from '../theme/tokens';
 import type { Child } from '../types/subsonic';
 
 /**
- * What you can do with one track, from wherever you long-pressed it.
+ * Everything you can do with one track, from wherever you long-pressed it.
  *
- * Long-press used to open "add to playlist" directly, which quietly decided
- * that adding to a playlist was the only thing anyone might want. Queueing is
- * more common, and the two navigation rows are how you get from a track you
- * are hearing to the rest of the record it came from.
- *
- * Rows the current screen would only bounce you back to are hidden rather
- * than disabled — "Go to album" from inside that album is noise, not a
- * disabled affordance worth explaining.
+ * The four things done most sit as keys along the top — play, play next,
+ * queue, like — and the rest as rows. Rows that would only lead back to the
+ * screen you're on ("Go to album" from that album) are hidden rather than
+ * disabled. Follow-on sheets (playlists, info) replace this one rather than
+ * stacking, since two native modals at once is a stack Android doesn't
+ * always unwind cleanly.
  */
 export interface TrackActionsSheetProps {
   visible: boolean;
   onClose: () => void;
-  /** The track. Null while nothing is targeted, which keeps callers simple. */
   song: Child | null;
-  /** Suppresses navigation rows that lead back to the current screen. */
-  hide?: ('album' | 'artist')[];
+  hide?: ('album' | 'artist' | 'play')[];
   /** One screen-specific row, e.g. removing from the playlist you're in. */
-  extraAction?: { label: string; onPress: () => void; emphasis?: boolean };
-  /** Called after a star is toggled, so the caller can refresh its list. */
-  onStarChanged?: () => void;
+  extraAction?: { label: string; icon?: IconComponent; onPress: () => void; destructive?: boolean };
 }
 
-export function TrackActionsSheet({
-  visible,
-  onClose,
-  song,
-  hide = [],
-  extraAction,
-  onStarChanged,
-}: TrackActionsSheetProps) {
+type Next = 'none' | 'playlist' | 'info';
+
+export function TrackActionsSheet({ visible, onClose, song, hide = [], extraAction }: TrackActionsSheetProps) {
+  const artworkUrl = useArtwork();
+  const playTrackNow = usePlayerStore((state) => state.playTrackNow);
   const playNext = usePlayerStore((state) => state.playNext);
   const addToQueue = usePlayerStore((state) => state.addToQueue);
-  const client = useServerStore((state) => state.client);
+  const setStarred = useFavoritesStore((state) => state.setStarred);
+  const starred = useStarred(song?.id, Boolean(song?.starred));
 
-  // The playlist picker replaces this sheet rather than stacking on it: two
-  // native modals at once is a stack Android does not always unwind cleanly.
-  const [pickingPlaylist, setPickingPlaylist] = useState(false);
+  /** The follow-on sheet showing, and the one waiting for this to close. */
+  const [next, setNext] = useState<Next>('none');
+  const [pending, setPending] = useState<Next>('none');
+  // The song is held while a follow-on sheet is up: the caller usually
+  // clears its target when this one closes.
+  const [held, setHeld] = useState<Child | null>(song);
 
-  const starred = Boolean(song?.starred);
+  useEffect(() => {
+    if (visible && song) {
+      setHeld(song);
+      setNext('none');
+      setPending('none');
+    }
+  }, [visible, song]);
 
-  function run(work: () => void | Promise<unknown>) {
-    void Promise.resolve(work()).catch(() => {
-      // Queue and star failures are self-correcting on the next read, and a
-      // sheet that refuses to close on a transient error is worse.
-    });
+  const target = song ?? held;
+
+  function run(work: () => Promise<unknown> | void, message?: string, icon?: 'queue' | 'next') {
     onClose();
+    void Promise.resolve()
+      .then(work)
+      .then(() => {
+        if (message) toast.show(message, { icon, detail: target?.title });
+      })
+      .catch((error) => toast.error('Something went wrong', { detail: errorMessage(error) }));
   }
 
-  async function toggleStar() {
-    if (!client || !song) return;
-    if (starred) await client.unstar({ id: song.id });
-    else await client.star({ id: song.id });
-    onStarChanged?.();
-  }
-
-  const showAlbum = !hide.includes('album') && song?.albumId;
-  const showArtist = !hide.includes('artist') && song?.artistId;
+  const showAlbum = !hide.includes('album') && target?.albumId;
+  const showArtist = !hide.includes('artist') && target?.artistId;
 
   return (
     <>
       <Sheet
-        visible={visible && !pickingPlaylist}
+        visible={visible && next === 'none' && pending === 'none'}
         onClose={onClose}
-        title={song?.title ?? 'Track'}
-        detail={song?.artist}
+        onClosed={() => {
+          // Opened only once this sheet is fully gone: two native modals
+          // overlapping is a stack Android doesn't always unwind cleanly.
+          if (pending !== 'none') {
+            setNext(pending);
+            setPending('none');
+          }
+        }}
+        title={target?.title ?? 'Track'}
+        subtitle={[target?.artist, target?.album].filter(Boolean).join(' · ')}
+        artworkUri={artworkUrl(target?.coverArt, 120) ?? null}
       >
-        <ScrollView>
-          <SheetOption label="Play next" onPress={() => run(() => playNext([song!]))} />
-          <SheetOption label="Add to queue" onPress={() => run(() => addToQueue([song!]))} />
-          <SheetOption
-            label="Add to playlist…"
-            onPress={() => setPickingPlaylist(true)}
-          />
-          <SheetOption
-            label={starred ? 'Remove from liked songs' : 'Add to liked songs'}
-            onPress={() => run(toggleStar)}
-          />
-          {showAlbum && (
-            <SheetOption
-              label="Go to album"
+        {target && (
+          <>
+            <View style={styles.keys}>
+              <KeyRow>
+                {!hide.includes('play') && (
+                  <Keycap
+                    icon={IconPlayerPlayFilled}
+                    iconFilled
+                    label="Play"
+                    size="sm"
+                    variant="primary"
+                    flex
+                    onPress={() => run(() => playTrackNow(target))}
+                  />
+                )}
+                <Keycap
+                  icon={IconCornerDownRight}
+                  label="Next"
+                  accessibilityLabel="Play next"
+                  size="sm"
+                  flex
+                  onPress={() => run(() => playNext([target]), 'Playing next', 'next')}
+                />
+                <Keycap
+                  icon={IconListDetails}
+                  label="Last"
+                  accessibilityLabel="Play last"
+                  size="sm"
+                  flex
+                  onPress={() => run(() => addToQueue([target]), 'Added to queue', 'queue')}
+                />
+                <Keycap
+                  icon={starred ? IconHeartFilled : IconHeart}
+                  iconFilled={starred}
+                  size="sm"
+                  square
+                  active={starred}
+                  accessibilityLabel={starred ? 'Unlike' : 'Like'}
+                  onPress={() => {
+                    onClose();
+                    void setStarred(
+                      { id: target.id, kind: 'song', albumId: target.albumId, title: target.title },
+                      !starred,
+                    );
+                  }}
+                />
+              </KeyRow>
+            </View>
+
+            <SheetRow label="Add to playlist…" icon={IconPlaylistAdd} onPress={() => setPending('playlist')} />
+            <SheetRow
+              label="Start radio"
+              icon={IconRadio}
               onPress={() =>
-                run(() => navigateToAlbum(song!.albumId as string, song!.album))
+                run(async () => {
+                  try {
+                    const count = await startTrackRadio(target);
+                    toast.show('Radio started', { icon: 'radio', detail: `${count} tracks like ${target.title}` });
+                  } catch (error) {
+                    if (error instanceof EmptyMixError) toast.show(error.message, { icon: 'info' });
+                    else throw error;
+                  }
+                })
               }
             />
-          )}
-          {showArtist && (
-            <SheetOption
-              label="Go to artist"
+            {showAlbum && (
+              <SheetRow
+                label="Go to album"
+                icon={IconAlbum}
+                detail={target.album}
+                onPress={() => run(() => navigateToAlbum(target.albumId as string, target.album))}
+              />
+            )}
+            {showArtist && (
+              <SheetRow
+                label="Go to artist"
+                icon={IconUser}
+                detail={target.artist}
+                onPress={() => run(() => navigateToArtist(target.artistId as string, target.artist))}
+              />
+            )}
+            <SheetRow label="Track info" icon={IconInfoCircle} onPress={() => setPending('info')} />
+            <SheetRow
+              label="Share"
+              icon={IconShare}
+              last={!extraAction}
               onPress={() =>
-                run(() => navigateToArtist(song!.artistId as string, song!.artist))
+                run(() =>
+                  Share.share({
+                    message: [target.title, target.artist, target.album].filter(Boolean).join(' — '),
+                  }).then(() => undefined),
+                )
               }
             />
-          )}
-          {extraAction && (
-            <SheetOption
-              label={extraAction.label}
-              emphasis={extraAction.emphasis}
-              last
-              onPress={() => run(extraAction.onPress)}
-            />
-          )}
-        </ScrollView>
+            {extraAction && (
+              <SheetRow
+                label={extraAction.label}
+                icon={extraAction.icon}
+                tone={extraAction.destructive ? 'destructive' : 'default'}
+                last
+                onPress={() => run(extraAction.onPress)}
+              />
+            )}
+          </>
+        )}
       </Sheet>
 
       <AddToPlaylistSheet
-        visible={pickingPlaylist}
+        visible={visible && next === 'playlist'}
         onClose={() => {
-          setPickingPlaylist(false);
+          setNext('none');
           onClose();
         }}
-        songIds={song ? [song.id] : []}
-        subject={song?.title}
+        songIds={target ? [target.id] : []}
+        subject={target?.title}
+        coverArt={target?.coverArt}
+      />
+
+      <TrackInfoSheet
+        visible={visible && next === 'info'}
+        onClose={() => {
+          setNext('none');
+          onClose();
+        }}
+        songId={target?.id ?? null}
+        initial={target}
       />
     </>
   );
 }
+
+const styles = StyleSheet.create({
+  keys: { paddingHorizontal: layout.panelPadding + space[1], paddingTop: space[2], paddingBottom: space[3] },
+});

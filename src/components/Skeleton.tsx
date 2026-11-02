@@ -209,7 +209,7 @@ export interface SkeletonTileProps {
 
 /** A shelf tile: square artwork and two short lines. */
 export const SkeletonTile = memo(function SkeletonTile({
-  size = layout.shelfTileSize,
+  size = 156,
   round = false,
 }: SkeletonTileProps) {
   return (

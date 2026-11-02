@@ -3,59 +3,48 @@ import { useActiveMediaItem } from '@rntp/player';
 
 import { extrasOf } from '../player/trackMapping';
 import { useServerStore } from '../store/useServerStore';
+import { useSettingsStore } from '../store/useSettingsStore';
 import { extractArtworkColors } from '../theme/artworkColor';
-import { useThemeControls } from '../theme/ThemeProvider';
+import { useArtworkColorStore } from '../theme/ThemeProvider';
 
 /**
- * Feeds the current track's colours into the theme: the accent, and the
- * palette the background mesh is painted from.
+ * Feeds the current cover's colours into the theme. Renders nothing.
  *
- * Renders nothing. It exists so the theme provider stays ignorant of the
- * player: the provider knows how to hold colours, this knows where they come
- * from, and neither has to import the other's world.
+ * Extraction reads a 64px thumbnail — about 1.5 KB of JPEG — and results
+ * are cached per cover, so a track change costs one small request the first
+ * time and nothing after, including when the theme flips.
  *
- * Extraction reads a 64px thumbnail, which Navidrome serves as roughly 1.5 KB
- * of JPEG, and results are cached per cover art id — so a track change costs
- * one small request the first time and nothing after that, including when
- * the theme flips.
+ * Depends on whether a connection exists, not just on the client: on a cold
+ * start the library renders from cache before the first probe lands, and
+ * the thumbnail URL can't be built until it has.
  */
 export function ArtworkAccentBridge() {
   const activeItem = useActiveMediaItem();
   const client = useServerStore((state) => state.client);
-  const { resolved, artworkAccentEnabled, setArtworkAccent, setArtworkPalette } =
-    useThemeControls();
+  const connected = useServerStore((state) => state.connection != null);
+  const enabled = useSettingsStore((state) => state.accentMode === 'artwork');
+  const setColors = useArtworkColorStore((state) => state.setColors);
 
   const coverArt = extrasOf(activeItem)?.coverArt;
 
   useEffect(() => {
-    if (!artworkAccentEnabled) return;
-
+    if (!enabled) return;
     if (!client || !coverArt) {
-      setArtworkAccent(null);
-      setArtworkPalette(null);
+      setColors(null);
       return;
     }
 
-    let cancelled = false;
-
-    // Small enough that hue survives but detail doesn't matter — the extractor
-    // is looking for colour regions, not for edges.
     const url = client.buildCoverArtUrl(coverArt, 64);
     if (!url) return;
 
-    void extractArtworkColors(url, coverArt, resolved).then((colors) => {
-      if (cancelled || !colors) return;
-      // A cover with no vivid hue leaves the current accent in place rather
-      // than blanking it, so the UI never loses its highlight colour. The
-      // palette always arrives: a monochrome cover gets a grey mesh.
-      if (colors.accent) setArtworkAccent(colors.accent);
-      setArtworkPalette(colors.palette);
+    let cancelled = false;
+    void extractArtworkColors(url, coverArt).then((colors) => {
+      if (!cancelled && colors) setColors(colors);
     });
-
     return () => {
       cancelled = true;
     };
-  }, [client, coverArt, resolved, artworkAccentEnabled, setArtworkAccent, setArtworkPalette]);
+  }, [client, connected, coverArt, enabled, setColors]);
 
   return null;
 }

@@ -62,6 +62,8 @@ export interface Lyrics {
   instrumental: boolean;
   /** Whether `lines` came back timed, rather than being derived from `plain`. */
   synced: boolean;
+  /** Where they came from — shown as the panel's source plate. */
+  source?: 'server' | 'lrclib';
 }
 
 export class LyricsUnavailableError extends Error {}
@@ -263,6 +265,7 @@ function toLyrics(record: LrclibRecord): Lyrics {
     plain: record.plainLyrics,
     instrumental: record.instrumental,
     synced: lines.length > 0,
+    source: 'lrclib',
   };
 }
 

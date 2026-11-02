@@ -1,96 +1,109 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { StyleSheet, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
-import { useActiveMediaItem } from '@rntp/player';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useActiveMediaItem, useIsPlaying } from '@rntp/player';
 
 import { AddToPlaylistSheet } from '../components/AddToPlaylistSheet';
-import { AmbientBackground } from '../components/AmbientBackground';
-import { ExpandFrom } from '../components/ExpandFrom';
-import { ArtworkWell } from '../components/ArtworkWell';
-import { Button, ButtonRow } from '../components/Button';
-import { IconDots } from '../components/icons';
-import { DOCK_CLEARANCE } from '../components/TabBar';
-import { ScreenHeader } from '../components/ScreenHeader';
-import { SectionHeader } from '../components/SectionHeader';
+import { useCollapsingHeader } from '../components/CollapsingHeader';
+import { DetailHero, HeroBackdrop } from '../components/DetailHero';
+import { IconButton } from '../components/IconButton';
+import {
+  IconArrowsShuffle,
+  IconCopy,
+  IconDots,
+  IconHeartFilled,
+  IconListDetails,
+  IconLock,
+  IconPencil,
+  IconPlayerPlayFilled,
+  IconPlaylistX,
+  IconTrash,
+  IconWorld,
+} from '../components/icons';
+import { Keycap, KeyRow } from '../components/Keycap';
+import { PromptSheet } from '../components/PromptSheet';
+import { DetailScaffold } from '../components/Scaffold';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenState';
-import { Sheet, SheetBody, SheetOption } from '../components/Sheet';
 import { SearchField } from '../components/SearchField';
-import { TrackRow } from '../components/TrackRow';
+import { Sheet, SheetRow } from '../components/Sheet';
+import { DOCK_CLEARANCE } from '../components/TabBar';
 import { TrackActionsSheet } from '../components/TrackActionsSheet';
-import { extrasOf } from '../player/trackMapping';
+import { TrackRow } from '../components/TrackRow';
 import { useArtwork } from '../hooks/useArtwork';
-import { HEAVY_LIST_PROPS, trackItemLayout, usePagedList } from '../hooks/usePagedList';
-import { LIKED_PLAYLIST_ID, type LibraryStackParamList } from '../navigation/types';
+import { LIKED_PLAYLIST_ID, type AnyStackParamList } from '../navigation/types';
+import { extrasOf } from '../player/trackMapping';
+import { useFavoritesStore } from '../store/useFavoritesStore';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { usePlaylistStore } from '../store/usePlaylistStore';
 import { useServerStore } from '../store/useServerStore';
-import { hairline, icon, layout, radius, space, type } from '../theme/tokens';
-import type { Palette } from '../theme/tokens';
-import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
+import { errorMessage, toast } from '../store/useToastStore';
+import { space } from '../theme/tokens';
+import { useTheme } from '../theme/ThemeProvider';
 import type { Child, Playlist } from '../types/subsonic';
-import { formatDuration, pluralize } from '../utils/time';
-
-/** Below this, the list fits on a screen and a filter costs more than it saves. */
-const MIN_ROWS_FOR_FILTER = 8;
+import { haptics } from '../utils/haptics';
+import { formatLength, pluralize } from '../utils/time';
 
 /**
- * Playlist detail — the same shape as the album screen.
+ * A playlist — or Liked songs, which Navidrome keeps as stars rather than a
+ * playlist, so it arrives from a different endpoint behind the same screen.
  *
- * Playlists are read straight from the server rather than through the library
- * cache: they change whenever you edit one, and there are few enough that the
- * round trip is cheaper than the confusion of a stale track list.
+ * Read straight from the server, not the library cache: playlists change
+ * whenever you edit one, and there are few enough that the round trip is
+ * cheaper than the confusion of a stale track list.
  */
+
+const MIN_ROWS_FOR_FILTER = 14;
+
+type Menu = 'none' | 'menu' | 'rename' | 'describe' | 'delete' | 'copy';
+
 export function PlaylistScreen() {
   const color = useTheme();
-  const styles = useThemedStyles(makeStyles);
-  const navigation = useNavigation();
-  const route = useRoute<RouteProp<LibraryStackParamList, 'Playlist'>>();
-  const insets = useSafeAreaInsets();
-  const artworkUrl = useArtwork();
-
+  const navigation = useNavigation<NativeStackNavigationProp<AnyStackParamList>>();
+  const route = useRoute<RouteProp<AnyStackParamList, 'Playlist'>>();
   const { playlistId, playlistName } = route.params;
   const isLiked = playlistId === LIKED_PLAYLIST_ID;
+  const artworkUrl = useArtwork();
+  const { scrollY, onScroll, progress } = useCollapsingHeader();
 
   const client = useServerStore((state) => state.client);
   const playNow = usePlayerStore((state) => state.playNow);
   const shufflePlay = usePlayerStore((state) => state.shufflePlay);
   const addToQueue = usePlayerStore((state) => state.addToQueue);
+  const setStarred = useFavoritesStore((state) => state.setStarred);
+  const renamePlaylist = usePlaylistStore((state) => state.rename);
+  const deletePlaylist = usePlaylistStore((state) => state.remove);
+  const removeTrackAt = usePlaylistStore((state) => state.removeTrackAt);
+  const loadPlaylists = usePlaylistStore((state) => state.load);
   const activeItem = useActiveMediaItem();
+  const isPlaying = useIsPlaying();
   const activeId = extrasOf(activeItem)?.subsonicId;
 
   const [playlist, setPlaylist] = useState<Playlist | null>(null);
   const [songs, setSongs] = useState<Child[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // Bumped to re-run the fetch; a plain function would need the effect to
-  // depend on itself to pick up a retry.
   const [reloadToken, setReloadToken] = useState(0);
-
   const refresh = useCallback(() => setReloadToken((token) => token + 1), []);
 
   useEffect(() => {
     if (!client) return;
     let cancelled = false;
-
     setLoading(true);
 
-    // Favourites are not a playlist on the server, so they come from a
-    // different endpoint and get a synthetic header to render against.
     const load = isLiked
       ? client.getStarred2().then((response) => {
-          const songs = response.starred2.song ?? [];
+          const starredSongs = response.starred2.song ?? [];
           return {
             playlist: {
               id: LIKED_PLAYLIST_ID,
               name: 'Liked songs',
-              songCount: songs.length,
-              duration: songs.reduce((sum, song) => sum + (song.duration ?? 0), 0),
-              // The set has no cover of its own, so it borrows the newest
-              // favourite's — the same one the library row shows.
-              coverArt: songs[0]?.coverArt,
+              songCount: starredSongs.length,
+              duration: starredSongs.reduce((sum, song) => sum + (song.duration ?? 0), 0),
+              coverArt: starredSongs[0]?.coverArt,
             } satisfies Playlist,
-            songs,
+            songs: starredSongs,
           };
         })
       : client.getPlaylist(playlistId).then((response) => ({
@@ -106,8 +119,7 @@ export function PlaylistScreen() {
         setError(null);
       })
       .catch((cause: unknown) => {
-        if (cancelled) return;
-        setError(cause instanceof Error ? cause.message : String(cause));
+        if (!cancelled) setError(errorMessage(cause));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -118,346 +130,324 @@ export function PlaylistScreen() {
     };
   }, [client, playlistId, isLiked, reloadToken]);
 
-  const renamePlaylist = usePlaylistStore((state) => state.rename);
-  const deletePlaylist = usePlaylistStore((state) => state.remove);
-  const removeTrackAt = usePlaylistStore((state) => state.removeTrackAt);
-
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [renaming, setRenaming] = useState(false);
-  const [draftName, setDraftName] = useState('');
-  /** Non-null while the add-to-playlist sheet is open, holding what to add. */
-  const [actionTarget, setActionTarget] = useState<Child | null>(null);
-  /** Bulk copy of the whole playlist, from its own menu — not a row action. */
-  const [bulkTargets, setBulkTargets] = useState<string[] | null>(null);
   const [filter, setFilter] = useState('');
-
-  // Deferred, so the field keeps painting while the rows catch up. See the
-  // note in AlbumScreen for why this rather than a debounce.
-  const deferredFilter = useDeferredValue(filter);
+  const deferredFilter = useDeferredValue(filter.trim().toLowerCase());
+  const [menu, setMenu] = useState<Menu>('none');
+  const [trackTarget, setTrackTarget] = useState<Child | null>(null);
 
   const filtered = useMemo(() => {
-    const needle = deferredFilter.trim().toLowerCase();
-    if (!needle) return songs;
+    if (!deferredFilter) return songs;
     return songs.filter(
       (song) =>
-        song.title.toLowerCase().includes(needle) ||
-        (song.artist ?? '').toLowerCase().includes(needle),
+        song.title.toLowerCase().includes(deferredFilter) ||
+        (song.artist ?? '').toLowerCase().includes(deferredFilter) ||
+        (song.album ?? '').toLowerCase().includes(deferredFilter),
     );
   }, [songs, deferredFilter]);
 
-  const filtering = deferredFilter.trim().length > 0;
-
   /**
-   * Each track's position in the playlist itself, not in what's on screen.
-   *
-   * Two things need this. The server removes by index because the same track
-   * may appear twice, so the index handed to it has to be the real one — a
-   * filtered list renumbers from zero and would otherwise delete whatever sits
-   * at that position in the full playlist. And the row key is built from it,
-   * which is what keeps keys stable while a filter reorders the list.
-   *
-   * A Map rather than indexOf per row: the latter is a scan, and calling it
-   * once per row turns rendering a long playlist into quadratic work.
+   * Each track's position in the playlist itself, not on screen. The server
+   * removes by index — the same track may appear twice — and a filtered list
+   * renumbers from zero, so the real index has to be carried. A Map, since
+   * an indexOf per row would make a long playlist quadratic.
    */
   const positions = useMemo(() => {
     const map = new Map<Child, number>();
     songs.forEach((song, index) => map.set(song, index));
     return map;
   }, [songs]);
-
   const positionOf = useCallback((song: Child) => positions.get(song) ?? -1, [positions]);
 
-  // Stable identities, so a row re-renders only when its own data changes.
-  const handlePlay = useCallback(
-    (index: number) => void playNow(filtered, index),
-    [playNow, filtered],
-  );
-  const handleQueue = useCallback((song: Child) => void addToQueue([song]), [addToQueue]);
-  const handleOptions = useCallback((song: Child) => setActionTarget(song), []);
-  const handleStar = useCallback(
-    (song: Child) => void toggleStar(song.id, Boolean(song.starred)),
-    // toggleStar is redeclared each render; it only closes over client and
-    // refresh, both of which are stable for the life of the screen.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
-  );
-  const handleRemove = useCallback(
-    (song: Child) => {
-      void removeTrackAt(playlistId, positionOf(song)).then(refresh);
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [removeTrackAt, playlistId, positionOf],
-  );
-
-  const paged = usePagedList(filtered);
   const title = playlist?.name ?? playlistName ?? 'Playlist';
-  const totalDuration =
-    playlist?.duration ?? songs.reduce((sum, song) => sum + (song.duration ?? 0), 0);
+  const source = { kind: isLiked ? ('liked' as const) : ('playlist' as const), label: title };
+  const total = playlist?.duration ?? songs.reduce((sum, song) => sum + (song.duration ?? 0), 0);
 
-  async function toggleStar(songId: string, starred: boolean) {
-    if (!client) return;
-    if (starred) await client.unstar({ id: songId });
-    else await client.star({ id: songId });
-    // The server owns favourites, so re-read rather than patching local state.
-    refresh();
+  const handlePlay = useCallback(
+    (index: number) =>
+      void playNow(filtered, index, source).catch((e) => toast.error("Couldn't play", { detail: errorMessage(e) })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [playNow, filtered, title, isLiked],
+  );
+  const handleQueue = useCallback(
+    (song: Child) =>
+      void addToQueue([song])
+        .then(() => toast.show('Added to queue', { icon: 'queue', detail: song.title }))
+        .catch((e) => toast.error("Couldn't queue", { detail: errorMessage(e) })),
+    [addToQueue],
+  );
+
+  const removeSong = useCallback(
+    (song: Child) => {
+      if (isLiked) {
+        void setStarred({ id: song.id, kind: 'song', albumId: song.albumId, title: song.title }, false).then(refresh);
+        return;
+      }
+      const position = positionOf(song);
+      if (position < 0) return;
+      // Optimistic, so the row closes the gap at once; the reload confirms.
+      setSongs((current) => current.filter((_, index) => index !== position));
+      void removeTrackAt(playlistId, position)
+        .then(() => toast.show('Removed from playlist', { icon: 'playlist', detail: song.title }))
+        .catch((e) => toast.error("Couldn't remove", { detail: errorMessage(e) }))
+        .finally(refresh);
+    },
+    [isLiked, setStarred, refresh, positionOf, removeTrackAt, playlistId],
+  );
+
+  async function setVisibility(isPublic: boolean) {
+    if (!client || !playlist) return;
+    try {
+      await client.updatePlaylist({ playlistId, public: isPublic });
+      toast.show(isPublic ? 'Playlist is public' : 'Playlist is private', { icon: 'playlist' });
+      refresh();
+      void loadPlaylists();
+    } catch (cause) {
+      toast.error("Couldn't change visibility", { detail: errorMessage(cause) });
+    }
   }
 
-  return (
-    <ExpandFrom>
-      <View style={[styles.root, { paddingTop: insets.top }]}>
-        <AmbientBackground />
-
-        <ScreenHeader
-          title={title}
-          onBack={() => navigation.goBack()}
-          action={
-            // Favourites are the server's, not a playlist — there is nothing
-            // here that editing could legitimately change.
-            isLiked ? undefined : (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Playlist options"
-                hitSlop={space[3]}
-                onPress={() => setMenuOpen(true)}
-              >
-                <IconDots
-                  size={icon.size}
-                  strokeWidth={icon.strokeWidth}
-                  color={color.textSecondary}
-                />
-              </Pressable>
-            )
-          }
-        />
-
-        {songs.length > MIN_ROWS_FOR_FILTER && (
+  const header = (
+    <View>
+      <DetailHero
+        artworkUri={artworkUrl(playlist?.coverArt, 600)}
+        eyebrow={isLiked ? 'Collection · Hearted' : `Playlist · ${playlist?.public ? 'Public' : 'Private'}`}
+        title={title}
+        subtitle={!isLiked && playlist?.owner ? `by ${playlist.owner}` : undefined}
+        meta={songs.length > 0 ? [pluralize(songs.length, 'track'), formatLength(total)].join('  ·  ') : undefined}
+        description={playlist?.comment}
+        art={
+          isLiked && !playlist?.coverArt ? (
+            <View style={[styles.likedArt, { backgroundColor: color.accent }]}>
+              <IconHeartFilled size={72} color={color.accentInk} />
+            </View>
+          ) : undefined
+        }
+        actions={
+          songs.length > 0 ? (
+            <KeyRow>
+              <Keycap
+                icon={IconPlayerPlayFilled}
+                iconFilled
+                label="Play"
+                variant="primary"
+                flex
+                onPress={() => void playNow(songs, 0, source)}
+              />
+              <Keycap icon={IconArrowsShuffle} label="Shuffle" flex onPress={() => void shufflePlay(songs, source)} />
+              <Keycap
+                icon={IconListDetails}
+                square
+                accessibilityLabel="Add all to queue"
+                onPress={() =>
+                  void addToQueue(songs).then(() =>
+                    toast.show('Added to queue', { icon: 'queue', detail: `${title} · ${pluralize(songs.length, 'track')}` }),
+                  )
+                }
+              />
+            </KeyRow>
+          ) : undefined
+        }
+      />
+      {songs.length > MIN_ROWS_FOR_FILTER && (
+        <View style={styles.filter}>
           <SearchField value={filter} onChangeText={setFilter} placeholder="Find in playlist" />
-        )}
+        </View>
+      )}
+    </View>
+  );
 
-        <FlatList
-          data={paged.visible}
-          {...HEAVY_LIST_PROPS}
-          // Keyed on the position in the playlist, not in the filtered view.
-          // An index into what is on screen changes the moment a filter
-          // reorders things, which unmounts and rebuilds every row — the whole
-          // of the delay that used to follow each keystroke.
-          keyExtractor={(song) => `${song.id}-${positionOf(song)}`}
-          ListHeaderComponent={
-            playlist ? (
-              <View>
-                <View style={styles.hero}>
-                  <ArtworkWell
-                    uri={artworkUrl(playlist.coverArt, 600)}
-                    size={180}
-                    surface="paper"
-                  />
-                  <Text style={styles.playlistTitle} numberOfLines={2}>
-                    {playlist.name}
-                  </Text>
-                  {playlist.comment ? (
-                    <Text style={styles.playlistMeta} numberOfLines={2}>
-                      {playlist.comment}
-                    </Text>
-                  ) : null}
-
-                  <View style={styles.actions}>
-                    <ButtonRow>
-                      <Button
-                        label="Play"
-                        variant="primary"
-                        onPress={() => void playNow(songs)}
-                      />
-                      <Button label="Shuffle" onPress={() => void shufflePlay(songs)} />
-                    </ButtonRow>
-                  </View>
-                </View>
-
-                <SectionHeader
-                  title="Tracks"
-                  count={`${pluralize(songs.length, 'track')} · ${formatDuration(totalDuration)}`}
-                />
-              </View>
-            ) : null
-          }
-          ListEmptyComponent={
-            loading ? (
-              <LoadingState />
-            ) : error ? (
-              <ErrorState message={error} onRetry={refresh} />
-            ) : (
-              <EmptyState
-                label={
-                  filtering ? 'No matches' : isLiked ? 'No liked songs' : 'Empty playlist'
-                }
-                hint={
-                  filtering
-                    ? undefined
-                    : isLiked
-                      ? 'Tap the heart on a track to add it here.'
-                      : 'Add tracks to it in Navidrome.'
-                }
-              />
-            )
-          }
-          contentContainerStyle={filtered.length ? styles.listContent : styles.emptyContainer}
-          ListFooterComponent={
-            paged.hasMore ? (
-              <View style={styles.loadMore}>
-                <Button
-                  label={`Load ${paged.nextCount} more`}
-                  fullWidth
-                  onPress={paged.loadMore}
-                />
-              </View>
-            ) : null
-          }
-          getItemLayout={trackItemLayout}
-          renderItem={({ item, index }) => (
-            <TrackRow
-              song={item}
-              index={index}
-              active={item.id === activeId}
-              last={index === paged.visible.length - 1}
-              // Favourites are the server's own list: a left swipe there means
-              // unstar, which is what takes it out. Elsewhere it means remove.
-              leftAction={isLiked ? 'star' : 'remove'}
-              onPlay={handlePlay}
-              onOptions={handleOptions}
-              onQueue={handleQueue}
-              onStar={handleStar}
-              onRemove={handleRemove}
-            />
-          )}
-        />
-
-        <Sheet
-          visible={menuOpen}
-          onClose={() => {
-            setMenuOpen(false);
-            setRenaming(false);
-          }}
-          title={renaming ? 'Rename playlist' : (playlist?.name ?? 'Playlist')}
-        >
-          {renaming ? (
-            <SheetBody>
-              <TextInput
-                style={styles.input}
-                value={draftName}
-                onChangeText={setDraftName}
-                placeholder="Playlist name"
-                placeholderTextColor={color.textInverseSecondary}
-                autoFocus
-                returnKeyType="done"
-              />
-              <View style={styles.sheetActions}>
-                <ButtonRow>
-                  <Button
-                    label="Save"
-                    variant="primary"
-                    disabled={draftName.trim().length === 0}
-                    onPress={() => {
-                      void renamePlaylist(playlistId, draftName).then(refresh);
-                      setMenuOpen(false);
-                      setRenaming(false);
-                    }}
-                  />
-                  <Button label="Cancel" onPress={() => setRenaming(false)} />
-                </ButtonRow>
-              </View>
-            </SheetBody>
+  return (
+    <DetailScaffold
+      title={title}
+      progress={progress}
+      onBack={() => navigation.goBack()}
+      backdrop={<HeroBackdrop uri={artworkUrl(playlist?.coverArt, 200)} scrollY={scrollY} />}
+      trailing={
+        isLiked ? undefined : (
+          <IconButton
+            icon={IconDots}
+            accessibilityLabel="Playlist options"
+            size={38}
+            iconSize={20}
+            disabled={!playlist}
+            onPress={() => setMenu('menu')}
+          />
+        )
+      }
+    >
+      <Animated.FlatList
+        data={filtered}
+        keyExtractor={(song) => `${song.id}-${positionOf(song)}`}
+        onScroll={onScroll}
+        scrollEventThrottle={16}
+        ListHeaderComponent={header}
+        ListEmptyComponent={
+          loading ? (
+            <LoadingState />
+          ) : error ? (
+            <ErrorState message={error} onRetry={refresh} />
           ) : (
-            <>
-              <SheetOption
-                label="Add these tracks to another playlist"
-                onPress={() => {
-                  setMenuOpen(false);
-                  setBulkTargets(songs.map((song) => song.id));
-                }}
-              />
-              <SheetOption
-                label="Rename"
-                onPress={() => {
-                  setDraftName(playlist?.name ?? '');
-                  setRenaming(true);
-                }}
-              />
-              <SheetOption
-                label="Delete playlist"
-                emphasis
-                last
-                onPress={() => {
-                  void deletePlaylist(playlistId);
-                  setMenuOpen(false);
-                  navigation.goBack();
-                }}
-              />
-            </>
-          )}
-        </Sheet>
+            <EmptyState
+              label={deferredFilter ? 'No matches' : isLiked ? 'No liked songs yet' : 'This playlist is empty'}
+              hint={
+                deferredFilter
+                  ? undefined
+                  : isLiked
+                    ? 'Swipe a track left, or tap its heart, to like it.'
+                    : 'Add tracks from any track’s ⋮ menu.'
+              }
+            />
+          )
+        }
+        renderItem={({ item, index }) => (
+          <TrackRow
+            song={item}
+            index={index}
+            active={item.id === activeId}
+            playing={isPlaying}
+            last={index === filtered.length - 1}
+            subtitle="artistAlbum"
+            leftAction="remove"
+            onPlay={handlePlay}
+            onMore={setTrackTarget}
+            onQueue={handleQueue}
+            onRemove={removeSong}
+          />
+        )}
+        contentContainerStyle={styles.list}
+        initialNumToRender={14}
+        windowSize={9}
+        removeClippedSubviews
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+      />
 
-        <AddToPlaylistSheet
-          visible={bulkTargets != null}
-          onClose={() => setBulkTargets(null)}
-          songIds={bulkTargets ?? []}
-          subject={playlist?.name}
+      <Sheet
+        visible={menu === 'menu'}
+        onClose={() => setMenu('none')}
+        title={title}
+        subtitle={pluralize(songs.length, 'track')}
+        artworkUri={artworkUrl(playlist?.coverArt, 120) ?? null}
+      >
+        <SheetRow label="Rename" icon={IconPencil} onPress={() => setMenu('rename')} />
+        <SheetRow label={playlist?.comment ? 'Edit description' : 'Add description'} icon={IconPencil} onPress={() => setMenu('describe')} />
+        <SheetRow
+          label={playlist?.public ? 'Make private' : 'Make public'}
+          icon={playlist?.public ? IconLock : IconWorld}
+          onPress={() => {
+            setMenu('none');
+            void setVisibility(!playlist?.public);
+          }}
         />
+        <SheetRow
+          label="Copy tracks to another playlist"
+          icon={IconCopy}
+          disabled={songs.length === 0}
+          onPress={() => setMenu('copy')}
+        />
+        <SheetRow label="Delete playlist" icon={IconTrash} tone="destructive" last onPress={() => setMenu('delete')} />
+      </Sheet>
 
-        <TrackActionsSheet
-          visible={actionTarget != null}
-          onClose={() => setActionTarget(null)}
-          song={actionTarget}
-          onStarChanged={refresh}
-          extraAction={
-            isLiked || !actionTarget
-              ? undefined
-              : {
-                  label: 'Remove from this playlist',
-                  emphasis: true,
-                  onPress: () => {
-                    void removeTrackAt(playlistId, positionOf(actionTarget)).then(refresh);
-                  },
-                }
+      <Sheet
+        visible={menu === 'delete'}
+        onClose={() => setMenu('none')}
+        title={`Delete ${title}?`}
+        subtitle="This removes it from Navidrome for every client."
+      >
+        <SheetRow
+          label="Delete"
+          icon={IconTrash}
+          tone="destructive"
+          onPress={() => {
+            setMenu('none');
+            void deletePlaylist(playlistId)
+              .then(() => {
+                haptics.success();
+                toast.show(`Deleted ${title}`, { icon: 'playlist' });
+                navigation.goBack();
+              })
+              .catch((e) => toast.error("Couldn't delete", { detail: errorMessage(e) }));
+          }}
+        />
+        <SheetRow label="Keep it" last onPress={() => setMenu('none')} />
+      </Sheet>
+
+      <PromptSheet
+        visible={menu === 'rename'}
+        onClose={() => setMenu('none')}
+        title="Rename playlist"
+        placeholder="Playlist name"
+        initialValue={playlist?.name ?? ''}
+        confirmLabel="Save"
+        onConfirm={async (name) => {
+          try {
+            await renamePlaylist(playlistId, name);
+            toast.show('Renamed', { icon: 'playlist', detail: name });
+            refresh();
+          } catch (e) {
+            toast.error("Couldn't rename", { detail: errorMessage(e) });
+            throw e;
           }
-        />
-      </View>
-    </ExpandFrom>
+        }}
+      />
+
+      <PromptSheet
+        visible={menu === 'describe'}
+        onClose={() => setMenu('none')}
+        title="Description"
+        placeholder="What this playlist is for"
+        initialValue={playlist?.comment ?? ''}
+        confirmLabel="Save"
+        allowEmpty
+        multiline
+        onConfirm={async (comment) => {
+          if (!client) return;
+          try {
+            await client.updatePlaylist({ playlistId, comment });
+            toast.show('Description saved', { icon: 'playlist' });
+            refresh();
+          } catch (e) {
+            toast.error("Couldn't save", { detail: errorMessage(e) });
+            throw e;
+          }
+        }}
+      />
+
+      <AddToPlaylistSheet
+        visible={menu === 'copy'}
+        onClose={() => setMenu('none')}
+        songIds={songs.map((song) => song.id)}
+        subject={title}
+        coverArt={playlist?.coverArt}
+      />
+
+      <TrackActionsSheet
+        visible={trackTarget != null}
+        onClose={() => setTrackTarget(null)}
+        song={trackTarget}
+        extraAction={
+          trackTarget
+            ? {
+                label: isLiked ? 'Remove from liked songs' : 'Remove from this playlist',
+                icon: IconPlaylistX,
+                destructive: true,
+                onPress: () => removeSong(trackTarget),
+              }
+            : undefined
+        }
+      />
+    </DetailScaffold>
   );
 }
 
-const makeStyles = (color: Palette) =>
-  StyleSheet.create({
-    root: { flex: 1, backgroundColor: color.paper },
-    listContent: { paddingBottom: DOCK_CLEARANCE },
-    loadMore: { paddingHorizontal: layout.screenPadding, paddingTop: space[5] },
-    input: {
-      ...type.body,
-      color: color.textInverse,
-      height: 48,
-      paddingHorizontal: space[3],
-      borderWidth: hairline,
-      borderColor: color.panelLine,
-      borderRadius: radius.sm,
-      backgroundColor: color.panelRaised,
-    },
-    sheetActions: { marginTop: space[4], paddingBottom: space[3] },
-    emptyContainer: { flexGrow: 1 },
-
-    hero: {
-      alignItems: 'center',
-      paddingTop: space[5],
-      paddingHorizontal: layout.screenPadding,
-    },
-    playlistTitle: {
-      ...type.display,
-      color: color.textPrimary,
-      marginTop: space[4],
-      textAlign: 'center',
-    },
-    playlistMeta: {
-      ...type.meta,
-      color: color.textSecondary,
-      marginTop: space[1],
-      textAlign: 'center',
-    },
-    actions: { marginTop: space[5], alignSelf: 'stretch', alignItems: 'center' },
-  });
+const styles = StyleSheet.create({
+  list: { paddingBottom: DOCK_CLEARANCE, flexGrow: 1 },
+  filter: { marginTop: space[2] },
+  likedArt: {
+    width: 200,
+    height: 200,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+});

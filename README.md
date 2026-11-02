@@ -36,34 +36,70 @@ Built with Expo and React Native, against the Subsonic API (1.16.1).
 
 ## What it does
 
-**Library** — Browse by artist, album or playlist, and search across tracks,
-albums and artists. Lists page in on demand rather than pulling the whole
-library into memory, and everything is cached locally and refetched when stale.
+**Library** — Playlists, albums, artists and genres behind one row of keys, with
+album sorting (A–Z, artist, year, added, played, most played, random), grid or
+list, a live filter and an A–Z rail. Lists page in on demand rather than pulling
+the whole library into memory, and everything is cached locally and refetched
+when stale.
+
+**Search** — Scoped to everything, tracks, albums or artists, with a top result
+and recent searches. Before you type, it browses: decades and a colour-keyed
+genre grid.
+
+**Home** — A dot-matrix readout of today's plays, the week's listening time and
+your streak; keys for shuffle-all, liked songs, history and stats; ready-made
+mixes (a random dig plus your biggest genres); a listening chart by day, week,
+month or year; and shelves for recently added, recently played and most played.
+
+**Detail screens** — Albums grouped by disc with a track filter and more by the
+artist. Artists with biography, top tracks, discography and similar artists.
+Genres with a shuffle and a random mix. Playlists you can rename, describe, make
+public or private, duplicate and delete — and Liked songs as a playlist of its
+own. Full listening history by day, and a stats page: when you listen, by hour
+and weekday, and your top artists, albums and tracks.
 
 **Playback** — Background playback with lock-screen, notification and Android
 Auto controls, handled natively so they keep working when Android has reclaimed
-the JS runtime.
+the JS runtime. The last queue comes back, paused, on the next launch, and a
+stream that drops is retried before you're told about it.
+
+**Now Playing** — Three faces for the same track: the cover, a spinning record,
+or a cassette whose reels wind with the song. A display plate reads position in
+the queue and the stream's real format. Below the transport sits a function
+strip: queue, lyrics, a sleep timer (5 minutes to 1.5 hours or end of track,
+with a fade), playback speed (0.75–2×), and the face switch.
 
 **Queue** — A two-tier queue modelled on Apple Music. Playing an album replaces
 the queue with it; anything you swipe in by hand keeps its place *ahead* of
 what's left, so a deliberate pick is never buried behind forty album tracks.
-Swipe right on any row to queue it, left to star it.
+Swipe right on any row to queue it, left to star it. Long-press anything for
+play next, play last, add to playlist, start radio, go to album or artist,
+track info and share.
 
-**Synced to the server, not just the device** — Favourites, full playlist
-create/rename/delete/reorder, and scrobbles all write back to Navidrome, so
-they are reflected everywhere rather than trapped in this app. Scrobbling
-follows the Last.fm thresholds every Subsonic server expects: half the track or
-four minutes, whichever comes first, and never under 30 seconds.
+**Radio** — From any track (Navidrome's similar songs) or any artist, filled out
+from the library when the server's similarity data is thin.
 
-**Lyrics** — Time-synced lyrics from [LRCLIB](https://lrclib.net), scrolling
-with the track. The current line is the only thing on screen in the accent
-colour, and tapping any line seeks to it. Lyrics in another script are
-romanised beneath the original — transliteration, not translation, so the line
-stays singable rather than becoming prose you can't follow. See
+**Track info** — Every tag that matters, a five-step rating that writes back to
+the server, the file path, and a one-tap bit-perfect check of the stream.
+
+**Synced to the server, not just the device** — Favourites, ratings, full
+playlist create/rename/delete/reorder, and scrobbles all write back to
+Navidrome, so they are reflected everywhere rather than trapped in this app.
+Scrobbling follows the Last.fm thresholds every Subsonic server expects: half
+the track or four minutes, whichever comes first, and never under 30 seconds.
+
+**Lyrics** — Lyrics embedded in your files first, served by Navidrome; then
+time-synced lyrics from [LRCLIB](https://lrclib.net), scrolling with the track.
+Tap any line to seek to it, nudge the timing per track, pick a size, and let it
+follow along or scroll freely. Lyrics in another script are romanised beneath
+the original — transliteration, not translation, so the line stays singable
+rather than becoming prose you can't follow. See
 [Lyrics and romanisation](#lyrics-and-romanisation).
 
-**Also** — Play-history charts on Home (day/week/month/year), recent searches,
-light/dark/AMOLED themes, and a diagnostics screen.
+**Settings** — Auto, light, dark and OLED themes; accent from the artwork or a
+fixed preset; the player face; how much ambient colour, blur and tint the glass
+carries; haptics, reduce motion, scrobbling, queue restore, the tab to open on;
+server status with a library rescan; and cache and history clearing.
 
 ---
 
@@ -142,9 +178,11 @@ in the API client, so nothing above it needs to know which address won.
 
 ## Lyrics and romanisation
 
-Lyrics come from LRCLIB, which is deliberately kept outside the Subsonic
-client: a different host, no auth, no failover. A lyrics outage must never be
-able to look like the music server going down.
+Lyrics your server already has — tagged into the files and served through
+OpenSubsonic's `getLyricsBySongId` — always win, and LRCLIB is only asked when
+the server has none. LRCLIB is deliberately kept outside the Subsonic client: a
+different host, no auth, no failover. A lyrics outage must never be able to
+look like the music server going down.
 
 Matching a local library to a lyrics database is most of the work. LRCLIB's
 exact endpoint keys on artist, track, album and duration together, so it misses
@@ -185,28 +223,32 @@ too large to ship.
 
 ## Design
 
-The visual language is **Teenage Engineering** — panel-like, grid-aligned and
-functional. Near-monochrome, tracked-out uppercase labels for metadata, tabular
-numerals so running timers don't jitter, tight corner radii, and no gradients,
-soft shadows or skeuomorphism.
+The design language is called **FQ-1**: the app drawn as a piece of portable
+audio hardware. Four influences, each with a job.
 
-Two surfaces: a dark **panel** for the player and transport, a light **paper**
-for browsing. One accent, used only for meaning — playback state, favourited,
-selected, progress — never for decoration.
+- **Teenage Engineering** for structure. Numbered sections, tracked-out mono
+  labels on every control, keycaps with a lip that travel when pressed, status
+  LEDs, a black OLED display plate with scanlines and a dot-matrix readout, and
+  a faint engineering-paper dot grid behind every screen.
+- **Liquid glass** for the chrome that floats: the dock, navigation bars, sheets
+  and toasts. A real blur where the platform can do it (iOS, Android 12+), a
+  specular sheen, a bright rim and an inner glow for thickness. Where blur isn't
+  available, floating glass goes solid rather than let text read through it.
+- **Retro** for the player: a vinyl record that spins with playback and a
+  cassette whose reels wind as the track runs, alongside the plain cover.
+- **Artwork colour** for mood. The cover is decoded in pure JS and turned into
+  an accent and a four-colour mesh that drifts slowly behind the screen. Ink is
+  chosen by *measured* WCAG contrast rather than a lightness threshold, so text
+  stays legible against any cover. It can be pinned to a preset in Settings.
 
-Two deliberate departures from the original spec, both driven by use:
+Three finishes: **Aluminium** (light), **Graphite** (dark) and **OLED** (true
+black). The player, lyrics and queue are always dark, whatever the theme.
 
-- **The accent is derived from the current cover art.** Artwork is decoded in
-  pure JS, its dominant hue extracted and whitewashed to stay subtle, then
-  crossfaded over five seconds as tracks change. Ink colour is chosen by
-  *measured* WCAG contrast rather than a lightness threshold, which keeps text
-  legible against any cover. It can be pinned back to the fixed burnt orange in
-  Settings.
-- **Motion is anchored to your finger.** Opening the player, an album, a
-  playlist or Settings expands the new surface out of the exact spot you
-  pressed, rather than sliding in from a screen edge.
-
-Motion is mechanical throughout — timing curves, no spring or bounce.
+Type is Space Grotesk for words, Space Mono for labels and figures, and Doto for
+the dot-matrix display. Motion runs on springs, and is anchored to your finger:
+opening the player, an album, a playlist or Settings expands the new surface out
+of the exact spot you pressed, rather than sliding in from a screen edge. Reduce
+Motion stops everything that moves on its own.
 
 ---
 
@@ -281,7 +323,9 @@ offered to older builds — a no-op rather than a crash, which is the reason for
 choosing that policy over `appVersion`.
 
 So: editing existing files ships over the air; adding a library needs
-`eas build`.
+`eas build`. The FQ-1 redesign was built under that constraint — new fonts are
+JS-side assets and haptics use the core `Vibration` module — so it touches no
+dependency or native config and installs over the air like any other change.
 
 ---
 
@@ -321,14 +365,16 @@ src/
   api/          Subsonic client, auth, URL failover, typed errors
   components/   Design-system primitives and shared UI
   data/         Library repository, caching, play history
-  hooks/        Artwork URLs, paged lists, library fetching
+  hooks/        Artwork URLs, lyrics, sleep timer, library fetching
   navigation/   Stacks, tabs, route types
-  player/       Setup, track mapping, scrobbler
+  player/       Setup, track mapping, scrobbler, mixes and radio,
+                queue persistence, stream repair
   screens/      One file per surface
   storage/      Keystore credentials, AsyncStorage cache
-  store/        Zustand stores (player, playlists, server, UI)
+  store/        Zustand stores (player, playlists, server, settings,
+                favourites, toasts, UI)
   theme/        Tokens, provider, artwork colour extraction
-  utils/        Formatting helpers
+  utils/        Formatting, haptics, romanisation
 scripts/        Node verification scripts
 ```
 
@@ -372,6 +418,8 @@ to be liftable into a shared package if a web client follows.
 | State | Zustand 5 |
 | Animation | Reanimated 4, Gesture Handler 2 |
 | Images | `expo-image` |
+| Graphics | `react-native-svg`, `expo-blur` |
+| Type | Space Grotesk, Space Mono, Doto |
 | Storage | `expo-secure-store`, AsyncStorage |
 | Server API | Subsonic 1.16.1 (Navidrome) |
 | Lyrics | LRCLIB, Sanscript (IAST), Hangul RR, any-ascii |
@@ -381,4 +429,5 @@ to be liftable into a shared package if a web client follows.
 
 ## License
 
-MIT.
+MIT. The bundled fonts — Space Grotesk, Space Mono and Doto — are under the SIL
+Open Font License 1.1; see `assets/fonts/OFL.txt`.
