@@ -12,8 +12,8 @@ import { useTheme } from '../theme/ThemeProvider';
  *   MON 02 NOV · 14:32                         ● LAN
  *   Library                                   [+] [⚙]
  *
- * Root screens get this; screens you drill into get the collapsing glass
- * bar instead, since their hero already names what you opened.
+ * Root screens get this; screens you drill into get the collapsing bar
+ * instead, since their hero already names what you opened.
  */
 export interface ScreenHeaderProps {
   title: string;

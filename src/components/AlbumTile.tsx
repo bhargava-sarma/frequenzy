@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { Artwork } from './Artwork';
 import { Label } from './Label';
-import { PressScale } from './Pressable';
+import { Touchable } from './Touchable';
 import { space, type, withAlpha } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useThemedStyles } from '../theme/ThemeProvider';
@@ -42,7 +42,7 @@ export const AlbumTile = memo(function AlbumTile({
   const styles = useThemedStyles(makeStyles);
 
   return (
-    <PressScale
+    <Touchable
       accessibilityRole="button"
       accessibilityLabel={subtitle ? `${title}, ${subtitle}` : title}
       onPress={onPress}
@@ -54,7 +54,6 @@ export const AlbumTile = memo(function AlbumTile({
             }
           : undefined
       }
-      scaleTo={0.96}
       style={{ width: size }}
     >
       <View>
@@ -77,7 +76,7 @@ export const AlbumTile = memo(function AlbumTile({
           </Text>
         ) : null}
       </View>
-    </PressScale>
+    </Touchable>
   );
 });
 

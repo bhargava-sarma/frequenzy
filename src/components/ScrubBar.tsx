@@ -1,13 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, {
-  Easing,
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-} from 'react-native-reanimated';
+import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import Svg, { Rect } from 'react-native-svg';
 
 import { type, withAlpha } from '../theme/tokens';
@@ -19,11 +13,10 @@ import { formatDuration } from '../utils/time';
  * Playback position as a ruler, the way a tape machine's counter strip reads.
  *
  * Ticks run the width; the ones already played light up in the accent and a
- * playhead marks the spot. Everything that moves is a transform on the UI
- * thread: the playhead glides linearly toward where the track will be at the
- * next progress tick, so it moves continuously at 60fps although the player
- * only reports once a second, and the lit ticks are revealed by translating
- * a clip rather than resizing anything.
+ * playhead marks the spot. The playhead steps with the player's once-a-second
+ * reports, the way a counter does — at this width a step is a point or two,
+ * so smoothing it would be a 60fps animation nobody could see. The lit ticks
+ * are revealed by translating a clip rather than resizing anything.
  *
  * Scrubbing follows the finger and clicks at each tenth of the track. The
  * seeked position is held until the player confirms it, so the playhead
@@ -32,12 +25,7 @@ import { formatDuration } from '../utils/time';
 export interface ScrubBarProps {
   position: number;
   duration: number;
-  playing: boolean;
   onSeek: (seconds: number) => void;
-  /** Interval between position updates, ms. Drives the glide. */
-  tickMs?: number;
-  /** Playback rate, so the glide keeps pace at 1.5×. */
-  rate?: number;
   /** Over artwork: white ticks instead of the theme's. */
   tone?: 'default' | 'onArtwork';
 }
@@ -53,10 +41,7 @@ const SEEK_HOLD_MS = 1500;
 export const ScrubBar = memo(function ScrubBar({
   position,
   duration,
-  playing,
   onSeek,
-  tickMs = 1000,
-  rate = 1,
   tone = 'default',
 }: ScrubBarProps) {
   const color = useTheme();
@@ -90,15 +75,8 @@ export const ScrubBar = memo(function ScrubBar({
       held.current = null;
     }
 
-    const jump = Math.abs(ratio - progress.value) * total > 2.5;
-    if (!playing || jump) {
-      progress.value = ratio;
-      return;
-    }
-    // Glide toward where the track will be when the next report arrives.
-    const ahead = Math.min(1, (position + (tickMs / 1000) * rate) / total);
-    progress.value = withTiming(ahead, { duration: tickMs, easing: Easing.linear });
-  }, [position, total, playing, tickMs, rate, progress, dragging]);
+    progress.value = ratio;
+  }, [position, total, progress, dragging]);
 
   const commit = useCallback(
     (ratio: number) => {

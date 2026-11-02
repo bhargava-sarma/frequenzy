@@ -1,15 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { BackHandler, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, {
-  Easing,
-  interpolate,
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-  withTiming,
-} from 'react-native-reanimated';
+import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { StatusBar } from 'expo-status-bar';
 
 import { PanelDragContext } from './PanelHandle';
@@ -17,22 +9,20 @@ import { NowPlayingScreen } from '../screens/NowPlayingScreen';
 import { LyricsScreen } from '../screens/LyricsScreen';
 import { QueueScreen } from '../screens/QueueScreen';
 import { usePlayerUiStore } from '../store/usePlayerUiStore';
-import { springs } from '../theme/motion';
-import { layout, motion } from '../theme/tokens';
+import { useTimings } from '../theme/motion';
 import { ImmersiveScope } from '../theme/ThemeProvider';
 
 /**
- * The full player, expanding out of whatever opened it.
+ * The full player, sliding up over the app.
  *
- * Sits above the navigator rather than inside it: as a stack screen the
- * player could only slide in from an edge, and Android's stack detaches the
- * screen underneath while it is up. Nothing here unmounts the app, so there
- * is nothing to leave unpainted, and the transition is ours.
+ * Sits above the navigator rather than inside it: Android's stack detaches
+ * the screen underneath a pushed screen, and nothing here unmounts the app,
+ * so there is nothing to leave unpainted.
  *
- * It stays mounted until its collapse has finished — unmounting the moment
- * `open` went false is what made it vanish rather than shrink back into the
- * dock. The hardware back button closes a panel first, then the player,
- * before navigation ever sees it.
+ * One motion, in both directions: up from the bottom edge, and back down it
+ * — the edge the dock is on, and the direction you drag to dismiss. It stays
+ * mounted until it is off screen, and the hardware back button closes a
+ * panel first, then the player, before navigation ever sees it.
  *
  * Everything inside is rendered against the immersive (dark) palette: over
  * artwork colour, light type is the only thing that reads in every case.
@@ -40,15 +30,12 @@ import { ImmersiveScope } from '../theme/ThemeProvider';
 
 const DISMISS_DISTANCE = 140;
 const DISMISS_VELOCITY = 900;
-const START_SCALE = 0.86;
-
-const CLOSE = { duration: motion.durationScreen, easing: Easing.bezier(...motion.easing) };
 
 export function PlayerOverlay() {
   const { height } = useWindowDimensions();
+  const { enter, exit, fast } = useTimings();
 
   const open = usePlayerUiStore((state) => state.open);
-  const origin = usePlayerUiStore((state) => state.origin);
   const closePlayer = usePlayerUiStore((state) => state.closePlayer);
   const queueOpen = usePlayerUiStore((state) => state.queueOpen);
   const closeQueue = usePlayerUiStore((state) => state.closeQueue);
@@ -56,22 +43,23 @@ export function PlayerOverlay() {
   const closeLyrics = usePlayerUiStore((state) => state.closeLyrics);
 
   const [mounted, setMounted] = useState(open);
-  const progress = useSharedValue(0);
+  const offset = useSharedValue(height);
   const dragY = useSharedValue(0);
-
-  const originOffset = origin ? origin.y + origin.height / 2 - height / 2 : height / 2;
 
   useEffect(() => {
     if (open) {
       dragY.value = 0;
       setMounted(true);
-      progress.value = withSpring(1, springs.screen);
+      offset.value = withTiming(0, enter);
       return;
     }
-    progress.value = withTiming(0, CLOSE, (finished) => {
+    // Leaves from wherever a drag left it, so a dismissal never jumps back up.
+    offset.value = withTiming(height, exit, (finished) => {
       if (finished) runOnJS(setMounted)(false);
     });
-  }, [open, progress, dragY]);
+    // Durations are read when the player opens or closes, not tracked.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, height, offset, dragY]);
 
   // Back closes the innermost thing first, and is consumed while open.
   useEffect(() => {
@@ -94,26 +82,18 @@ export function PlayerOverlay() {
     })
     .onEnd((event) => {
       if (dragY.value > DISMISS_DISTANCE || event.velocityY > DISMISS_VELOCITY) {
+        // Hand the drag over to the slide-out, so it continues from here.
+        offset.value = offset.value + dragY.value;
+        dragY.value = 0;
         runOnJS(closePlayer)();
         return;
       }
-      dragY.value = withSpring(0, springs.snappy);
+      dragY.value = withTiming(0, fast);
     });
 
-  const containerStyle = useAnimatedStyle(() => {
-    // Dragging eats into the same progress the expansion uses, so a drag and
-    // a dismissal are the same motion at different speeds.
-    const dragProgress = Math.max(0, 1 - dragY.value / (DISMISS_DISTANCE * 2.5));
-    const p = progress.value * dragProgress;
-    return {
-      opacity: interpolate(p, [0, 0.3, 1], [0, 1, 1]),
-      transform: [
-        { translateY: interpolate(p, [0, 1], [originOffset, 0]) },
-        { scale: interpolate(p, [0, 1], [START_SCALE, 1]) },
-      ],
-      borderRadius: interpolate(p, [0, 1], [layout.dockRadius, 0]),
-    };
-  });
+  const containerStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: offset.value + dragY.value }],
+  }));
 
   if (!mounted) return null;
 
@@ -121,7 +101,7 @@ export function PlayerOverlay() {
     <ImmersiveScope>
       <View style={StyleSheet.absoluteFill} pointerEvents={open ? 'box-none' : 'none'}>
         {open && <StatusBar style="light" />}
-        <Animated.View style={[styles.container, containerStyle]}>
+        <Animated.View style={[StyleSheet.absoluteFill, containerStyle]}>
           {/* The swipe-down covers the player face only. Wrapped around the
               panels too, it would turn every downward scroll of the queue
               into closing the player. */}
@@ -158,6 +138,7 @@ function SlidePanel({
   testID?: string;
 }) {
   const { height } = useWindowDimensions();
+  const { enter, exit, fast } = useTimings();
   const [mounted, setMounted] = useState(open);
   const offset = useSharedValue(height);
   const dragY = useSharedValue(0);
@@ -167,12 +148,13 @@ function SlidePanel({
       dragY.value = 0;
       offset.value = height;
       setMounted(true);
-      offset.value = withSpring(0, springs.screen);
+      offset.value = withTiming(0, enter);
       return;
     }
-    offset.value = withTiming(height, CLOSE, (finished) => {
+    offset.value = withTiming(height, exit, (finished) => {
       if (finished) runOnJS(setMounted)(false);
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, height, offset, dragY]);
 
   const pan = Gesture.Pan()
@@ -183,10 +165,12 @@ function SlidePanel({
     })
     .onEnd((event) => {
       if (dragY.value > DISMISS_DISTANCE || event.velocityY > DISMISS_VELOCITY) {
+        offset.value = offset.value + dragY.value;
+        dragY.value = 0;
         runOnJS(onClose)();
         return;
       }
-      dragY.value = withSpring(0, springs.snappy);
+      dragY.value = withTiming(0, fast);
     });
 
   const style = useAnimatedStyle(() => ({
@@ -207,15 +191,3 @@ function SlidePanel({
     </PanelDragContext.Provider>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
-    bottom: 0,
-    // Clips the player's own square corners while the radius animates in.
-    overflow: 'hidden',
-  },
-});

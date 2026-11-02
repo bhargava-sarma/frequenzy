@@ -9,9 +9,8 @@ import { useThemedStyles } from '../theme/ThemeProvider';
  * A module on the panel: a flat card with a crisp edge and an optional
  * screen-printed label in its corner.
  *
- * Panels are the opaque, industrial half of the language — they hold
- * information that should sit still (charts, stats, settings). Glass is
- * kept for chrome that floats over moving content.
+ * Panels hold information that should sit still — charts, stats,
+ * settings — in the same solid material as every other surface.
  */
 export interface PanelProps {
   children?: React.ReactNode;

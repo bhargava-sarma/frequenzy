@@ -97,9 +97,9 @@ rather than becoming prose you can't follow. See
 [Lyrics and romanisation](#lyrics-and-romanisation).
 
 **Settings** — Auto, light, dark and OLED themes; accent from the artwork or a
-fixed preset; the player face; how much ambient colour, blur and tint the glass
-carries; haptics, reduce motion, scrobbling, queue restore, the tab to open on;
-server status with a library rescan; and cache and history clearing.
+fixed preset; the player face; how strong the ambient colour wash is; haptics,
+reduce motion, scrobbling, queue restore, the tab to open on; server status
+with a library rescan; and cache and history clearing.
 
 ---
 
@@ -224,31 +224,37 @@ too large to ship.
 ## Design
 
 The design language is called **FQ-1**: the app drawn as a piece of portable
-audio hardware. Four influences, each with a job.
+audio hardware. Three influences, each with a job.
 
 - **Teenage Engineering** for structure. Numbered sections, tracked-out mono
-  labels on every control, keycaps with a lip that travel when pressed, status
-  LEDs, a black OLED display plate with scanlines and a dot-matrix readout, and
-  a faint engineering-paper dot grid behind every screen.
-- **Liquid glass** for the chrome that floats: the dock, navigation bars, sheets
-  and toasts. A real blur where the platform can do it (iOS, Android 12+), a
-  specular sheen, a bright rim and an inner glow for thickness. Where blur isn't
-  available, floating glass goes solid rather than let text read through it.
+  labels on every control, keycaps with a lip that sit down when pressed,
+  status LEDs, a black OLED display plate with scanlines and a dot-matrix
+  readout, and a faint engineering-paper dot grid behind every screen. Every
+  surface is solid — the dock, bars, sheets and toasts are panels, not glass,
+  and nothing behind them shows through.
 - **Retro** for the player: a vinyl record that spins with playback and a
   cassette whose reels wind as the track runs, alongside the plain cover.
 - **Artwork colour** for mood. The cover is decoded in pure JS and turned into
-  an accent and a four-colour mesh that drifts slowly behind the screen. Ink is
-  chosen by *measured* WCAG contrast rather than a lightness threshold, so text
-  stays legible against any cover. It can be pinned to a preset in Settings.
+  an accent and a still, four-colour wash behind the screen. Ink is chosen by
+  *measured* WCAG contrast rather than a lightness threshold, so text stays
+  legible against any cover. It can be pinned to a preset in Settings.
 
 Three finishes: **Aluminium** (light), **Graphite** (dark) and **OLED** (true
 black). The player, lyrics and queue are always dark, whatever the theme.
 
 Type is Space Grotesk for words, Space Mono for labels and figures, and Doto for
-the dot-matrix display. Motion runs on springs, and is anchored to your finger:
-opening the player, an album, a playlist or Settings expands the new surface out
-of the exact spot you pressed, rather than sliding in from a screen edge. Reduce
-Motion stops everything that moves on its own.
+the dot-matrix display.
+
+**Motion is kept to what explains something.** Sheets and the player slide up
+from the edge you drag them back to, a switch crosses its well, a push between
+screens is a short fade, and the background follows a new cover with a quick
+fade. Everything is a short eased timing — no springs, so nothing bounces or
+settles — and leaving is quicker than arriving. Nothing staggers in, scales
+under your finger, scrolls a ticker or drifts on its own; the only things that
+move unprompted are a loading light and, if you choose those faces, the record
+and the tape. Presses are a change of state rather than a movement: keys sit
+down, rows highlight. Reduce Motion stops the record and tape and makes every
+transition instant.
 
 ---
 
@@ -418,7 +424,7 @@ to be liftable into a shared package if a web client follows.
 | State | Zustand 5 |
 | Animation | Reanimated 4, Gesture Handler 2 |
 | Images | `expo-image` |
-| Graphics | `react-native-svg`, `expo-blur` |
+| Graphics | `react-native-svg` |
 | Type | Space Grotesk, Space Mono, Doto |
 | Storage | `expo-secure-store`, AsyncStorage |
 | Server API | Subsonic 1.16.1 (Navidrome) |

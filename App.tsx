@@ -7,7 +7,6 @@ import { useFonts } from 'expo-font';
 import TrackPlayer from '@rntp/player';
 
 import { ArtworkAccentBridge } from './src/components/ArtworkAccentBridge';
-import { GlassProvider } from './src/components/BlurTarget';
 import { PlayerOverlay } from './src/components/PlayerOverlay';
 import { ToastHost } from './src/components/ToastHost';
 import { RootNavigator } from './src/navigation/RootNavigator';
@@ -25,17 +24,13 @@ import { ThemeProvider, useTheme } from './src/theme/ThemeProvider';
 /**
  * GestureHandlerRootView wraps everything and sits above SafeAreaProvider:
  * gestures registered outside it silently never fire on Android.
- *
- * GlassProvider holds the named blur targets the dock blurs (BlurTarget.tsx).
  */
 export default function App() {
   return (
     <GestureHandlerRootView style={styles.fill}>
       <SafeAreaProvider>
         <ThemeProvider>
-          <GlassProvider>
-            <AppContent />
-          </GlassProvider>
+          <AppContent />
         </ThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

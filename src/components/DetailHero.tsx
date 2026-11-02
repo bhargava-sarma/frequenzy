@@ -17,8 +17,7 @@ import { useSvgId } from '../utils/svgId';
  * then the cover, a printed kind ("ALBUM · 1997"), the title, a link to the
  * artist and a spec line — the album's label, read like a device's.
  *
- * The wash drifts at half the scroll speed, so the list slides over it
- * rather than pushing it off.
+ * The wash scrolls with the list, as part of the page.
  */
 export interface DetailHeroProps {
   artworkUri?: string | null;
@@ -58,7 +57,7 @@ export const DetailHero = memo(function DetailHero({
   return (
     <View style={[styles.root, { paddingTop: navHeight + space[2] }]}>
       <View style={styles.art}>
-        {art ?? <Artwork uri={artworkUri} size={artSize} round={round} transitionMs={200} rim />}
+        {art ?? <Artwork uri={artworkUri} size={artSize} round={round} rim />}
       </View>
 
       <Label tone="secondary" bold style={styles.eyebrow}>
@@ -104,8 +103,8 @@ export const DetailHero = memo(function DetailHero({
  * Drawn by the screen's scaffold, beneath the dot grid and the ambient
  * wash, rather than inside the list: there, its fade to the ground colour
  * ended in a visible seam where the grid and wash resumed below it. Here
- * those layers run continuously over it. It drifts up at half the scroll
- * speed, so the list slides over it rather than pushing it off.
+ * those layers run continuously over it. It moves exactly with the list, as
+ * if printed on the page — no parallax, no stretch.
  */
 export const HeroBackdrop = memo(function HeroBackdrop({
   uri,
@@ -117,11 +116,7 @@ export const HeroBackdrop = memo(function HeroBackdrop({
   const color = useTheme();
   const fadeId = useSvgId('herofade');
 
-  const style = useAnimatedStyle(() => {
-    const y = scrollY.value;
-    if (y < 0) return { transform: [{ scale: 1 + -y / BACKDROP_HEIGHT }] };
-    return { transform: [{ translateY: -y * 0.5 }] };
-  });
+  const style = useAnimatedStyle(() => ({ transform: [{ translateY: -scrollY.value }] }));
 
   if (!uri) return null;
 
@@ -133,7 +128,7 @@ export const HeroBackdrop = memo(function HeroBackdrop({
         contentFit="cover"
         blurRadius={40}
         cachePolicy="memory-disk"
-        transition={250}
+        transition={0}
       />
       <View
         style={[

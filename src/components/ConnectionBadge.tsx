@@ -38,13 +38,13 @@ export const ConnectionBadge = memo(function ConnectionBadge({
       style={({ pressed }) => [
         styles.root,
         {
-          borderColor: tone === 'onArtwork' ? 'rgba(255,255,255,0.2)' : color.separator,
-          backgroundColor: tone === 'onArtwork' ? 'rgba(0,0,0,0.2)' : color.surface,
+          borderColor: tone === 'onArtwork' ? color.border : color.separator,
+          backgroundColor: color.surface,
         },
         pressed && styles.pressed,
       ]}
     >
-      <Led color={led} size={6} blink={!connection} />
+      <Led color={led} size={6} />
       <View>
         <Label tone={tone === 'onArtwork' ? 'onArtwork' : 'secondary'} size={9.5} bold>
           {label}

@@ -2,13 +2,14 @@ import { memo } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import Animated, { interpolateColor, useAnimatedStyle } from 'react-native-reanimated';
 
-import { useToggleProgress } from '../theme/motion';
+import { useSwitchProgress } from '../theme/motion';
 import { useTheme } from '../theme/ThemeProvider';
 import { haptics } from '../utils/haptics';
 
 /**
  * A slide switch, the hardware kind: a rectangular well and a gripped knob
- * that travels across it, with the well lighting up when it's on.
+ * that crosses it in a tenth of a second, with the well lighting up when
+ * it's on. The one control whose change of state is a change of place.
  */
 export interface ToggleProps {
   value: boolean;
@@ -29,7 +30,7 @@ export const Toggle = memo(function Toggle({
   disabled = false,
 }: ToggleProps) {
   const color = useTheme();
-  const on = useToggleProgress(value);
+  const on = useSwitchProgress(value);
 
   const well = useAnimatedStyle(() => ({
     backgroundColor: interpolateColor(on.value, [0, 1], [color.surfaceSunken, color.accent]),

@@ -1,11 +1,9 @@
 import { memo, useEffect } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import Animated, {
-  Easing,
   useAnimatedStyle,
   useFrameCallback,
   useSharedValue,
-  withTiming,
   type SharedValue,
 } from 'react-native-reanimated';
 
@@ -22,8 +20,11 @@ import { useTheme, useThemeControls } from '../../theme/ThemeProvider';
  * at the speed the tape would drive them, inversely to how much is wound on
  * each, so the nearly-empty reel spins visibly faster than the full one.
  *
- * All of it is transforms driven from one frame callback on the UI thread,
- * and the callback only runs while music does.
+ * The turning hubs are this face's whole point, so they are the one thing
+ * here that moves on its own — transforms driven from one frame callback on
+ * the UI thread, running only while music does, and not at all under Reduce
+ * motion. The packs are simply sized to the position: they change by a
+ * fraction of a point a second, so there is nothing to animate.
  */
 
 /** Points of tape passing the head per second, in hub-degrees × radius. */
@@ -56,8 +57,7 @@ export const TapeFace = memo(function TapeFace({
   const rightAngle = useSharedValue(0);
 
   useEffect(() => {
-    const jump = Math.abs(progress - p.value) > 0.05;
-    p.value = jump ? progress : withTiming(progress, { duration: 1000, easing: Easing.linear });
+    p.value = progress;
   }, [progress, p]);
 
   const frame = useFrameCallback((info) => {

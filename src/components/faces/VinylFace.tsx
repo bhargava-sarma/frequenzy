@@ -21,11 +21,13 @@ import { useSvgId } from '../../utils/svgId';
  * the label, which is the album's cover cut round. The sheen across the
  * vinyl stays put while the record turns under it, which is what makes it
  * read as a lit, spinning disc rather than a rotating picture. The tone arm
- * tracks inward with the song: lifted at rest, set down at the lead-in when
- * a track starts, at the run-out as it ends.
+ * sits where the song is: lifted at rest, at the lead-in when a track
+ * starts, at the run-out as it ends. It moves a fraction of a degree a
+ * second, so it is simply placed, not animated.
  *
- * 33⅓ rpm is 1.8 s a turn. On pause the platter coasts a little and stops,
- * rather than freezing mid-turn.
+ * The turning is this face's whole point, so it is the one thing here that
+ * moves on its own: 33⅓ rpm, 1.8 s a turn, stopping where it is on pause.
+ * Reduce motion holds it still.
  */
 const REVOLUTION_MS = 1800;
 
@@ -45,20 +47,13 @@ export const VinylFace = memo(function VinylFace({
   const { reduceMotion } = useThemeControls();
   const sheenId = useSvgId('vinylsheen');
   const angle = useSharedValue(0);
-  const arm = useSharedValue(playing ? progress : -0.25);
 
   const disc = size * 0.92;
   const label = disc * 0.36;
 
   useEffect(() => {
     cancelAnimation(angle);
-    if (!playing || reduceMotion) {
-      // Coast to a stop over a fraction of a turn.
-      if (!reduceMotion) {
-        angle.value = withTiming(angle.value + 50, { duration: 700, easing: Easing.out(Easing.quad) });
-      }
-      return;
-    }
+    if (!playing || reduceMotion) return;
     const start = angle.value % 360;
     angle.value = start;
     angle.value = withRepeat(
@@ -69,20 +64,13 @@ export const VinylFace = memo(function VinylFace({
     return () => cancelAnimation(angle);
   }, [playing, reduceMotion, angle]);
 
-  useEffect(() => {
-    // Lifted off the record when paused at the very start, otherwise riding
-    // the groove at the track's position.
-    const target = !playing && progress < 0.001 ? -0.25 : progress;
-    arm.value = withTiming(target, { duration: 900, easing: Easing.inOut(Easing.quad) });
-  }, [playing, progress, arm]);
-
   const spin = useAnimatedStyle(() => ({ transform: [{ rotate: `${angle.value % 360}deg` }] }));
   // Measured against the disc geometry below: 0° puts the stylus on the
   // outer groove, 26° on the run-out by the label, and the rest position
-  // (-0.25) swings it just clear of the rim.
-  const armStyle = useAnimatedStyle(() => ({
-    transform: [{ rotate: `${arm.value * 26}deg` }],
-  }));
+  // (-0.25) swings it just clear of the rim. Lifted off the record when
+  // paused at the very start, otherwise riding the groove.
+  const arm = !playing && progress < 0.001 ? -0.25 : progress;
+  const armStyle = { transform: [{ rotate: `${arm * 26}deg` }] };
 
   const grooves = useMemo(() => {
     const out: number[] = [];
@@ -133,7 +121,7 @@ export const VinylFace = memo(function VinylFace({
             spin,
           ]}
         >
-          <Artwork uri={uri} size={label} round shadow={false} transitionMs={320} />
+          <Artwork uri={uri} size={label} round shadow={false} />
           {/* A printed tick on the label, so the turn is visible even on a plain cover. */}
           <View style={[styles.tick, { left: label / 2 - 1, backgroundColor: color.accent }]} />
           <View style={[styles.spindle, { left: label / 2 - 5, top: label / 2 - 5 }]} />

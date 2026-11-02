@@ -1,19 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, {
-  Easing,
-  interpolate,
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-  withSequence,
-  withSpring,
-  withTiming,
-} from 'react-native-reanimated';
+import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Glass } from './Glass';
 import {
   IconAlertTriangle,
   IconCheck,
@@ -27,19 +17,21 @@ import {
   IconCornerDownRight,
   type IconComponent,
 } from './icons';
-import { springs } from '../theme/motion';
-import { radius, space, type } from '../theme/tokens';
-import { useTheme } from '../theme/ThemeProvider';
+import { useTimings } from '../theme/motion';
+import { radius, space, stroke, type } from '../theme/tokens';
+import type { Palette } from '../theme/tokens';
+import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import { useToastStore, type Toast, type ToastIcon } from '../store/useToastStore';
 import { haptics } from '../utils/haptics';
 
 /**
- * Where toasts appear: a glass pill under the status bar.
+ * Where toasts appear: a solid pill under the status bar.
  *
  * At the top rather than above the dock, so it never collides with the
  * dock, the mini player, a sheet or the keyboard, and it stays visible over
- * the full player. Tap or flick it up to dismiss; an action, when there is
- * one, is printed on its right.
+ * the full player. It fades in and out — no drop, no bounce — and a toast
+ * arriving while one is up simply replaces its text. Tap or flick it up to
+ * dismiss; an action, when there is one, is printed on its right.
  */
 
 const ICONS: Record<ToastIcon, IconComponent> = {
@@ -60,24 +52,20 @@ export function ToastHost() {
   const dismiss = useToastStore((state) => state.dismiss);
   const insets = useSafeAreaInsets();
   const color = useTheme();
+  const styles = useThemedStyles(makeStyles);
+  const { fast, exit } = useTimings();
 
   const [shown, setShown] = useState<Toast | null>(null);
   const progress = useSharedValue(0);
-  const bump = useSharedValue(1);
   const dragY = useSharedValue(0);
   const shownRef = useRef<Toast | null>(null);
 
   useEffect(() => {
     if (current) {
-      const replacing = shownRef.current != null;
       shownRef.current = current;
       setShown(current);
       dragY.value = 0;
-      if (replacing) {
-        // Already up: a small pulse says "updated" without re-entering.
-        bump.value = withSequence(withTiming(1.04, { duration: 90 }), withSpring(1, springs.snappy));
-      }
-      progress.value = withSpring(1, springs.snappy);
+      progress.value = withTiming(1, fast);
       if (current.tone === 'error') haptics.error();
 
       const timer = setTimeout(() => dismiss(current.id), current.duration);
@@ -85,7 +73,7 @@ export function ToastHost() {
     }
 
     if (shownRef.current) {
-      progress.value = withTiming(0, { duration: 180, easing: Easing.in(Easing.quad) }, (finished) => {
+      progress.value = withTiming(0, exit, (finished) => {
         if (finished) runOnJS(clear)();
       });
     }
@@ -105,15 +93,12 @@ export function ToastHost() {
     })
     .onEnd((event) => {
       if (dragY.value < -24 || event.velocityY < -500) runOnJS(dismiss)(undefined);
-      else dragY.value = withSpring(0, springs.snappy);
+      else dragY.value = withTiming(0, fast);
     });
 
   const style = useAnimatedStyle(() => ({
     opacity: progress.value,
-    transform: [
-      { translateY: interpolate(progress.value, [0, 1], [-24, 0]) + dragY.value },
-      { scale: bump.value * interpolate(progress.value, [0, 1], [0.94, 1]) },
-    ],
+    transform: [{ translateY: dragY.value }],
   }));
 
   if (!shown) return null;
@@ -126,7 +111,6 @@ export function ToastHost() {
     <View pointerEvents="box-none" style={[styles.host, { top: insets.top + space[2] }]}>
       <GestureDetector gesture={pan}>
         <Animated.View style={[styles.toast, style]} accessibilityLiveRegion="polite">
-          <Glass variant="prominent" blur shadow radius={radius.full} style={StyleSheet.absoluteFill} />
           <Pressable
             style={styles.body}
             onPress={() => dismiss(shown.id)}
@@ -169,32 +153,45 @@ export function ToastHost() {
   );
 }
 
-const styles = StyleSheet.create({
-  host: { position: 'absolute', left: 0, right: 0, alignItems: 'center', zIndex: 100 },
-  toast: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    maxWidth: '92%',
-    minHeight: 48,
-    borderRadius: radius.full,
-  },
-  body: {
-    flexShrink: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space[2] + 2,
-    paddingLeft: space[2],
-    paddingRight: space[4],
-    paddingVertical: space[2],
-  },
-  iconDot: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  text: { flexShrink: 1 },
-  action: { paddingRight: space[4], paddingLeft: space[1], paddingVertical: space[3] },
-  pressed: { opacity: 0.5 },
-});
+const makeStyles = (color: Palette) =>
+  StyleSheet.create({
+    host: { position: 'absolute', left: 0, right: 0, alignItems: 'center', zIndex: 100 },
+    toast: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      maxWidth: '92%',
+      minHeight: 48,
+      borderRadius: radius.full,
+      backgroundColor: color.surfaceRaised,
+      borderWidth: stroke,
+      borderColor: color.border,
+      boxShadow: [
+        {
+          offsetX: 0,
+          offsetY: 6,
+          blurRadius: 16,
+          spreadDistance: -4,
+          color: color.mode === 'light' ? '#2A292533' : '#00000099',
+        },
+      ],
+    },
+    body: {
+      flexShrink: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: space[2] + 2,
+      paddingLeft: space[2],
+      paddingRight: space[4],
+      paddingVertical: space[2],
+    },
+    iconDot: {
+      width: 30,
+      height: 30,
+      borderRadius: 15,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    text: { flexShrink: 1 },
+    action: { paddingRight: space[4], paddingLeft: space[1], paddingVertical: space[3] },
+    pressed: { opacity: 0.5 },
+  });

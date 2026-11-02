@@ -29,14 +29,13 @@ export interface Settings {
   accentPreset: AccentPreset;
   /** Strength of the ambient artwork wash, 0-1. 0 removes it entirely. */
   ambient: number;
-  /** How hard glass blurs, 0-100. */
-  blur: number;
-  /** How strongly glass is tinted, 0-1. 0.75 is the designed default. */
-  tint: number;
   /** A faint engineering-paper dot grid behind every screen. */
   gridPaper: boolean;
   playerFace: PlayerFace;
-  /** Stops decorative motion: breathing art, spinning reels, marquees. */
+  /**
+   * Stops the record and the tape turning, and has sheets and the player
+   * appear in place instead of sliding.
+   */
   reduceMotion: boolean;
   haptics: boolean;
   /** Report plays to Navidrome. */
@@ -62,8 +61,6 @@ export const DEFAULT_SETTINGS: Settings = {
   accentMode: 'artwork',
   accentPreset: 'orange',
   ambient: 0.8,
-  blur: 40,
-  tint: 0.75,
   gridPaper: true,
   playerFace: 'artwork',
   reduceMotion: false,
@@ -96,9 +93,14 @@ const LEGACY_KEYS = {
   theme: 'settings.theme',
   artworkAccent: 'settings.artworkAccent',
   ambient: 'settings.ambient',
+  // Blur and tint settings from the glass design: read by nothing, only
+  // listed so the migration clears them out of storage.
   blur: 'settings.blurIntensity',
   tint: 'settings.surfaceOpacity',
 } as const;
+
+/** Stored fields that no longer mean anything, dropped when a record loads. */
+const OBSOLETE_FIELDS = ['blur', 'tint'] as const;
 
 const finite = (raw: string | null | undefined, min: number, max: number): number | undefined => {
   const parsed = raw != null ? Number(raw) : NaN;
@@ -122,10 +124,6 @@ async function readLegacy(): Promise<Partial<Settings>> {
     }
     const ambient = finite(value[LEGACY_KEYS.ambient], 0, 1);
     if (ambient !== undefined) patch.ambient = ambient;
-    const blur = finite(value[LEGACY_KEYS.blur], 0, 100);
-    if (blur !== undefined) patch.blur = blur;
-    const tint = finite(value[LEGACY_KEYS.tint], 0, 1);
-    if (tint !== undefined) patch.tint = tint;
 
     void AsyncStorage.multiRemove(Object.values(LEGACY_KEYS)).catch(() => {});
     return patch;
@@ -166,10 +164,12 @@ export const useSettingsStore = create<SettingsStore>()(
       // Values from storage are merged over the defaults rather than
       // replacing them, so a setting added in a later version still has a
       // value for someone whose stored record predates it.
-      merge: (persisted, current) => ({
-        ...current,
-        ...(persisted && typeof persisted === 'object' ? (persisted as Partial<Settings>) : {}),
-      }),
+      merge: (persisted, current) => {
+        const stored: Record<string, unknown> =
+          persisted && typeof persisted === 'object' ? { ...(persisted as object) } : {};
+        for (const field of OBSOLETE_FIELDS) delete stored[field];
+        return { ...current, ...(stored as Partial<Settings>) };
+      },
       onRehydrateStorage: () => (state) => {
         const finish = (patch: Partial<Settings> = {}) =>
           useSettingsStore.setState({ ...patch, hydrated: true });

@@ -4,8 +4,8 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Artwork } from './Artwork';
 import { IconDotsVertical, IconHeartFilled } from './icons';
 import { PlayingBars } from './PlayingBars';
-import { PressScale } from './Pressable';
-import { hairline, layout, space, type } from '../theme/tokens';
+import { Touchable } from './Touchable';
+import { hairline, layout, space, type, withAlpha } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import { haptics } from '../utils/haptics';
@@ -73,7 +73,7 @@ export const ListRow = memo(function ListRow({
   const styles = useThemedStyles(makeStyles);
 
   return (
-    <PressScale
+    <Touchable
       accessibilityRole="button"
       accessibilityLabel={subtitle ? `${title}, ${subtitle}` : title}
       onPress={onPress}
@@ -85,10 +85,10 @@ export const ListRow = memo(function ListRow({
             }
           : undefined
       }
-      // Wide rows move less than buttons: the same percentage on a
-      // full-width element reads as the list lurching.
-      scaleTo={0.985}
+      // A full-width row highlights rather than dims: dimming the whole row
+      // reads as it being disabled.
       style={[styles.root, dimmed && styles.dimmed]}
+      pressedStyle={styles.rowPressed}
     >
       {rank != null && (
         <Text style={[styles.rank, rank <= 3 && styles.rankTop]} numberOfLines={1}>
@@ -159,7 +159,7 @@ export const ListRow = memo(function ListRow({
           </Pressable>
         )}
       </View>
-    </PressScale>
+    </Touchable>
   );
 });
 
@@ -172,6 +172,7 @@ const makeStyles = (color: Palette) =>
       paddingLeft: layout.screenPadding,
     },
     dimmed: { opacity: 0.45 },
+    rowPressed: { backgroundColor: withAlpha(color.label, 0.06) },
     artBadge: {
       position: 'absolute',
       top: 0,

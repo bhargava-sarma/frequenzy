@@ -7,7 +7,6 @@ import {
   useWindowDimensions,
   type ListRenderItem,
 } from 'react-native';
-import Animated, { FadeIn } from 'react-native-reanimated';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
@@ -512,10 +511,10 @@ export function LibraryScreen() {
   return (
     <TabScaffold>
       {header}
-      {/* Keyed on mode and view, so switching crossfades instead of cutting. */}
-      <Animated.View key={`${mode}:${view}`} style={styles.fill} entering={FadeIn.duration(180)}>
+      {/* Keyed on mode and view, so a switch starts the new list at its top. */}
+      <View key={`${mode}:${view}`} style={styles.fill}>
         {body}
-      </Animated.View>
+      </View>
 
       <AlbumActionsSheet visible={albumTarget != null} onClose={() => setAlbumTarget(null)} album={albumTarget} />
 

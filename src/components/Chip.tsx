@@ -2,7 +2,7 @@ import { memo } from 'react';
 import { ScrollView, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
 import type { IconComponent } from './icons';
-import { PressScale } from './Pressable';
+import { Touchable } from './Touchable';
 import { layout, radius, space, type } from '../theme/tokens';
 import { useTheme } from '../theme/ThemeProvider';
 import { haptics } from '../utils/haptics';
@@ -21,7 +21,7 @@ export interface ChipProps {
   icon?: IconComponent;
   /** Trailing figure, e.g. a count. */
   count?: number | string;
-  /** Glass-on-artwork styling, for chips over the player. */
+  /** Light-on-artwork styling, for chips over the player. */
   tone?: 'default' | 'onArtwork';
   accessibilityLabel?: string;
   style?: StyleProp<ViewStyle>;
@@ -40,17 +40,13 @@ export const Chip = memo(function Chip({
   const color = useTheme();
   const onArt = tone === 'onArtwork';
 
-  const background = selected
-    ? color.accent
-    : onArt
-      ? 'rgba(255,255,255,0.12)'
-      : color.surfaceRaised;
+  // Solid in both tones: over artwork a chip is a dark key, not a tinted pane.
+  const background = selected ? color.accent : color.surfaceRaised;
   const ink = selected ? color.accentInk : onArt ? color.onArtwork : color.label;
-  const border = selected ? color.accent : onArt ? 'rgba(255,255,255,0.18)' : color.separator;
+  const border = selected ? color.accent : onArt ? color.border : color.separator;
 
   return (
-    <PressScale
-      noOrigin
+    <Touchable
       accessibilityRole="button"
       accessibilityState={{ selected }}
       accessibilityLabel={accessibilityLabel ?? label}
@@ -58,7 +54,6 @@ export const Chip = memo(function Chip({
         haptics.tick();
         onPress?.();
       }}
-      scaleTo={0.94}
       style={[styles.root, { backgroundColor: background, borderColor: border }, style]}
     >
       {Icon && <Icon size={14} color={ink} strokeWidth={2} />}
@@ -70,7 +65,7 @@ export const Chip = memo(function Chip({
           {count}
         </Text>
       )}
-    </PressScale>
+    </Touchable>
   );
 });
 

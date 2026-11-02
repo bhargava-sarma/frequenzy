@@ -11,22 +11,19 @@ import {
 } from 'react-native';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
-  Easing,
   interpolate,
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
-  withSpring,
   withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Artwork } from './Artwork';
-import { Glass } from './Glass';
 import type { IconComponent } from './icons';
 import { Label } from './Label';
-import { springs } from '../theme/motion';
-import { hairline, layout, radius, space, type, withAlpha } from '../theme/tokens';
+import { useTimings } from '../theme/motion';
+import { hairline, layout, radius, space, stroke, type, withAlpha } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import { haptics } from '../utils/haptics';
@@ -34,12 +31,12 @@ import { haptics } from '../utils/haptics';
 /**
  * A bottom sheet for short, decisive choices.
  *
- * It rises on a spring while the scrim fades in, and leaves the same way —
- * kept mounted until its exit has played, since a native modal unmounted
- * mid-animation simply vanishes. The header is a drag handle: pull it down
- * past a threshold, or flick, and the sheet goes; short of that it settles
- * back. Long content scrolls inside without fighting the drag, because only
- * the header listens.
+ * A solid panel that slides up from the bottom edge while the scrim fades
+ * in, and leaves the same way — kept mounted until its exit has played,
+ * since a native modal unmounted mid-animation simply vanishes. The header
+ * is a drag handle: pull it down past a threshold, or flick, and the sheet
+ * goes; short of that it returns. Long content scrolls inside without
+ * fighting the drag, because only the header listens.
  */
 export interface SheetProps {
   visible: boolean;
@@ -58,7 +55,6 @@ export interface SheetProps {
 
 const DISMISS_DISTANCE = 110;
 const DISMISS_VELOCITY = 900;
-const EXIT = { duration: 210, easing: Easing.in(Easing.quad) };
 
 /**
  * One sheet on screen at a time.
@@ -108,6 +104,7 @@ export function Sheet({
   const styles = useThemedStyles(makeStyles);
   const insets = useSafeAreaInsets();
   const { height: screenHeight } = useWindowDimensions();
+  const { enter, exit, fast } = useTimings();
 
   // Starts unmounted even when visible: opening goes through claim().
   const [mounted, setMounted] = useState(false);
@@ -134,7 +131,7 @@ export function Sheet({
       claim(id, () => {
         dragY.value = 0;
         setMounted(true);
-        if (sheetHeight > 0) progress.value = withSpring(1, springs.gentle);
+        if (sheetHeight > 0) progress.value = withTiming(1, enter);
         else pendingOpen.current = true;
       });
     } else if (!mounted) {
@@ -142,7 +139,7 @@ export function Sheet({
       waiting.delete(id);
     } else {
       pendingOpen.current = false;
-      progress.value = withTiming(0, EXIT, (finished) => {
+      progress.value = withTiming(0, exit, (finished) => {
         if (finished) runOnJS(finishClose)();
       });
     }
@@ -167,7 +164,7 @@ export function Sheet({
         runOnJS(onClose)();
         return;
       }
-      dragY.value = withSpring(0, springs.snappy);
+      dragY.value = withTiming(0, fast);
     });
 
   const sheetStyle = useAnimatedStyle(() => ({
@@ -180,10 +177,10 @@ export function Sheet({
       setSheetHeight(Math.round(event.nativeEvent.layout.height));
       if (pendingOpen.current) {
         pendingOpen.current = false;
-        progress.value = withSpring(1, springs.gentle);
+        progress.value = withTiming(1, enter);
       }
     },
-    [progress],
+    [progress, enter],
   );
 
   return (
@@ -212,8 +209,6 @@ export function Sheet({
               onLayout={onLayout}
               style={[styles.sheet, { maxHeight: screenHeight * 0.86 }, sheetStyle]}
             >
-              <Glass variant="prominent" blur shadow radius={radius.xxl} style={StyleSheet.absoluteFill} />
-
               <GestureDetector gesture={pan}>
                 <View style={styles.handleArea}>
                   <View style={styles.grabber} />
@@ -334,10 +329,11 @@ const makeStyles = (color: Palette) =>
     anchor: { flex: 1, justifyContent: 'flex-end', paddingHorizontal: space[2] },
     sheet: {
       borderRadius: radius.xxl,
-      borderBottomLeftRadius: radius.xxl,
-      borderBottomRightRadius: radius.xxl,
       overflow: 'hidden',
       marginBottom: space[2],
+      backgroundColor: color.surface,
+      borderWidth: stroke,
+      borderColor: color.border,
     },
     handleArea: { paddingBottom: space[2] },
     grabber: {

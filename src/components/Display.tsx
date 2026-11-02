@@ -8,7 +8,7 @@ import {
   type TextStyle,
   type ViewStyle,
 } from 'react-native';
-import Svg, { Defs, LinearGradient, Pattern, Rect, Stop } from 'react-native-svg';
+import Svg, { Defs, Pattern, Rect } from 'react-native-svg';
 
 import { radius as radii, type, withAlpha } from '../theme/tokens';
 import { useTheme } from '../theme/ThemeProvider';
@@ -18,9 +18,8 @@ import { useSvgId } from '../utils/svgId';
  * The display: a black screen set into the body.
  *
  * Same in every theme, the way a device's OLED is black whether the case is
- * silver or graphite. Faint scanlines give the glass something to be, and a
- * soft reflection across the top-left corner says there is a pane over it —
- * the liquid-glass half of the language meeting the retro half.
+ * silver or graphite. Faint scanlines are the only texture — the retro half
+ * of the language, set into the hardware half.
  *
  * Content inside reads with `displayInk`/`displayDim`; the DotText readout
  * is the dot-matrix voice of it.
@@ -41,7 +40,6 @@ export const Display = memo(function Display({
 }: DisplayProps) {
   const color = useTheme();
   const linesId = useSvgId('lines');
-  const glareId = useSvgId('glare');
 
   return (
     <View
@@ -55,22 +53,16 @@ export const Display = memo(function Display({
         style,
       ]}
     >
-      <Svg style={StyleSheet.absoluteFill} width="100%" height="100%" pointerEvents="none">
-        <Defs>
-          {scanlines && (
+      {scanlines && (
+        <Svg style={StyleSheet.absoluteFill} width="100%" height="100%" pointerEvents="none">
+          <Defs>
             <Pattern id={linesId} width={4} height={3} patternUnits="userSpaceOnUse">
               <Rect x={0} y={0} width={4} height={1} fill="#FFFFFF" fillOpacity={0.035} />
             </Pattern>
-          )}
-          <LinearGradient id={glareId} x1="0" y1="0" x2="0.75" y2="0.6">
-            <Stop offset="0" stopColor="#FFFFFF" stopOpacity={0.09} />
-            <Stop offset="0.45" stopColor="#FFFFFF" stopOpacity={0.02} />
-            <Stop offset="0.46" stopColor="#FFFFFF" stopOpacity={0} />
-          </LinearGradient>
-        </Defs>
-        {scanlines && <Rect x={0} y={0} width="100%" height="100%" fill={`url(#${linesId})`} />}
-        <Rect x={0} y={0} width="100%" height="100%" fill={`url(#${glareId})`} />
-      </Svg>
+          </Defs>
+          <Rect x={0} y={0} width="100%" height="100%" fill={`url(#${linesId})`} />
+        </Svg>
+      )}
       {children}
     </View>
   );

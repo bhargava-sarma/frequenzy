@@ -12,21 +12,20 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Glass } from './Glass';
 import { IconButton } from './IconButton';
 import { IconChevronLeft } from './icons';
 import { hairline, layout, space, type } from '../theme/tokens';
 import { useTheme } from '../theme/ThemeProvider';
 
 /**
- * A detail screen's bar: transparent over the hero, glass once the hero has
- * scrolled away.
+ * A detail screen's bar: transparent over the hero, a solid bar once the
+ * hero has scrolled away.
  *
  *   - useCollapsingHeader() owns the scroll handler and derives a 0-1
  *     progress from it on the UI thread.
- *   - <GlassNavBar> floats over the list. Its glass, hairline and compact
- *     title fade in as the hero leaves; its buttons carry their own small
- *     glass discs until then, so they stay legible over any artwork.
+ *   - <NavBar> floats over the list. Its ground, hairline and compact title
+ *     follow the scroll in — tied to your finger, never playing on their
+ *     own — and its buttons are solid discs, legible over any artwork.
  *
  * No state changes while scrolling: the handler writes a shared value and
  * every style derives from it, so the JS thread never hears about scroll.
@@ -60,43 +59,38 @@ export function useNavBarHeight(): number {
   return insets.top + layout.navBarHeight;
 }
 
-export interface GlassNavBarProps {
+export interface NavBarProps {
   title?: string;
   progress: Progress;
   onBack?: () => void;
   /** Actions on the right — IconButtons. */
   trailing?: ReactNode;
-  /** Show the bar's glass from the start. */
+  /** Show the bar's ground from the start. */
   alwaysVisible?: boolean;
   style?: StyleProp<ViewStyle>;
 }
 
-export function GlassNavBar({
+export function NavBar({
   title,
   progress,
   onBack,
   trailing,
   alwaysVisible = false,
   style,
-}: GlassNavBarProps) {
+}: NavBarProps) {
   const color = useTheme();
   const insets = useSafeAreaInsets();
 
-  const backgroundStyle = useAnimatedStyle(() => ({
-    opacity: alwaysVisible ? 1 : progress.value,
-  }));
-  const titleStyle = useAnimatedStyle(() => {
-    const p = alwaysVisible ? 1 : progress.value;
-    return { opacity: p, transform: [{ translateY: (1 - p) * 10 }] };
-  });
+  // The bar's ground and its compact title arrive together.
+  const revealStyle = useAnimatedStyle(() => ({ opacity: alwaysVisible ? 1 : progress.value }));
 
   return (
     <View
       pointerEvents="box-none"
       style={[styles.bar, { height: insets.top + layout.navBarHeight, paddingTop: insets.top }, style]}
     >
-      <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, backgroundStyle]}>
-        <Glass variant="regular" blur radius={0} border={false} sheen={false} style={StyleSheet.absoluteFill} />
+      <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, revealStyle]}>
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: color.background }]} />
         <View style={[styles.separator, { backgroundColor: color.separator }]} />
       </Animated.View>
 
@@ -114,7 +108,7 @@ export function GlassNavBar({
         </View>
 
         <Animated.Text
-          style={[type.headline, styles.title, { color: color.label }, titleStyle]}
+          style={[type.headline, styles.title, { color: color.label }, revealStyle]}
           numberOfLines={1}
         >
           {title}

@@ -99,7 +99,7 @@ export function SetupScreen() {
         <Display style={styles.hero}>
           <View style={styles.heroTop}>
             <Label tone="displayDim">Portable lossless player</Label>
-            <Led color={busy ? color.ledAmber : error ? color.ledRed : color.ledGreen} size={8} blink={busy} />
+            <Led color={busy ? color.ledAmber : error ? color.ledRed : color.ledGreen} size={8} />
           </View>
           <DotText size={52} color={color.accent}>
             FQ-1
