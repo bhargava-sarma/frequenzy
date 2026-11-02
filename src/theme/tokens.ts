@@ -3,10 +3,10 @@
  *
  * The direction: a piece of portable audio hardware. Teenage Engineering's
  * industrial grid — monospaced labels, numbered sections, keycaps in a few
- * primary colours, one loud orange — set behind Apple-style liquid glass,
- * with a retro black display (dot-matrix numerals, a tape counter) as the
- * place the music's state is read from. Colour comes from the artwork and
- * drifts behind everything.
+ * primary colours, one loud orange — on solid panels, with a retro black
+ * display (dot-matrix numerals, a tape counter) as the place the music's
+ * state is read from. Colour comes from the artwork and sits, still, behind
+ * everything.
  *
  * Plain data plus a little colour arithmetic, no React Native imports, so it
  * stays liftable alongside `api/` and `types/`.
@@ -58,9 +58,6 @@ export interface Palette {
   /** Unlit segments and secondary readouts on the display. */
   displayDim: string;
 
-  glassTint: string;
-  glassHighlight: string;
-  glassEdge: string;
   shadow: string;
   scrim: string;
   /** Text over the immersive artwork background. Always light. */
@@ -109,9 +106,6 @@ const bases: Record<ThemeName, Base> = {
     labelSecondary: '#5F5E59',
     labelTertiary: '#94928C',
     ...display,
-    glassTint: '#F7F6F3',
-    glassHighlight: '#FFFFFF',
-    glassEdge: '#000000',
     shadow: '#2A2925',
     scrim: '#0C0C0B',
     onArtwork: '#FFFFFF',
@@ -137,9 +131,6 @@ const bases: Record<ThemeName, Base> = {
     labelSecondary: '#9D9C97',
     labelTertiary: '#64635F',
     ...display,
-    glassTint: '#1A1A1C',
-    glassHighlight: '#FFFFFF',
-    glassEdge: '#FFFFFF',
     shadow: '#000000',
     scrim: '#000000',
     onArtwork: '#FFFFFF',
@@ -165,9 +156,6 @@ const bases: Record<ThemeName, Base> = {
     labelSecondary: '#9A9994',
     labelTertiary: '#5F5E5A',
     ...display,
-    glassTint: '#121214',
-    glassHighlight: '#FFFFFF',
-    glassEdge: '#FFFFFF',
     shadow: '#000000',
     scrim: '#000000',
     onArtwork: '#FFFFFF',
@@ -278,8 +266,8 @@ export function withAlpha(hex: string, alpha: number): string {
 /**
  * Four colours from a cover, conditioned for a theme, that the ambient mesh
  * is painted from. Four rather than one: a single hue at several opacities
- * reads as a tinted screen, while a few related colours drifting past each
- * other reads as light coming off the record.
+ * reads as a tinted screen, while a few related colours side by side read
+ * as light coming off the record.
  */
 export interface ArtworkPalette {
   /** The most saturated colour. The mesh's brightest blob. */
@@ -312,53 +300,6 @@ export function fallbackArtworkPalette(accent: string, mode: ThemeMode): Artwork
     deep: withSl(rotateHue(accent, -0.03), 0.6, 0.58),
   };
 }
-
-// ---------------------------------------------------------------------------
-// 1c. Glass materials
-// ---------------------------------------------------------------------------
-
-export type GlassVariant = 'regular' | 'thin' | 'prominent' | 'clear';
-
-/**
- * How one glass variant is built, per luminance family. All alphas are 0-1.
- *
- * Two tint strengths exist because the same surface is drawn two ways: over
- * a real blur (where the blur does most of the separating and the tint can
- * be light) and faked without one (where the tint alone has to keep content
- * behind from fighting content on top).
- */
-export interface GlassMaterial {
-  tintSource: 'glassTint' | 'glassHighlight';
-  blurTint: number;
-  fakeTint: number;
-  /** Peak alpha of the specular sheen at the top edge. */
-  sheen: number;
-  /** The bright top rim and the faint bottom rim of the border. */
-  borderTop: number;
-  borderBottom: number;
-  /** Alpha of the inner glow line just inside the rim — the "thickness" of the glass. */
-  innerGlow: number;
-  shadow: number;
-  /** Multiplier on the user's blur setting. */
-  blurScale: number;
-}
-
-export const glass: Record<ThemeMode, Record<GlassVariant, GlassMaterial>> = {
-  dark: {
-    regular: { tintSource: 'glassTint', blurTint: 0.55, fakeTint: 0.86, sheen: 0.1, borderTop: 0.3, borderBottom: 0.06, innerGlow: 0.06, shadow: 0.55, blurScale: 1 },
-    thin: { tintSource: 'glassTint', blurTint: 0.38, fakeTint: 0.72, sheen: 0.08, borderTop: 0.24, borderBottom: 0.05, innerGlow: 0.05, shadow: 0.4, blurScale: 0.75 },
-    prominent: { tintSource: 'glassTint', blurTint: 0.74, fakeTint: 0.95, sheen: 0.12, borderTop: 0.32, borderBottom: 0.07, innerGlow: 0.07, shadow: 0.6, blurScale: 1.25 },
-    clear: { tintSource: 'glassHighlight', blurTint: 0.07, fakeTint: 0.12, sheen: 0.16, borderTop: 0.4, borderBottom: 0.1, innerGlow: 0.1, shadow: 0.25, blurScale: 0.8 },
-  },
-  light: {
-    regular: { tintSource: 'glassTint', blurTint: 0.6, fakeTint: 0.9, sheen: 0.55, borderTop: 0.95, borderBottom: 0.08, innerGlow: 0.5, shadow: 0.16, blurScale: 1 },
-    thin: { tintSource: 'glassTint', blurTint: 0.42, fakeTint: 0.78, sheen: 0.45, borderTop: 0.85, borderBottom: 0.06, innerGlow: 0.4, shadow: 0.1, blurScale: 0.75 },
-    prominent: { tintSource: 'glassTint', blurTint: 0.8, fakeTint: 0.96, sheen: 0.6, borderTop: 1, borderBottom: 0.1, innerGlow: 0.55, shadow: 0.2, blurScale: 1.25 },
-    clear: { tintSource: 'glassHighlight', blurTint: 0.16, fakeTint: 0.28, sheen: 0.5, borderTop: 0.9, borderBottom: 0.08, innerGlow: 0.4, shadow: 0.12, blurScale: 0.8 },
-  },
-};
-
-export const glassBorderWidth = 1;
 
 // ---------------------------------------------------------------------------
 // 2. Typography
@@ -474,10 +415,10 @@ export const layout = {
    */
   rowHeight: 62,
   thumbSize: 46,
-  /** Corner radius of the floating dock and the glass cards that echo it. */
+  /** Corner radius of the floating dock and the cards that echo it. */
   dockRadius: 30,
   navBarHeight: 52,
-  /** How far a list scrolls before the compact glass bar is fully in. */
+  /** How far a list scrolls before the compact bar is fully in. */
   headerCollapseDistance: 64,
   /** Standard control height: keycaps, search field. */
   controlHeight: 48,
@@ -507,41 +448,28 @@ export const hairline = 0.5;
 export const stroke = 1;
 
 // ---------------------------------------------------------------------------
-// 5. Motion — springs first
+// 5. Motion
 // ---------------------------------------------------------------------------
 
 /**
- * Durations for the things that should not spring: crossfades, colour
- * changes, navigator transitions that only accept a duration.
+ * Motion is kept to what explains something: a sheet arriving from the edge
+ * it can be dragged back to, the player rising out of the dock, a switch
+ * changing sides. Everything is a short eased timing — no springs, so
+ * nothing overshoots, bounces or settles — and leaving is quicker than
+ * arriving.
  */
 export const motion = {
+  /** Switches, selection changes. */
   durationFast: 120,
+  /** Sheets, the player and its panels arriving. */
   durationBase: 220,
-  durationScreen: 280,
-  durationCrossfade: 1100,
+  /** The same surfaces leaving. */
+  durationExit: 160,
+  /** The background following a new cover. */
+  durationCrossfade: 400,
+  /** Screen pushes, where the navigator takes a duration. */
+  durationScreen: 160,
   easing: [0.2, 0.8, 0.2, 1] as const,
-  pressScale: 0.96,
-  staggerStep: 32,
-  staggerMaxDelay: 260,
-  staggerMaxItems: 10,
-} as const;
-
-/** Spring presets as plain physics numbers; motion.ts types them. */
-export const springs = {
-  /** Press-in: fast with almost no overshoot. */
-  press: { damping: 22, stiffness: 420, mass: 0.6 },
-  /** Release: a touch of life on the way back up. */
-  release: { damping: 16, stiffness: 260, mass: 0.7 },
-  /** Controls morphing, pills sliding, toggles. */
-  snappy: { damping: 26, stiffness: 380, mass: 0.8 },
-  /** Large surfaces settling. Critically damped. */
-  gentle: { damping: 24, stiffness: 140, mass: 1 },
-  /** A like, a pop-in. Lively, not cartoonish. */
-  bouncy: { damping: 13, stiffness: 190, mass: 0.9 },
-  /** Layout transitions and list entrances. */
-  layout: { damping: 24, stiffness: 240, mass: 0.9 },
-  /** Screen-sized moves. Clamped so content never overshoots its bounds. */
-  screen: { damping: 30, stiffness: 260, mass: 1, overshootClamping: true },
 } as const;
 
 // ---------------------------------------------------------------------------

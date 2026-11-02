@@ -21,7 +21,7 @@ import { Chip, ChipRow } from '../components/Chip';
 import { IconCalendar, IconSearch, IconX } from '../components/icons';
 import { Label } from '../components/Label';
 import { ListRow } from '../components/ListRow';
-import { PressScale } from '../components/Pressable';
+import { Touchable } from '../components/Touchable';
 import { TabScaffold } from '../components/Scaffold';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenState';
@@ -322,7 +322,7 @@ export function SearchScreen() {
             const hue = MIX_HUES[index % MIX_HUES.length];
             const ink = pickInk(hue);
             return (
-              <PressScale
+              <Touchable
                 key={genre.value}
                 accessibilityRole="button"
                 accessibilityLabel={genre.value}
@@ -330,7 +330,6 @@ export function SearchScreen() {
                   haptics.tick();
                   navigation.navigate('Genre', { genre: genre.value, hue });
                 }}
-                scaleTo={0.95}
                 style={[styles.genre, { width: gridTile, backgroundColor: hue }]}
               >
                 <Text style={[type.headline, { color: ink }]} numberOfLines={2}>
@@ -344,7 +343,7 @@ export function SearchScreen() {
                     .filter(Boolean)
                     .join(' · ')}
                 </Label>
-              </PressScale>
+              </Touchable>
             );
           })}
         </View>

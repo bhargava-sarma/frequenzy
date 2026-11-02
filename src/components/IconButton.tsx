@@ -1,9 +1,8 @@
 import { memo } from 'react';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 
-import { Glass } from './Glass';
 import type { IconComponent } from './icons';
-import { PressScale } from './Pressable';
+import { Touchable } from './Touchable';
 import { icon as iconTokens, space } from '../theme/tokens';
 import { useTheme } from '../theme/ThemeProvider';
 import { haptics } from '../utils/haptics';
@@ -11,16 +10,16 @@ import { haptics } from '../utils/haptics';
 /**
  * A round button carrying one glyph.
  *
- * `glass` for chrome over moving content (nav bars, the player header),
- * `surface` for buttons on panels, `plain` for a bare glyph that only needs
- * a hit area, `accent` for the one that matters on a screen.
+ * `surface` (default) is a solid raised disc — it reads over a list, a
+ * cover or the player's colour alike. `plain` is a bare glyph that only
+ * needs a hit area, `accent` the one button that matters on a screen.
  */
 export interface IconButtonProps {
   icon: IconComponent;
   onPress?: () => void;
   onLongPress?: () => void;
   accessibilityLabel: string;
-  variant?: 'glass' | 'surface' | 'plain' | 'accent';
+  variant?: 'surface' | 'plain' | 'accent';
   size?: number;
   iconSize?: number;
   /** Glyph colour override. */
@@ -38,7 +37,7 @@ export const IconButton = memo(function IconButton({
   onPress,
   onLongPress,
   accessibilityLabel,
-  variant = 'glass',
+  variant = 'surface',
   size = 40,
   iconSize,
   color: colorOverride,
@@ -53,8 +52,7 @@ export const IconButton = memo(function IconButton({
     (variant === 'accent' ? color.accentInk : active ? color.accent : color.label);
 
   return (
-    <PressScale
-      noOrigin
+    <Touchable
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{ disabled, selected: active }}
@@ -65,29 +63,25 @@ export const IconButton = memo(function IconButton({
         onPress?.();
       }}
       onLongPress={onLongPress}
-      scaleTo={0.88}
       style={[
         styles.root,
         { width: size, height: size, borderRadius: size / 2, opacity: disabled ? 0.35 : 1 },
         variant === 'surface' && {
           backgroundColor: color.surfaceRaised,
           borderWidth: 1,
-          borderColor: color.separator,
+          borderColor: color.border,
         },
         variant === 'accent' && { backgroundColor: color.accent },
         style,
       ]}
     >
-      {variant === 'glass' && (
-        <Glass variant="thin" lite radius={size / 2} style={StyleSheet.absoluteFill} />
-      )}
       <Icon
         size={iconSize ?? Math.round(size * 0.5)}
         color={glyph}
         strokeWidth={iconTokens.strokeWidth + 0.25}
       />
       {badge && <View style={[styles.badge, { backgroundColor: color.accent }]} />}
-    </PressScale>
+    </Touchable>
   );
 });
 

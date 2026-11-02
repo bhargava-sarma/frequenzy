@@ -1,22 +1,11 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import Animated, {
-  Easing,
-  FadeIn,
-  FadeOut,
-  interpolate,
-  interpolateColor,
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import TrackPlayer, { useActiveMediaItem, useProgress } from '@rntp/player';
 
 import { activeLineIndex } from '../api/lrclib';
 import { AmbientBackground } from '../components/AmbientBackground';
 import { Chip, ChipRow } from '../components/Chip';
-import { Glass } from '../components/Glass';
 import { IconButton } from '../components/IconButton';
 import {
   IconArrowBarToDown,
@@ -35,18 +24,20 @@ import { useLyrics } from '../hooks/useLyrics';
 import { extrasOf } from '../player/trackMapping';
 import { usePlayerUiStore } from '../store/usePlayerUiStore';
 import { useSettingsStore, type LyricsSize } from '../store/useSettingsStore';
-import { layout, motion, radius, space, type } from '../theme/tokens';
+import { layout, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
-import { useTheme, useThemeControls, useThemedStyles } from '../theme/ThemeProvider';
+import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import { romanizeLine } from '../utils/romanize';
 
 /**
  * Lyrics, following the voice.
  *
  * From the server's own tags when it has them, LRCLIB otherwise. The current
- * line is the only thing in the accent, on a glass plate; lines are tappable
- * and seek. Scroll by hand and following pauses — reading ahead is
- * impossible if every tick drags the view back — with a key to resume.
+ * line is the only thing in the accent and at full strength; it changes in
+ * place, with no fade or lift. The one motion is the scroll that keeps it in
+ * view. Lines are tappable and seek. Scroll by hand and following pauses —
+ * reading ahead is impossible if every tick drags the view back — with a key
+ * to resume.
  *
  * Timing that's a little early or late can be nudged per track; the
  * correction is remembered.
@@ -54,8 +45,6 @@ import { romanizeLine } from '../utils/romanize';
 
 const TICK_SECONDS = 0.25;
 const MANUAL_SCROLL_GRACE_MS = 6000;
-const LINE_FADE_MS = 260;
-const TIMING = { duration: LINE_FADE_MS, easing: Easing.bezier(...motion.easing) };
 const INACTIVE_OPACITY = 0.36;
 
 const SIZES: Record<LyricsSize, { fontSize: number; lineHeight: number }> = {
@@ -293,22 +282,17 @@ export function LyricsScreen() {
       </ScrollView>
 
       {synced && !following && (
-        <Animated.View
-          entering={FadeIn.duration(160)}
-          exiting={FadeOut.duration(160)}
-          style={[styles.follow, { bottom: insets.bottom + space[5] }]}
-        >
+        <View style={[styles.follow, { bottom: insets.bottom + space[5] }]}>
           <Keycap label="Follow" icon={IconArrowBarToDown} variant="primary" size="sm" onPress={resume} />
-        </Animated.View>
+        </View>
       )}
     </View>
   );
 }
 
 /**
- * One line, lifting as it becomes current. Memoised on `active`, so a tick
- * re-renders the two lines that changed rather than all of them. Opacity,
- * scale and colour move on one curve: three timings read as three things.
+ * One line. Memoised on `active`, so a tick re-renders the two lines that
+ * changed rather than all of them.
  */
 const LyricRow = memo(function LyricRow({
   index,
@@ -337,21 +321,11 @@ const LyricRow = memo(function LyricRow({
   onLayout: (index: number, y: number) => void;
   onSeek: (seconds: number) => void;
 }) {
-  const { resolved } = useThemeControls();
-  const lit = useSharedValue(active ? 1 : 0);
-
-  useEffect(() => {
-    lit.value = withTiming(active ? 1 : 0, TIMING);
-  }, [active, lit]);
-
-  const textStyle = useAnimatedStyle(() => ({
-    color: interpolateColor(lit.value, [0, 1], [idleColor, activeColor]),
-    opacity: interpolate(lit.value, [0, 1], [past ? INACTIVE_OPACITY * 0.8 : INACTIVE_OPACITY, 1]),
-    transform: [{ scale: interpolate(lit.value, [0, 1], [0.97, 1]) }],
-  }));
-  const romanStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(lit.value, [0, 1], [INACTIVE_OPACITY * 0.8, 0.8]),
-  }));
+  const textStyle = {
+    color: active ? activeColor : idleColor,
+    opacity: active ? 1 : past ? INACTIVE_OPACITY * 0.8 : INACTIVE_OPACITY,
+  };
+  const romanStyle = { opacity: active ? 0.8 : INACTIVE_OPACITY * 0.8 };
 
   return (
     <Pressable
@@ -361,21 +335,11 @@ const LyricRow = memo(function LyricRow({
       accessibilityLabel={`Play from "${text}"`}
       style={lineStyles.press}
     >
-      {active && (
-        <Animated.View
-          pointerEvents="none"
-          entering={FadeIn.duration(LINE_FADE_MS)}
-          exiting={FadeOut.duration(LINE_FADE_MS)}
-          style={lineStyles.plate}
-        >
-          <Glass variant="clear" lite radius={radius.md} style={StyleSheet.absoluteFill} tintOpacity={resolved === 'dark' ? 0.1 : 0.5} />
-        </Animated.View>
-      )}
-      <Animated.Text style={[lineStyles.line, { fontSize, lineHeight }, textStyle]}>{text}</Animated.Text>
+      <Text style={[lineStyles.line, { fontSize, lineHeight }, textStyle]}>{text}</Text>
       {roman && (
-        <Animated.Text style={[lineStyles.roman, romanStyle]} numberOfLines={2}>
+        <Text style={[lineStyles.roman, romanStyle]} numberOfLines={2}>
           {roman}
-        </Animated.Text>
+        </Text>
       )}
     </Pressable>
   );
@@ -387,8 +351,7 @@ const lineStyles = StyleSheet.create({
     paddingHorizontal: space[3],
     marginHorizontal: -space[3],
   },
-  plate: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: radius.md, overflow: 'hidden' },
-  line: { fontFamily: type.title1.fontFamily, letterSpacing: -0.6, transformOrigin: 'left center' },
+  line: { fontFamily: type.title1.fontFamily, letterSpacing: -0.6 },
   roman: { ...type.subhead, fontSize: 13.5, lineHeight: 19, color: '#FFFFFF', marginTop: space[1] },
 });
 

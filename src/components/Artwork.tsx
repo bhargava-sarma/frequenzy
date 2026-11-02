@@ -3,7 +3,7 @@ import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { Image } from 'expo-image';
 
 import { IconDisc, IconUser } from './icons';
-import { motion, radius as radii, withAlpha } from '../theme/tokens';
+import { radius as radii, withAlpha } from '../theme/tokens';
 import { useTheme } from '../theme/ThemeProvider';
 
 /**
@@ -25,13 +25,13 @@ export interface ArtworkProps {
   size: number;
   /** Circular — artists. */
   round?: boolean;
-  /** Crossfade length; thumbnails want the default, the player wants longer. */
+  /** Fade-in length once loaded. Default 0: art appears when it arrives. */
   transitionMs?: number;
   /** Heavy blur, for backdrops. */
   blurRadius?: number;
   /** Override the shadow decision. */
   shadow?: boolean;
-  /** A thin light rim over the art — glass catching the edge. */
+  /** A hairline edge, so art close to the background colour keeps its shape. */
   rim?: boolean;
   radius?: number;
   style?: StyleProp<ViewStyle>;
@@ -41,7 +41,7 @@ export const Artwork = memo(function Artwork({
   uri,
   size,
   round = false,
-  transitionMs = motion.durationFast,
+  transitionMs = 0,
   blurRadius,
   shadow,
   rim = false,
@@ -105,8 +105,7 @@ export const Artwork = memo(function Artwork({
             {
               borderRadius: corner,
               borderWidth: 1,
-              borderColor: withAlpha('#FFFFFF', 0.16),
-              borderBottomColor: withAlpha('#000000', 0.2),
+              borderColor: withAlpha(color.label, 0.08),
             },
           ]}
         />

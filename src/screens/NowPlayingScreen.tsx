@@ -4,19 +4,10 @@ import {
   StyleSheet,
   Text,
   View,
-  useWindowDimensions,
   type LayoutChangeEvent,
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, {
-  Easing,
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-  withSequence,
-  withSpring,
-  withTiming,
-} from 'react-native-reanimated';
+import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import TrackPlayer, { useActiveMediaItem, useIsPlaying, useProgress } from '@rntp/player';
 
@@ -25,7 +16,6 @@ import { DotText, Display } from '../components/Display';
 import { ArtworkFace } from '../components/faces/ArtworkFace';
 import { TapeFace } from '../components/faces/TapeFace';
 import { VinylFace } from '../components/faces/VinylFace';
-import { Glass } from '../components/Glass';
 import { IconButton } from '../components/IconButton';
 import {
   IconArrowsShuffle,
@@ -51,7 +41,6 @@ import {
 import { Keycap } from '../components/Keycap';
 import { Label } from '../components/Label';
 import { Led } from '../components/Led';
-import { Marquee } from '../components/Marquee';
 import { PlayerToolsSheet } from '../components/PlayerToolsSheet';
 import { ScrubBar } from '../components/ScrubBar';
 import { SleepTimerSheet } from '../components/SleepTimerSheet';
@@ -64,8 +53,8 @@ import { useFavoritesStore, useStarred } from '../store/useFavoritesStore';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { usePlayerUiStore } from '../store/usePlayerUiStore';
 import { useSettingsStore, type PlayerFace } from '../store/useSettingsStore';
-import { springs } from '../theme/motion';
-import { layout, radius, space, type, withAlpha } from '../theme/tokens';
+import { useTimings } from '../theme/motion';
+import { layout, radius, space, stroke, type, withAlpha } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import { haptics } from '../utils/haptics';
@@ -74,11 +63,11 @@ import { haptics } from '../utils/haptics';
  * The player: a face, a display and a row of keys.
  *
  * The face is the record — its cover, a spinning disc, or a cassette whose
- * tape winds across as the song plays — and it answers to the hand: swipe
- * it to change track, double-tap it to like. Below, the black display reads
- * out what's playing the way a device does: position in the queue, the
- * format plate, the title on a ticker. The ruler under it is the position,
- * and the keys under that are the transport.
+ * tape winds across as the song plays — and it answers to the hand: drag it
+ * sideways to change track, double-tap it to like. Below, the black display
+ * reads out what's playing the way a device does: position in the queue,
+ * the format plate, the title. The ruler under it is the position, and the
+ * keys under that are the transport.
  *
  * Everything here renders against the immersive palette (see
  * PlayerOverlay): light type over the artwork's colour.
@@ -94,7 +83,7 @@ export function NowPlayingScreen() {
   const color = useTheme();
   const styles = useThemedStyles(makeStyles);
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
+  const { fast } = useTimings();
 
   const closePlayer = usePlayerUiStore((state) => state.closePlayer);
   const openQueue = usePlayerUiStore((state) => state.openQueue);
@@ -129,7 +118,6 @@ export function NowPlayingScreen() {
   // --- Face gestures ---------------------------------------------------------
 
   const offset = useSharedValue(0);
-  const heart = useSharedValue(0);
 
   const skip = useCallback((direction: 1 | -1) => {
     haptics.press();
@@ -158,41 +146,23 @@ export function NowPlayingScreen() {
     .onEnd((event) => {
       const fling = Math.abs(event.velocityX) > 900;
       if (Math.abs(event.translationX) > SKIP_DISTANCE || fling) {
-        const direction = event.translationX < 0 ? 1 : -1;
-        // Out the way it was thrown, then back in from the other side.
-        offset.value = withSequence(
-          withTiming(-direction * width, { duration: 160, easing: Easing.in(Easing.quad) }),
-          withTiming(direction * width * 0.35, { duration: 0 }),
-          withSpring(0, springs.snappy),
-        );
-        runOnJS(skip)(direction as 1 | -1);
-        return;
+        runOnJS(skip)(event.translationX < 0 ? 1 : -1);
       }
-      offset.value = withSpring(0, springs.snappy);
+      // Back to centre either way; the new cover simply takes its place.
+      offset.value = withTiming(0, fast);
     });
 
   const doubleTap = Gesture.Tap()
     .numberOfTaps(2)
     .maxDuration(260)
     .onEnd(() => {
-      heart.value = withSequence(
-        withTiming(1, { duration: 140 }),
-        withTiming(1, { duration: 380 }),
-        withTiming(0, { duration: 260 }),
-      );
       runOnJS(like)();
     });
 
   const faceGesture = Gesture.Race(pan, doubleTap);
 
-  const faceStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: offset.value }, { rotate: `${offset.value / 60}deg` }],
-    opacity: 1 - Math.min(0.5, Math.abs(offset.value) / (width * 1.6)),
-  }));
-  const heartStyle = useAnimatedStyle(() => ({
-    opacity: heart.value,
-    transform: [{ scale: 0.6 + heart.value * 0.5 }],
-  }));
+  // The face follows the finger, and only the finger.
+  const faceStyle = useAnimatedStyle(() => ({ transform: [{ translateX: offset.value }] }));
 
   const onFaceLayout = useCallback((event: LayoutChangeEvent) => {
     const { width: w, height: h } = event.nativeEvent.layout;
@@ -273,11 +243,8 @@ export function NowPlayingScreen() {
                   subtitle={activeItem.artist}
                 />
               ) : (
-                <ArtworkFace uri={art} size={faceSize} playing={isPlaying} />
+                <ArtworkFace uri={art} size={faceSize} />
               )}
-              <Animated.View pointerEvents="none" style={[styles.heartBurst, heartStyle]}>
-                <IconHeartFilled size={96} color="#FFFFFF" />
-              </Animated.View>
             </Animated.View>
           </GestureDetector>
         )}
@@ -287,7 +254,7 @@ export function NowPlayingScreen() {
         {/* The display. */}
         <Display style={styles.display}>
           <View style={styles.statusLine}>
-            <Led color={isPlaying ? color.ledGreen : color.ledAmber} size={6} blink={!isPlaying} />
+            <Led color={isPlaying ? color.ledGreen : color.ledAmber} size={6} />
             <Label tone="display" bold>
               {counter}
             </Label>
@@ -312,7 +279,10 @@ export function NowPlayingScreen() {
                 disabled={!extras?.albumId}
                 onPress={() => extras?.albumId && navigateToAlbum(extras.albumId, extras.albumTitle)}
               >
-                <Marquee text={activeItem.title ?? 'Unknown title'} style={styles.title} />
+                {/* Shrinks a little to fit before it truncates; never scrolls. */}
+                <Text style={styles.title} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+                  {activeItem.title ?? 'Unknown title'}
+                </Text>
               </Pressable>
               <Pressable
                 accessibilityRole="link"
@@ -347,8 +317,6 @@ export function NowPlayingScreen() {
           <ScrubBar
             position={position}
             duration={total}
-            playing={isPlaying}
-            rate={speed}
             tone="onArtwork"
             onSeek={(seconds) => TrackPlayer.seekTo(seconds)}
           />
@@ -369,7 +337,7 @@ export function NowPlayingScreen() {
           <Keycap
             icon={IconPlayerSkipBackFilled}
             iconFilled
-            variant="glass"
+            variant="dark"
             size="lg"
             square
             accessibilityLabel="Previous track"
@@ -387,7 +355,7 @@ export function NowPlayingScreen() {
           <Keycap
             icon={IconPlayerSkipForwardFilled}
             iconFilled
-            variant="glass"
+            variant="dark"
             size="lg"
             square
             accessibilityLabel="Next track"
@@ -407,7 +375,6 @@ export function NowPlayingScreen() {
 
         {/* Tools: a function strip, one key per tool, sized to the width. */}
         <View style={styles.tools}>
-          <Glass variant="thin" radius={radius.lg} style={StyleSheet.absoluteFill} />
           <ToolKey icon={IconListDetails} label="Queue" onPress={openQueue} />
           <ToolKey icon={IconMicrophone2} label="Lyrics" onPress={openLyrics} />
           <ToolKey
@@ -498,7 +465,6 @@ const makeStyles = (color: Palette) =>
     headerTitle: { ...type.callout, fontFamily: type.headline.fontFamily, color: color.onArtwork, marginTop: 2 },
     faceArea: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     face: { alignItems: 'center', justifyContent: 'center' },
-    heartBurst: { position: 'absolute' },
     controls: { paddingHorizontal: layout.screenPadding },
     display: { paddingHorizontal: space[4], paddingTop: space[3], paddingBottom: space[3] },
     statusLine: { flexDirection: 'row', alignItems: 'center', gap: space[2], marginBottom: space[2] },
@@ -515,7 +481,16 @@ const makeStyles = (color: Palette) =>
       marginTop: space[3],
     },
     playKey: { width: 96 },
-    tools: { flexDirection: 'row', marginTop: space[4], height: 58, borderRadius: radius.lg },
+    tools: {
+      flexDirection: 'row',
+      marginTop: space[4],
+      height: 58,
+      borderRadius: radius.lg,
+      backgroundColor: color.surface,
+      borderWidth: stroke,
+      borderColor: color.border,
+      overflow: 'hidden',
+    },
     toolKey: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 5 },
     toolDivider: { borderRightWidth: 1, borderRightColor: withAlpha(color.onArtwork, 0.1) },
     toolPressed: { opacity: 0.55 },

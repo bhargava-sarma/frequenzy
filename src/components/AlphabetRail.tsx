@@ -3,7 +3,6 @@ import { StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
 
-import { Glass } from './Glass';
 import { radius, type } from '../theme/tokens';
 import { useTheme } from '../theme/ThemeProvider';
 import { haptics } from '../utils/haptics';
@@ -85,8 +84,7 @@ export const AlphabetRail = memo(function AlphabetRail({
 
       {active != null && (
         <View pointerEvents="none" style={styles.bubbleHost}>
-          <View style={styles.bubble}>
-            <Glass variant="prominent" shadow radius={radius.lg} style={StyleSheet.absoluteFill} />
+          <View style={[styles.bubble, { backgroundColor: color.surfaceRaised, borderColor: color.border }]}>
             <Text style={[type.title1, { color: color.label }]}>{active}</Text>
           </View>
         </View>
@@ -116,6 +114,7 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: radius.lg,
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },

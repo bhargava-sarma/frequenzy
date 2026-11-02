@@ -8,19 +8,11 @@ import {
   type ReactNode,
 } from 'react';
 import { useColorScheme } from 'react-native';
-import {
-  cancelAnimation,
-  interpolateColor,
-  useDerivedValue,
-  useSharedValue,
-  withTiming,
-  type DerivedValue,
-  type SharedValue,
-} from 'react-native-reanimated';
+import { cancelAnimation, useSharedValue, withTiming, type SharedValue } from 'react-native-reanimated';
 import { create } from 'zustand';
 
 import type { ArtworkColorSet } from './artworkColor';
-import { timings } from './motion';
+import { useTimings } from './motion';
 import {
   buildPalette,
   fallbackArtworkPalette,
@@ -44,7 +36,7 @@ const IMMERSIVE_TERTIARY = '#96948E';
  * Two contexts, split by how often they change and who cares:
  *
  *   - The theme context carries the palette and the few appearance
- *     settings components draw with (blur, tint, reduced motion). Nearly
+ *     settings components draw with (ambient, grid, reduced motion). Nearly
  *     everything reads it; it changes when the theme flips or the accent
  *     moves to a new track — once, not per frame.
  *   - The artwork context carries the ambient mesh colours and the shared
@@ -97,8 +89,6 @@ interface ThemeContextValue {
   resolved: ThemeMode;
   /** The always-dark palette the player, queue and lyrics use. */
   immersivePalette: Palette;
-  blurIntensity: number;
-  surfaceOpacity: number;
   ambientIntensity: number;
   reduceMotion: boolean;
   gridPaper: boolean;
@@ -113,8 +103,6 @@ const ThemeContext = createContext<ThemeContextValue>({
   name: 'dark',
   resolved: 'dark',
   immersivePalette: fallbackPalette,
-  blurIntensity: 40,
-  surfaceOpacity: 0.75,
   ambientIntensity: 0.8,
   reduceMotion: false,
   gridPaper: true,
@@ -155,8 +143,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const theme = useSettingsStore((s) => s.theme);
   const accentMode = useSettingsStore((s) => s.accentMode);
   const accentPreset = useSettingsStore((s) => s.accentPreset);
-  const blur = useSettingsStore((s) => s.blur);
-  const tint = useSettingsStore((s) => s.tint);
   const ambient = useSettingsStore((s) => s.ambient);
   const reduceMotion = useSettingsStore((s) => s.reduceMotion);
   const gridPaper = useSettingsStore((s) => s.gridPaper);
@@ -193,6 +179,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   );
 
   // --- Mesh, crossfaded on the UI thread ----------------------------------
+
+  const { crossfade } = useTimings();
 
   const target = useMemo<MeshLayer>(
     () => ({
@@ -244,9 +232,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // fading in while still showing the previous track's colours.
   useEffect(() => {
     if (pendingMix.current == null) return;
-    mix.value = withTiming(pendingMix.current, timings.crossfade);
+    mix.value = withTiming(pendingMix.current, crossfade);
     pendingMix.current = null;
-  }, [layers, mix]);
+  }, [layers, mix, crossfade]);
 
   const value = useMemo<ThemeContextValue>(
     () => ({
@@ -254,14 +242,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       name,
       resolved: mode,
       immersivePalette,
-      blurIntensity: blur,
-      surfaceOpacity: tint,
       ambientIntensity: ambient,
       reduceMotion,
       gridPaper,
       immersive: false,
     }),
-    [palette, name, mode, immersivePalette, blur, tint, ambient, reduceMotion, gridPaper],
+    [palette, name, mode, immersivePalette, ambient, reduceMotion, gridPaper],
   );
 
   const artwork = useMemo<ArtworkContextValue>(
@@ -336,38 +322,6 @@ export function useArtworkPalette(): ArtworkPalette & { fromArtwork: boolean } {
 export function useMeshLayers(): { layers: MeshLayers; mix: SharedValue<number> } {
   const { layers, mix } = useArtworkContext();
   return { layers, mix };
-}
-
-/**
- * A colour as a UI-thread value that fades to each new target.
- *
- * For large accent fills that are on screen during a track change — the
- * play key, a progress fill — where a one-step change reads as a cut.
- * Starts from wherever an interrupted fade had reached, so skipping quickly
- * through tracks never snaps the colour back.
- */
-export function useAnimatedColor(target: string): DerivedValue<string> {
-  const from = useSharedValue(target);
-  const to = useSharedValue(target);
-  const progress = useSharedValue(1);
-
-  useEffect(() => {
-    if (to.value === target) return;
-    const current = interpolateColor(progress.value, [0, 1], [from.value, to.value]);
-    from.value = String(current);
-    to.value = target;
-    progress.value = 0;
-    progress.value = withTiming(1, timings.crossfade);
-  }, [target, from, to, progress]);
-
-  return useDerivedValue(() =>
-    String(interpolateColor(progress.value, [0, 1], [from.value, to.value])),
-  );
-}
-
-/** The current accent, crossfading between tracks. */
-export function useAnimatedAccent(): DerivedValue<string> {
-  return useAnimatedColor(useTheme().accent);
 }
 
 /**

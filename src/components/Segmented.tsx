@@ -1,17 +1,16 @@
 import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
-import { SlidingPill } from './SlidingPill';
 import { radius, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useThemedStyles } from '../theme/ThemeProvider';
 import { haptics } from '../utils/haptics';
 
 /**
- * A row of mode keys in a recessed well, with a raised key that slides to
- * the selection — the function-select strip of a hardware panel.
+ * A row of mode keys in a recessed well, the selected one raised — the
+ * function-select strip of a hardware panel.
  *
- * Spans the full width with segments sharing it evenly. The pill springs and
- * stretches as it travels, so switching reads as one movement.
+ * Spans the full width with segments sharing it evenly. Selection moves
+ * instantly: the raised key is simply drawn under whichever is chosen.
  */
 export interface SegmentedProps<T extends string> {
   options: readonly { value: T; label: string }[];
@@ -29,11 +28,9 @@ export function Segmented<T extends string>({
   style,
 }: SegmentedProps<T>) {
   const styles = useThemedStyles(makeStyles);
-  const selectedIndex = options.findIndex((option) => option.value === value);
 
   return (
     <View style={[styles.root, size === 'sm' && styles.rootSmall, style]}>
-      <SlidingPill index={selectedIndex} count={options.length} inset={3} radius={radius.sm} />
       {options.map((option) => {
         const selected = option.value === value;
         return (
@@ -47,7 +44,11 @@ export function Segmented<T extends string>({
               haptics.tick();
               onChange(option.value);
             }}
-            style={({ pressed }) => [styles.segment, pressed && !selected && styles.pressed]}
+            style={({ pressed }) => [
+              styles.segment,
+              selected && styles.segmentSelected,
+              pressed && !selected && styles.pressed,
+            ]}
           >
             <Text style={[styles.label, selected && styles.labelSelected]} numberOfLines={1}>
               {option.label}
@@ -73,10 +74,15 @@ const makeStyles = (color: Palette) =>
     rootSmall: { height: 34 },
     segment: {
       flex: 1,
+      margin: 3,
       paddingHorizontal: space[2],
       alignItems: 'center',
       justifyContent: 'center',
+      borderRadius: radius.sm,
+      borderWidth: 1,
+      borderColor: 'transparent',
     },
+    segmentSelected: { backgroundColor: color.surfaceRaised, borderColor: color.border },
     pressed: { opacity: 0.6 },
     label: { ...type.labelBold, color: color.labelSecondary },
     labelSelected: { color: color.label },

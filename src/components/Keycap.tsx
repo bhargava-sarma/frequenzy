@@ -8,12 +8,9 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 
-import { Glass } from './Glass';
 import type { IconComponent } from './icons';
 import { mix } from '../theme/color';
-import { springs } from '../theme/motion';
 import { icon as iconTokens, radius, space, type, withAlpha } from '../theme/tokens';
 import { useTheme, useThemeControls } from '../theme/ThemeProvider';
 import { haptics } from '../utils/haptics';
@@ -21,19 +18,18 @@ import { haptics } from '../utils/haptics';
 /**
  * A key, in the hardware sense.
  *
- * Two layers: a darker lip and a face resting on it, two points proud. A
- * press drives the face down onto the lip on a stiff spring, so the key
- * visibly travels and bottoms out under the finger, and lets it back up on
- * a looser one. With the haptic tick that is the whole of the feedback —
- * no ripple, no flash.
+ * Two layers: a darker lip and a face resting on it, two points proud. While
+ * held, the face sits down on the lip — drawn there, not animated there — so
+ * the key reads as pressed the instant it is touched and comes back up the
+ * instant it is let go. With the haptic tick that is the whole of the
+ * feedback: no ripple, no flash, no spring.
  *
  * Variants map to the keycap colours of the hardware this borrows from:
  * the one orange key (primary), white keys (secondary), grey keys (dark),
- * and printed legends with no key at all (ghost). `glass` floats over
- * artwork, where an opaque key would sit like a sticker.
+ * and printed legends with no key at all (ghost).
  */
 
-export type KeycapVariant = 'primary' | 'secondary' | 'dark' | 'ghost' | 'glass';
+export type KeycapVariant = 'primary' | 'secondary' | 'dark' | 'ghost';
 export type KeycapSize = 'sm' | 'md' | 'lg';
 
 export interface KeycapProps {
@@ -81,7 +77,6 @@ export const Keycap = memo(function Keycap({
 }: KeycapProps) {
   const color = useTheme();
   const { resolved } = useThemeControls();
-  const pressed = useSharedValue(0);
   const inert = disabled || busy;
 
   const height = HEIGHT[size];
@@ -107,11 +102,10 @@ export const Keycap = memo(function Keycap({
       edge = withAlpha('#FFFFFF', 0.12);
       break;
     case 'ghost':
-    case 'glass':
       face = 'transparent';
-      ink = variant === 'glass' ? color.onArtwork : color.label;
+      ink = color.label;
       lip = 'transparent';
-      edge = variant === 'ghost' ? color.border : 'transparent';
+      edge = color.border;
       break;
     default:
       face = color.surfaceRaised;
@@ -131,21 +125,6 @@ export const Keycap = memo(function Keycap({
     lip = mix(lip, color.background, 0.55);
     ink = mix(ink, face, 0.55);
   }
-
-  const faceStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateY: hasLip ? pressed.value * TRAVEL : 0 },
-      { scale: hasLip ? 1 : 1 - pressed.value * 0.04 },
-    ],
-  }));
-
-  const onPressIn = useCallback(() => {
-    pressed.value = withSpring(1, springs.press);
-  }, [pressed]);
-
-  const onPressOut = useCallback(() => {
-    pressed.value = withSpring(0, springs.release);
-  }, [pressed]);
 
   const handlePress = useCallback(() => {
     haptics.press();
@@ -188,8 +167,6 @@ export const Keycap = memo(function Keycap({
       disabled={inert}
       onPress={handlePress}
       onLongPress={onLongPress ? handleLongPress : undefined}
-      onPressIn={onPressIn}
-      onPressOut={onPressOut}
       hitSlop={size === 'sm' ? space[2] : space[1]}
       style={[
         {
@@ -202,33 +179,35 @@ export const Keycap = memo(function Keycap({
         style,
       ]}
     >
-      {hasLip && (
-        <View
-          style={[
-            StyleSheet.absoluteFill,
-            { top: TRAVEL, borderRadius: corner, backgroundColor: lip },
-          ]}
-        />
+      {({ pressed }) => (
+        <>
+          {hasLip && (
+            <View
+              style={[
+                StyleSheet.absoluteFill,
+                { top: TRAVEL, borderRadius: corner, backgroundColor: lip },
+              ]}
+            />
+          )}
+          <View
+            style={[
+              styles.face,
+              {
+                marginBottom: hasLip ? TRAVEL : 0,
+                borderRadius: corner,
+                backgroundColor: face,
+                borderColor: edge,
+                borderWidth: 1,
+              },
+              variant === 'ghost' && styles.ghostFace,
+              // Held: a lipped key sits down on its lip; a ghost key dims.
+              pressed && (hasLip ? { transform: [{ translateY: TRAVEL }] } : styles.ghostPressed),
+            ]}
+          >
+            <View style={[styles.content, square && styles.contentSquare]}>{content}</View>
+          </View>
+        </>
       )}
-      <Animated.View
-        style={[
-          styles.face,
-          {
-            marginBottom: hasLip ? TRAVEL : 0,
-            borderRadius: corner,
-            backgroundColor: face,
-            borderColor: edge,
-            borderWidth: variant === 'glass' ? 0 : 1,
-          },
-          variant === 'ghost' && styles.ghostFace,
-          faceStyle,
-        ]}
-      >
-        {variant === 'glass' && (
-          <Glass variant="thin" lite radius={corner} style={StyleSheet.absoluteFill} />
-        )}
-        <View style={[styles.content, square && styles.contentSquare]}>{content}</View>
-      </Animated.View>
     </Pressable>
   );
 });
@@ -255,6 +234,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   ghostFace: { borderStyle: 'solid' },
+  ghostPressed: { opacity: 0.6 },
   content: {
     flex: 1,
     flexDirection: 'row',

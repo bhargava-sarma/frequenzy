@@ -1,27 +1,18 @@
-import { memo, useEffect, useRef } from 'react';
+import { memo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, {
-  Easing,
-  FadeInDown,
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-  withTiming,
-} from 'react-native-reanimated';
+import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import TrackPlayer, { useActiveMediaItem, useIsPlaying, useProgress } from '@rntp/player';
 
 import { Artwork } from './Artwork';
 import { IconButton } from './IconButton';
 import { IconPlayerPauseFilled, IconPlayerPlayFilled, IconPlayerSkipForwardFilled } from './icons';
-import { Marquee } from './Marquee';
 import { useArtwork } from '../hooks/useArtwork';
 import { extrasOf } from '../player/trackMapping';
-import { springs } from '../theme/motion';
+import { useTimings } from '../theme/motion';
 import { space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
-import { useAnimatedAccent, useTheme, useThemedStyles } from '../theme/ThemeProvider';
+import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import { usePlayerUiStore } from '../store/usePlayerUiStore';
 import { haptics } from '../utils/haptics';
 
@@ -29,36 +20,28 @@ import { haptics } from '../utils/haptics';
  * The playing half of the dock.
  *
  * Renders nothing with an empty queue, so the dock is just the tabs until
- * there is something to control. Tap to open the player — it grows out of
- * this exact spot — or swipe the row sideways to skip, the way you'd thumb
- * a cassette deck's transport without looking. A hairline along the bottom
- * reads position, gliding between the player's once-a-second reports.
+ * there is something to control. Tap to open the player, or swipe the row
+ * sideways to skip, the way you'd thumb a cassette deck's transport without
+ * looking. A hairline along the bottom reads position; it steps with the
+ * player's once-a-second reports, which at this width is under two points a
+ * second — smoothing it would be animation nobody could see.
  */
 const SKIP_DISTANCE = 70;
 
 export const MiniPlayer = memo(function MiniPlayer() {
   const color = useTheme();
   const styles = useThemedStyles(makeStyles);
+  const { fast } = useTimings();
   const openPlayer = usePlayerUiStore((state) => state.openPlayer);
-  const bodyRef = useRef<View>(null);
   const activeItem = useActiveMediaItem();
   const isPlaying = useIsPlaying();
   const { position, duration } = useProgress(1);
-  const accent = useAnimatedAccent();
   const artworkUrl = useArtwork();
 
   const offset = useSharedValue(0);
-  const ratio = useSharedValue(0);
 
   const total = duration || activeItem?.duration || 0;
-  useEffect(() => {
-    const next = total > 0 ? Math.min(1, position / total) : 0;
-    const jump = Math.abs(next - ratio.value) * Math.max(total, 1) > 2.5;
-    ratio.value =
-      isPlaying && !jump && total > 0
-        ? withTiming(Math.min(1, (position + 1) / total), { duration: 1000, easing: Easing.linear })
-        : next;
-  }, [position, total, isPlaying, ratio]);
+  const ratio = total > 0 ? Math.min(1, Math.max(0, position / total)) : 0;
 
   const skip = (direction: 1 | -1) => {
     haptics.press();
@@ -76,14 +59,10 @@ export const MiniPlayer = memo(function MiniPlayer() {
       if (Math.abs(event.translationX) > SKIP_DISTANCE || Math.abs(event.velocityX) > 900) {
         runOnJS(skip)(event.translationX < 0 ? 1 : -1);
       }
-      offset.value = withSpring(0, springs.snappy);
+      offset.value = withTiming(0, fast);
     });
 
   const rowStyle = useAnimatedStyle(() => ({ transform: [{ translateX: offset.value }] }));
-  const fillStyle = useAnimatedStyle(() => ({
-    transform: [{ scaleX: Math.max(0.0001, ratio.value) }],
-    backgroundColor: accent.value,
-  }));
 
   if (!activeItem) return null;
 
@@ -93,24 +72,23 @@ export const MiniPlayer = memo(function MiniPlayer() {
     (typeof activeItem.artworkUrl === 'string' ? activeItem.artworkUrl : undefined);
 
   return (
-    <Animated.View entering={new FadeInDown().springify().damping(20)}>
+    <View>
       <GestureDetector gesture={pan}>
         <Animated.View style={rowStyle}>
           <Pressable
-            ref={bodyRef}
             style={styles.body}
             onPress={() => {
               haptics.tick();
-              bodyRef.current?.measureInWindow((x, y, width, height) =>
-                openPlayer({ x, y, width, height }),
-              );
+              openPlayer();
             }}
             accessibilityRole="button"
             accessibilityLabel={`Now playing: ${activeItem.title ?? 'track'}. Open player.`}
           >
             <Artwork uri={art} size={42} radius={10} />
             <View style={styles.text}>
-              <Marquee text={activeItem.title ?? 'Unknown title'} style={styles.title} speed={26} />
+              <Text style={styles.title} numberOfLines={1}>
+                {activeItem.title ?? 'Unknown title'}
+              </Text>
               <Text style={styles.artist} numberOfLines={1}>
                 {activeItem.artist ?? 'Unknown artist'}
               </Text>
@@ -138,9 +116,9 @@ export const MiniPlayer = memo(function MiniPlayer() {
       </GestureDetector>
 
       <View style={styles.track}>
-        <Animated.View style={[styles.fill, fillStyle]} />
+        <View style={[styles.fill, { width: `${ratio * 100}%`, backgroundColor: color.accent }]} />
       </View>
-    </Animated.View>
+    </View>
   );
 });
 
@@ -165,7 +143,5 @@ const makeStyles = (color: Palette) =>
       backgroundColor: color.separator,
       overflow: 'hidden',
     },
-    // Scaled from its left edge: scaleX runs about the centre, so the fill
-    // is a full-width bar anchored left with transformOrigin.
-    fill: { height: '100%', width: '100%', transformOrigin: 'left center' },
+    fill: { height: '100%' },
   });

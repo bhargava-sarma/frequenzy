@@ -1,15 +1,14 @@
 import { forwardRef, type ReactNode } from 'react';
 import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 
-import { Glass } from './Glass';
 import { IconSearch, IconX } from './icons';
-import { layout, radius, space, type } from '../theme/tokens';
+import { layout, radius, space, stroke, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import { haptics } from '../utils/haptics';
 
 /**
- * The app's search field: a glass capsule with a glyph and a clear key.
+ * The app's search field: a solid well with a glyph and a clear key.
  *
  * Shared rather than reimplemented per screen — it appears on Search and as
  * the filter on every long list, and the clear button in particular is easy
@@ -37,7 +36,6 @@ export const SearchField = forwardRef<TextInput, SearchFieldProps>(function Sear
   return (
     <View style={inset && styles.wrap}>
       <View style={styles.card}>
-        <Glass variant="regular" blur radius={radius.lg} style={StyleSheet.absoluteFill} />
         <View style={styles.inputRow}>
           <IconSearch size={18} color={color.labelSecondary} strokeWidth={2} />
           <TextInput
@@ -79,7 +77,12 @@ export const SearchField = forwardRef<TextInput, SearchFieldProps>(function Sear
 const makeStyles = (color: Palette) =>
   StyleSheet.create({
     wrap: { paddingHorizontal: layout.screenPadding, paddingBottom: space[3] },
-    card: { borderRadius: radius.lg },
+    card: {
+      borderRadius: radius.lg,
+      backgroundColor: color.surface,
+      borderWidth: stroke,
+      borderColor: color.border,
+    },
     inputRow: {
       flexDirection: 'row',
       alignItems: 'center',

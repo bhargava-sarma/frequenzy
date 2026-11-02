@@ -1,20 +1,10 @@
-import { memo, useEffect } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import Animated, {
-  FadeIn,
-  cancelAnimation,
-  useAnimatedStyle,
-  useSharedValue,
-  withDelay,
-  withRepeat,
-  withSequence,
-  withTiming,
-} from 'react-native-reanimated';
 
 import { IconAlertTriangle, type IconComponent } from './icons';
 import { Keycap } from './Keycap';
 import { Label } from './Label';
-import { layout, motion, radius, space, type } from '../theme/tokens';
+import { layout, radius, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemeControls, useThemedStyles } from '../theme/ThemeProvider';
 
@@ -23,55 +13,52 @@ import { useTheme, useThemeControls, useThemedStyles } from '../theme/ThemeProvi
  *
  * Typographic rather than a spinner: a centred platform spinner is exactly
  * the generic look this design avoids. Loading is three status lights
- * stepping in sequence above a printed label — a device thinking.
+ * stepping in sequence above a printed label — a device thinking. The
+ * lights switch rather than fade, and the states themselves simply appear.
  */
 
 export const LoadingState = memo(function LoadingState({ label = 'Loading' }: { label?: string }) {
   const styles = useThemedStyles(makeStyles);
   return (
-    <Animated.View style={styles.root} entering={FadeIn.duration(motion.durationBase).delay(120)}>
+    <View style={styles.root}>
       <SteppingLights />
       <Label tone="tertiary" style={styles.loadingLabel}>
         {label}
       </Label>
-    </Animated.View>
+    </View>
   );
 });
 
-/** Three dots lighting one after another. */
+/** How long each light stays lit before the next one takes over. */
+const STEP_MS = 320;
+
+/**
+ * Three lights, one lit at a time, stepping left to right. Each is simply
+ * on or off — the way an LED is — so nothing fades or pulses. Under Reduce
+ * motion all three sit half-lit.
+ */
 export function SteppingLights({ color: tint }: { color?: string }) {
   const color = useTheme();
+  const { reduceMotion } = useThemeControls();
+  const [step, setStep] = useState(0);
+
+  useEffect(() => {
+    if (reduceMotion) return;
+    const timer = setInterval(() => setStep((current) => (current + 1) % 3), STEP_MS);
+    return () => clearInterval(timer);
+  }, [reduceMotion]);
+
+  const fill = tint ?? color.accent;
   return (
     <View style={stepStyles.row}>
       {[0, 1, 2].map((i) => (
-        <StepDot key={i} index={i} color={tint ?? color.accent} />
+        <View
+          key={i}
+          style={[stepStyles.dot, { backgroundColor: fill, opacity: reduceMotion ? 0.6 : i === step ? 1 : 0.25 }]}
+        />
       ))}
     </View>
   );
-}
-
-function StepDot({ index, color }: { index: number; color: string }) {
-  const { reduceMotion } = useThemeControls();
-  const level = useSharedValue(0.25);
-
-  useEffect(() => {
-    if (reduceMotion) {
-      level.value = 0.6;
-      return;
-    }
-    level.value = withDelay(
-      index * 180,
-      withRepeat(
-        withSequence(withTiming(1, { duration: 260 }), withTiming(0.25, { duration: 280 }), withTiming(0.25, { duration: 260 })),
-        -1,
-        false,
-      ),
-    );
-    return () => cancelAnimation(level);
-  }, [index, level, reduceMotion]);
-
-  const style = useAnimatedStyle(() => ({ opacity: level.value }));
-  return <Animated.View style={[stepStyles.dot, { backgroundColor: color }, style]} />;
 }
 
 export interface EmptyStateProps {
@@ -85,7 +72,7 @@ export const EmptyState = memo(function EmptyState({ label, hint, icon: Icon, ac
   const color = useTheme();
   const styles = useThemedStyles(makeStyles);
   return (
-    <Animated.View style={styles.root} entering={FadeIn.duration(motion.durationBase)}>
+    <View style={styles.root}>
       {Icon && (
         <View style={styles.iconWell}>
           <Icon size={22} color={color.labelSecondary} strokeWidth={1.75} />
@@ -98,7 +85,7 @@ export const EmptyState = memo(function EmptyState({ label, hint, icon: Icon, ac
           <Keycap label={action.label} size="sm" onPress={action.onPress} />
         </View>
       )}
-    </Animated.View>
+    </View>
   );
 });
 
@@ -112,7 +99,7 @@ export const ErrorState = memo(function ErrorState({
   const color = useTheme();
   const styles = useThemedStyles(makeStyles);
   return (
-    <Animated.View style={styles.root} entering={FadeIn.duration(motion.durationBase)}>
+    <View style={styles.root}>
       <View style={[styles.iconWell, { borderColor: color.destructive }]}>
         <IconAlertTriangle size={22} color={color.destructive} strokeWidth={1.75} />
       </View>
@@ -125,7 +112,7 @@ export const ErrorState = memo(function ErrorState({
           <Keycap label="Try again" size="sm" onPress={onRetry} />
         </View>
       )}
-    </Animated.View>
+    </View>
   );
 });
 

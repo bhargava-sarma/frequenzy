@@ -5,8 +5,6 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import appConfig from '../../app.json';
-import { realBlurSupported } from '../components/BlurTarget';
-import { ExpandFrom } from '../components/ExpandFrom';
 import { GridPaper } from '../components/GridPaper';
 import { IconButton } from '../components/IconButton';
 import { IconCheck, IconChevronLeft, IconLogout, IconRefresh } from '../components/icons';
@@ -140,7 +138,7 @@ export function SettingsScreen() {
   const ledColor = connection?.kind === 'local' ? color.ledGreen : connection?.kind === 'remote' ? color.ledAmber : color.ledRed;
 
   return (
-    <ExpandFrom>
+    <>
       <View style={[styles.root, { paddingTop: insets.top }]}>
         <GridPaper />
         <View style={styles.nav}>
@@ -203,39 +201,21 @@ export function SettingsScreen() {
             <Row label="Grid paper" hint="A faint dot grid behind every screen.">
               <Toggle value={settings.gridPaper} onChange={(on) => set('gridPaper', on)} accessibilityLabel="Grid paper" />
             </Row>
-            <Row label="Reduce motion" hint="Stops breathing art, spinning records, tickers and the drifting wash." last>
+            <Row label="Reduce motion" hint="Stops the record and the tape turning, and has sheets and the player appear without sliding." last>
               <Toggle value={settings.reduceMotion} onChange={(on) => set('reduceMotion', on)} accessibilityLabel="Reduce motion" />
             </Row>
           </Panel>
 
-          {/* ── Surfaces ── */}
-          <Panel label="02 — Glass & light" style={styles.panel}>
+          {/* ── Colour ── */}
+          <Panel label="02 — Colour wash" style={styles.panel}>
             <Slider
               label="Ambient wash"
               value={settings.ambient}
               onChange={(value) => set('ambient', value)}
               readout={settings.ambient <= 0 ? 'OFF' : `${Math.round(settings.ambient * 100)}%`}
             />
-            <Slider
-              label="Blur"
-              value={settings.blur}
-              onChange={(value) => set('blur', value)}
-              min={0}
-              max={100}
-              step={5}
-              disabled={!realBlurSupported}
-              readout={realBlurSupported ? `${Math.round(settings.blur)}` : 'N/A'}
-            />
-            <Slider
-              label="Tint"
-              value={settings.tint}
-              onChange={(value) => set('tint', value)}
-              readout={`${Math.round(settings.tint * 100)}%`}
-            />
             <Text style={styles.hint}>
-              {realBlurSupported
-                ? 'The dock, bars and sheets blur what passes behind them, under a tint of the surface colour.'
-                : 'Real blur needs Android 12 or later; glass here is tinted instead.'}
+              A still wash of the playing cover's colours behind every screen. All the way down turns it off.
             </Text>
           </Panel>
 
@@ -279,7 +259,7 @@ export function SettingsScreen() {
           {/* ── Server ── */}
           <Panel label="05 — Server" style={styles.panel}>
             <View style={styles.status}>
-              <Led color={ledColor} size={9} blink={!connection} />
+              <Led color={ledColor} size={9} />
               <View style={styles.statusText}>
                 <Text style={[type.headline, { color: color.label }]}>
                   {connection ? (connection.kind === 'local' ? 'Home network' : 'Remote address') : 'Not connected'}
@@ -372,7 +352,7 @@ export function SettingsScreen() {
           <SheetRow label="Stay signed in" last onPress={() => setConfirmSignOut(false)} />
         </Sheet>
       </View>
-    </ExpandFrom>
+    </>
   );
 }
 

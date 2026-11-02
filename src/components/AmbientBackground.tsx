@@ -1,16 +1,8 @@
-import { memo, useEffect } from 'react';
+import { memo } from 'react';
 import { StyleSheet, useWindowDimensions, View } from 'react-native';
-import Animated, {
-  interpolateColor,
-  useAnimatedStyle,
-  useFrameCallback,
-  useSharedValue,
-  type SharedValue,
-} from 'react-native-reanimated';
+import Animated, { interpolateColor, useAnimatedStyle } from 'react-native-reanimated';
 import Svg, { Circle, Defs, LinearGradient, RadialGradient, Rect, Stop } from 'react-native-svg';
 
-import { useScreenFocused } from '../hooks/useScreenFocused';
-import { usePlayerUiStore } from '../store/usePlayerUiStore';
 import { type ArtworkPalette } from '../theme/tokens';
 import {
   useArtworkPalette,
@@ -23,24 +15,16 @@ import { useSvgId } from '../utils/svgId';
 /**
  * The artwork, as light in the room.
  *
- * A soft mesh of the current cover's colours drifting and breathing behind
- * the screen. Four radial gradients — vibrant, dominant, muted, deep — each
- * moving on its own slow Lissajous path, so the composition never repeats in
- * a way the eye can catch. Between tracks the colours crossfade on the UI
- * thread (see the mesh layers in ThemeProvider).
+ * A still, soft wash of the current cover's colours behind the screen: four
+ * radial gradients — vibrant, dominant, muted, deep — at fixed positions.
+ * Nothing in it moves on its own. The only motion is a short fade when the
+ * track changes (see the mesh layers in ThemeProvider), so a new cover
+ * doesn't cut the whole screen to a new colour in one frame.
  *
- * Built to cost as little as a background can:
- *
- *   - Each gradient is a small SVG scaled up by a transform. react-native-svg
- *     rasterises every Svg into a bitmap of its own size on Android, and a
- *     gradient has no detail to lose, so a 96pt bitmap stretched five times
- *     looks the same as a screen-sized one at a fraction of the memory.
- *   - Motion is one frame callback advancing a clock, throttled to ~30fps.
- *     The drift is a few points a second, where 30 steps is indistinguishable
- *     from 120 — and every skipped frame is a frame in which nothing behind a
- *     glass surface changed, so a real blur over it has nothing to redo.
- *   - It stops when the screen is not focused, and when the full player
- *     covers it, and is not mounted at all when the ambient setting is zero.
+ * Each gradient is a small SVG scaled up by a transform. react-native-svg
+ * rasterises every Svg into a bitmap of its own size on Android, and a
+ * gradient has no detail to lose, so a 96pt bitmap stretched five times
+ * looks the same as a screen-sized one at a fraction of the memory.
  */
 
 export type AmbientVariant = 'subtle' | 'immersive';
@@ -60,17 +44,10 @@ export interface AmbientBackgroundProps {
    * colour, with a dark (or pastel, in light theme) ground and bold blobs.
    */
   variant?: AmbientVariant;
-  /** Freeze the drift, e.g. while a panel fully covers this screen. */
-  paused?: boolean;
 }
 
 /** Side of each gradient's bitmap before scaling, in points. */
 const BASE = 96;
-
-/** Minimum time between clock steps. ~30fps. */
-const TICK_MS = 33;
-
-const TAU = Math.PI * 2;
 
 interface BlobSpec {
   role: keyof ArtworkPalette;
@@ -79,60 +56,37 @@ interface BlobSpec {
   y: number;
   /** Diameter as a fraction of screen width. */
   size: number;
-  /** Drift amplitude as a fraction of width / height. */
-  ax: number;
-  ay: number;
-  /** Drift periods in seconds. */
-  tx: number;
-  ty: number;
-  /** Breathing period in seconds, and how much the blob swells. */
-  tb: number;
-  breathe: number;
-  /** Phase offsets, radians. */
-  phase: number;
   /** Peak alpha at the blob's centre, before intensity. */
   peak: number;
 }
 
-/**
- * Periods are chosen to share no small common multiple, so the four paths
- * drift in and out of alignment rather than looping visibly.
- */
 const SUBTLE: BlobSpec[] = [
-  { role: 'vibrant', x: 0.12, y: 0.1, size: 1.35, ax: 0.16, ay: 0.06, tx: 29, ty: 37, tb: 11, breathe: 0.08, phase: 0, peak: 0.42 },
-  { role: 'dominant', x: 0.95, y: 0.32, size: 1.25, ax: 0.12, ay: 0.08, tx: 41, ty: 31, tb: 13, breathe: 0.07, phase: 1.7, peak: 0.36 },
-  { role: 'muted', x: 0.18, y: 0.66, size: 1.4, ax: 0.14, ay: 0.07, tx: 34, ty: 43, tb: 17, breathe: 0.09, phase: 3.1, peak: 0.32 },
-  { role: 'deep', x: 0.85, y: 0.95, size: 1.35, ax: 0.1, ay: 0.05, tx: 47, ty: 27, tb: 19, breathe: 0.06, phase: 4.4, peak: 0.5 },
+  { role: 'vibrant', x: 0.12, y: 0.1, size: 1.35, peak: 0.42 },
+  { role: 'dominant', x: 0.95, y: 0.32, size: 1.25, peak: 0.36 },
+  { role: 'muted', x: 0.18, y: 0.66, size: 1.4, peak: 0.32 },
+  { role: 'deep', x: 0.85, y: 0.95, size: 1.35, peak: 0.5 },
 ];
 
 const IMMERSIVE: BlobSpec[] = [
-  { role: 'vibrant', x: 0.2, y: 0.18, size: 1.6, ax: 0.18, ay: 0.08, tx: 23, ty: 29, tb: 9, breathe: 0.1, phase: 0, peak: 0.95 },
-  { role: 'dominant', x: 0.9, y: 0.42, size: 1.5, ax: 0.14, ay: 0.1, tx: 31, ty: 25, tb: 11, breathe: 0.09, phase: 1.9, peak: 0.85 },
-  { role: 'muted', x: 0.15, y: 0.78, size: 1.55, ax: 0.16, ay: 0.08, tx: 27, ty: 35, tb: 13, breathe: 0.1, phase: 3.3, peak: 0.75 },
-  { role: 'vibrant', x: 0.8, y: 1.02, size: 1.3, ax: 0.12, ay: 0.06, tx: 37, ty: 21, tb: 15, breathe: 0.08, phase: 4.6, peak: 0.55 },
+  { role: 'vibrant', x: 0.2, y: 0.18, size: 1.6, peak: 0.95 },
+  { role: 'dominant', x: 0.9, y: 0.42, size: 1.5, peak: 0.85 },
+  { role: 'muted', x: 0.15, y: 0.78, size: 1.55, peak: 0.75 },
+  { role: 'vibrant', x: 0.8, y: 1.02, size: 1.3, peak: 0.55 },
 ];
 
-/** Where the drift clock starts, so a fresh screen doesn't open on phase zero. */
-const START_SECONDS = 7;
-
-export function AmbientBackground({
-  intensity = 1,
-  variant = 'subtle',
-  paused = false,
-  dim = 0,
-}: AmbientBackgroundProps) {
+export function AmbientBackground({ intensity = 1, variant = 'subtle', dim = 0 }: AmbientBackgroundProps) {
   const { ambientIntensity } = useThemeControls();
 
   if (ambientIntensity <= 0) {
-    // Nothing animates at zero. The immersive screens still need a ground
-    // colour, or the player would fall back to a flat grey panel. The ground
-    // is already the cover's deepest shade, so it takes no veil.
+    // The immersive screens still need a ground colour, or the player would
+    // fall back to a flat grey panel. The ground is already the cover's
+    // deepest shade, so it takes no veil.
     return variant === 'immersive' ? <StaticGround /> : null;
   }
 
   return (
     <>
-      <Mesh strength={intensity * ambientIntensity} variant={variant} paused={paused} />
+      <Mesh strength={intensity * ambientIntensity} variant={variant} />
       {dim > 0 && (
         <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.veil, { opacity: dim }]} />
       )}
@@ -161,49 +115,12 @@ function StaticGround() {
   );
 }
 
-function Mesh({
-  strength,
-  variant,
-  paused,
-}: {
-  strength: number;
-  variant: AmbientVariant;
-  paused: boolean;
-}) {
-  const { resolved, reduceMotion } = useThemeControls();
+function Mesh({ strength, variant }: { strength: number; variant: AmbientVariant }) {
+  const { resolved } = useThemeControls();
   const { layers, mix } = useMeshLayers();
   const { width, height } = useWindowDimensions();
-  /**
-   * Tab screens stay mounted when you navigate away, so without this every
-   * screen you have ever opened keeps its mesh running on the UI thread for
-   * a background nobody can see.
-   */
-  const focused = useScreenFocused();
-  const playerOpen = usePlayerUiStore((state) => state.open);
 
   const immersive = variant === 'immersive';
-  // A subtle mesh behind the full player is invisible and would keep any
-  // real blur over it busy for nothing.
-  const active = focused && !paused && !reduceMotion && (immersive || !playerOpen);
-
-  const clock = useSharedValue(START_SECONDS);
-  const sinceTick = useSharedValue(0);
-
-  const frame = useFrameCallback((info) => {
-    'worklet';
-    // Clamped so resuming after a pause, or a long frame, never jumps.
-    const delta = Math.min(info.timeSincePreviousFrame ?? 0, 100);
-    sinceTick.value += delta;
-    if (sinceTick.value < TICK_MS) return;
-    clock.value += sinceTick.value / 1000;
-    sinceTick.value = 0;
-  }, false);
-
-  useEffect(() => {
-    frame.setActive(active);
-    return () => frame.setActive(false);
-  }, [active, frame]);
-
   const specs = immersive ? IMMERSIVE : SUBTLE;
   // The same alpha that glows on black stains white, so light mode is pulled
   // back — less for immersive, where the colour is the whole point.
@@ -227,33 +144,13 @@ function Mesh({
 
       <Animated.View style={[StyleSheet.absoluteFill, layerA]}>
         {specs.map((spec, index) => (
-          <Blob
-            key={index}
-            spec={spec}
-            color={paletteA[spec.role]}
-            peak={spec.peak * scale}
-            clock={clock}
-            mix={mix}
-            hiddenAt={1}
-            width={width}
-            height={height}
-          />
+          <Blob key={index} spec={spec} color={paletteA[spec.role]} peak={spec.peak * scale} width={width} height={height} />
         ))}
       </Animated.View>
 
       <Animated.View style={[StyleSheet.absoluteFill, layerB]}>
         {specs.map((spec, index) => (
-          <Blob
-            key={index}
-            spec={spec}
-            color={paletteB[spec.role]}
-            peak={spec.peak * scale}
-            clock={clock}
-            mix={mix}
-            hiddenAt={0}
-            width={width}
-            height={height}
-          />
+          <Blob key={index} spec={spec} color={paletteB[spec.role]} peak={spec.peak * scale} width={width} height={height} />
         ))}
       </Animated.View>
 
@@ -262,63 +159,35 @@ function Mesh({
   );
 }
 
-function Blob({
+const Blob = memo(function Blob({
   spec,
   color,
   peak,
-  clock,
-  mix,
-  hiddenAt,
   width,
   height,
 }: {
   spec: BlobSpec;
   color: string;
   peak: number;
-  clock: SharedValue<number>;
-  mix: SharedValue<number>;
-  /** The mix value at which this blob's layer is fully transparent. */
-  hiddenAt: 0 | 1;
   width: number;
   height: number;
 }) {
-  const diameter = spec.size * width;
-  const baseScale = diameter / BASE;
-
-  const style = useAnimatedStyle(() => {
-    // A hidden layer holds still, so it sends no prop updates while nobody
-    // can see it. It rejoins the clock the moment its fade begins, while it
-    // is still effectively transparent.
-    const hidden = Math.abs(mix.value - hiddenAt) < 0.001;
-    const t = hidden ? 0 : clock.value;
-    return {
-      transform: [
-        { translateX: Math.sin((t * TAU) / spec.tx + spec.phase) * spec.ax * width },
-        { translateY: Math.cos((t * TAU) / spec.ty + spec.phase) * spec.ay * height },
-        {
-          scale:
-            baseScale * (1 + Math.sin((t * TAU) / spec.tb + spec.phase * 0.7) * spec.breathe),
-        },
-      ],
-    };
-  });
-
+  const scale = (spec.size * width) / BASE;
   return (
-    <Animated.View
+    <View
       style={[
         styles.blob,
-        { left: spec.x * width - BASE / 2, top: spec.y * height - BASE / 2 },
-        style,
+        { left: spec.x * width - BASE / 2, top: spec.y * height - BASE / 2, transform: [{ scale }] },
       ]}
     >
       <BlobGradient color={color} peak={peak} />
-    </Animated.View>
+    </View>
   );
-}
+});
 
 /**
- * The gradient itself. Memoised on colour and strength, so the drift never
- * re-renders an SVG — only a track change or the intensity slider does.
+ * The gradient itself. Memoised on colour and strength, so only a track
+ * change or the intensity slider re-renders an SVG.
  *
  * Stops approximate a Gaussian falloff; a linear ramp to zero leaves a
  * visible edge where the slope stops.

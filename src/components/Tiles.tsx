@@ -4,7 +4,7 @@ import Svg, { Circle, Defs, LinearGradient, Rect, Stop } from 'react-native-svg'
 
 import type { IconComponent } from './icons';
 import { Label } from './Label';
-import { PressScale } from './Pressable';
+import { Touchable } from './Touchable';
 import { mix, pickInk } from '../theme/color';
 import { radius, space, type, withAlpha } from '../theme/tokens';
 import { useTheme } from '../theme/ThemeProvider';
@@ -36,8 +36,7 @@ export const QuickKey = memo(function QuickKey({
   const dim = primary ? withAlpha(color.accentInk, 0.7) : color.labelSecondary;
 
   return (
-    <PressScale
-      noOrigin
+    <Touchable
       accessibilityRole="button"
       accessibilityLabel={caption ? `${label}, ${caption}` : label}
       disabled={busy}
@@ -45,7 +44,6 @@ export const QuickKey = memo(function QuickKey({
         haptics.press();
         onPress();
       }}
-      scaleTo={0.95}
       style={[
         styles.quick,
         {
@@ -69,7 +67,7 @@ export const QuickKey = memo(function QuickKey({
           </Text>
         ) : null}
       </View>
-    </PressScale>
+    </Touchable>
   );
 });
 
@@ -98,15 +96,13 @@ export const MixCard = memo(function MixCard({
   const height = Math.round(width * 1.08);
 
   return (
-    <PressScale
-      noOrigin
+    <Touchable
       accessibilityRole="button"
       accessibilityLabel={`${title} mix, ${caption}`}
       onPress={() => {
         haptics.press();
         onPress();
       }}
-      scaleTo={0.95}
       style={[styles.mix, { width, height, backgroundColor: hue }]}
     >
       <Svg width={width} height={height} style={StyleSheet.absoluteFill}>
@@ -143,7 +139,7 @@ export const MixCard = memo(function MixCard({
           {caption}
         </Label>
       </View>
-    </PressScale>
+    </Touchable>
   );
 });
 

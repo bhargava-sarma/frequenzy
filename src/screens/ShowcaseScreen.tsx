@@ -101,7 +101,7 @@ export function ShowcaseScreen() {
           </View>
           <View style={styles.row}>
             <Led color={color.ledGreen} />
-            <Led color={color.ledAmber} blink />
+            <Led color={color.ledAmber} />
             <Led color={color.ledRed} />
             <Led color={color.accent} on={false} />
             <SteppingLights />
@@ -149,14 +149,14 @@ export function ShowcaseScreen() {
         <SectionHeader index="06" title="Faces" />
         <ImmersiveScope>
           <View style={[styles.faces, { backgroundColor: '#14100E' }]}>
-            <ArtworkFace size={150} playing />
+            <ArtworkFace size={150} />
             <VinylFace size={150} playing progress={position / duration} />
           </View>
           <View style={[styles.faces, { backgroundColor: '#14100E' }]}>
             <TapeFace size={300} playing progress={position / duration} title="Selected Ambient Works" subtitle="Aphex Twin" />
           </View>
           <View style={[styles.pad, styles.scrub, { backgroundColor: '#14100E' }]}>
-            <ScrubBar position={position} duration={duration} playing onSeek={setPosition} tone="onArtwork" />
+            <ScrubBar position={position} duration={duration} onSeek={setPosition} tone="onArtwork" />
           </View>
         </ImmersiveScope>
       </ScrollView>
