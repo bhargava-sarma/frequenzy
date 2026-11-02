@@ -2,6 +2,7 @@ import TrackPlayer, { Event } from '@rntp/player';
 
 import type { SubsonicClient } from '../api/client';
 import { recordPlay } from '../data/playHistory';
+import { getSettings } from '../store/useSettingsStore';
 import { extrasOf } from './trackMapping';
 
 /**
@@ -43,6 +44,12 @@ interface PlayState {
   /** Epoch ms the track started, sent as the play's timestamp. */
   startedAt: number;
   submitted: boolean;
+  /**
+   * Whether the "now playing" ping went out. Deferred until audio actually
+   * runs: a queue restored paused on launch would otherwise announce a
+   * track nobody is listening to.
+   */
+  announced: boolean;
 }
 
 /**
@@ -68,10 +75,17 @@ export function startScrobbler(getClient: () => SubsonicClient | null): () => vo
   function beginTrack(mediaId: string) {
     // Repeat-one re-enters the same track; treating it as a fresh play means a
     // track on loop scrobbles each time round rather than once.
-    current = { mediaId, startedAt: Date.now(), submitted: false };
+    current = { mediaId, startedAt: Date.now(), submitted: false, announced: false };
+    if (TrackPlayer.isPlaying()) announce();
+  }
 
+  function announce() {
+    if (!current || current.announced) return;
+    current.announced = true;
     const client = getClient();
-    if (client) report(client.scrobble(mediaId, { submission: false }));
+    if (client && getSettings().scrobble) {
+      report(client.scrobble(current.mediaId, { submission: false }));
+    }
   }
 
   const transition = TrackPlayer.addEventListener(Event.MediaItemTransition, ({ item }) => {
@@ -99,8 +113,9 @@ export function startScrobbler(getClient: () => SubsonicClient | null): () => vo
       return;
     }
 
-    if (current.submitted) return;
     if (!TrackPlayer.isPlaying()) return;
+    announce();
+    if (current.submitted) return;
 
     const { position, duration } = TrackPlayer.getProgress();
     if (!duration || duration < MIN_DURATION_SECONDS) return;
@@ -114,18 +129,23 @@ export function startScrobbler(getClient: () => SubsonicClient | null): () => vo
     // Set before awaiting: a failed submission is not retried, and leaving the
     // flag clear would re-fire on every tick for the rest of the track.
     current.submitted = true;
-    report(client.scrobble(mediaId, { submission: true, time: current.startedAt }));
+    if (getSettings().scrobble) {
+      report(client.scrobble(mediaId, { submission: true, time: current.startedAt }));
+    }
 
-    // Logged locally at the same moment, since the server has no endpoint for
-    // "top tracks this week" and cannot answer that question later.
+    // Logged locally either way: it is this device's own history, and the
+    // charts and stats are built from it whether or not the server hears.
     const extras = extrasOf(item);
     report(
       recordPlay({
         songId: mediaId,
         title: item?.title ?? 'Unknown title',
         artist: item?.artist,
+        artistId: extras?.artistId,
+        album: item?.albumTitle ?? extras?.albumTitle,
         albumId: extras?.albumId,
         coverArt: extras?.coverArt,
+        duration: duration,
         playedAt: current.startedAt,
       }),
     );

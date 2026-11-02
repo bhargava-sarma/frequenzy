@@ -102,8 +102,8 @@ export const SlidingPill = memo(function SlidingPill({
     (tone === 'accent'
       ? color.accent
       : resolved === 'dark'
-        ? withAlpha(color.glassHighlight, 0.2)
-        : color.glassHighlight);
+        ? withAlpha(color.glassHighlight, 0.16)
+        : color.surfaceRaised);
 
   return (
     <View pointerEvents="none" style={StyleSheet.absoluteFill} onLayout={onLayout}>
@@ -120,6 +120,7 @@ export const SlidingPill = memo(function SlidingPill({
               backgroundColor: fill,
             },
             tone === 'glass' && resolved === 'light' && styles.lightShadow,
+            tone === 'glass' && resolved === 'dark' && styles.darkEdge,
             style,
             animated,
           ]}
@@ -133,6 +134,7 @@ const styles = StyleSheet.create({
   pill: { position: 'absolute' },
   // On white the pill is white; only a shadow separates it from the track.
   lightShadow: {
-    boxShadow: [{ offsetX: 0, offsetY: 2, blurRadius: 6, color: '#0000001F' }],
+    boxShadow: [{ offsetX: 0, offsetY: 1, blurRadius: 4, color: '#00000026' }],
   },
+  darkEdge: { borderWidth: 1, borderColor: '#FFFFFF14' },
 });

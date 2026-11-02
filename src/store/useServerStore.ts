@@ -18,6 +18,14 @@ import { clearServerConfig, loadServerConfig, saveServerConfig } from '../storag
 
 export type ServerStatus = 'hydrating' | 'needsSetup' | 'ready';
 
+/** What the server said about itself on the first successful ping. */
+export interface ServerInfo {
+  type?: string;
+  version?: string;
+  apiVersion?: string;
+  openSubsonic: boolean;
+}
+
 interface ServerStore {
   status: ServerStatus;
   config: ServerConfig | null;
@@ -26,6 +34,13 @@ interface ServerStore {
   library: LibraryRepository | null;
   /** Mirrors the client's active connection so UI can show local vs remote. */
   connection: ConnectionState | null;
+  info: ServerInfo | null;
+  /**
+   * Runs when the session is torn down on sign-out, so modules holding
+   * account-scoped state (the queue, its saved copy) can drop it.
+   */
+  onSignOut: (() => Promise<void> | void) | null;
+  setOnSignOut: (handler: (() => Promise<void> | void) | null) => void;
 
   /** Reads persisted credentials. Call once at app start. */
   hydrate: () => Promise<void>;
@@ -60,12 +75,41 @@ export const useServerStore = create<ServerStore>((set, get) => {
     return { client, library };
   };
 
+  /**
+   * Warms the connection and learns the server's name and version.
+   *
+   * Fired in the background as soon as a session exists, so the first
+   * screen's cover art has a base URL to resolve against by the time it
+   * draws, rather than waiting for the first library read to probe.
+   */
+  const greet = (client: SubsonicClient) => {
+    void client
+      .ping()
+      .then((pong) => {
+        if (get().client !== client) return;
+        set({
+          info: {
+            type: pong.type,
+            version: pong.serverVersion,
+            apiVersion: pong.version,
+            openSubsonic: Boolean(pong.openSubsonic),
+          },
+        });
+      })
+      .catch(() => {
+        // Unreachable right now; the connection indicator already says so.
+      });
+  };
+
   return {
     status: 'hydrating',
     config: null,
     client: null,
     library: null,
     connection: null,
+    info: null,
+    onSignOut: null,
+    setOnSignOut: (handler) => set({ onSignOut: handler }),
 
     hydrate: async () => {
       const config = await loadServerConfig();
@@ -77,11 +121,14 @@ export const useServerStore = create<ServerStore>((set, get) => {
           client: null,
           library: null,
           connection: null,
+          info: null,
         });
         return;
       }
 
-      set({ status: 'ready', config, ...buildSession(config), connection: null });
+      const session = buildSession(config);
+      set({ status: 'ready', config, ...session, connection: null, info: null });
+      greet(session.client);
     },
 
     saveConfig: async (config, verified) => {
@@ -90,13 +137,19 @@ export const useServerStore = create<ServerStore>((set, get) => {
       const session = buildSession(config);
       if (verified) session.client.adoptConnection(verified);
 
-      set({ status: 'ready', config, ...session, connection: verified ?? null });
+      set({ status: 'ready', config, ...session, connection: verified ?? null, info: null });
+      greet(session.client);
     },
 
     signOut: async () => {
-      // Drop cached library data too. It belongs to the account being signed
-      // out of, and leaving it behind would show a stale library to whoever
-      // sets the app up next.
+      // Drop cached library data and the queue too. They belong to the
+      // account being signed out of, and leaving them behind would show a
+      // stale library — or queue unplayable tracks — for whoever is next.
+      try {
+        await get().onSignOut?.();
+      } catch {
+        // Clearing account state is best-effort; signing out must not fail.
+      }
       await get().library?.clear();
       await clearServerConfig();
 
@@ -106,6 +159,7 @@ export const useServerStore = create<ServerStore>((set, get) => {
         client: null,
         library: null,
         connection: null,
+        info: null,
       });
     },
 

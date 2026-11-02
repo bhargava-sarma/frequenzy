@@ -1,80 +1,70 @@
 import { memo } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { StackActions } from '@react-navigation/native';
 
 import { Glass } from './Glass';
+import { IconHome, IconLibrary, IconSearch, type IconComponent } from './icons';
 import { MiniPlayer } from './MiniPlayer';
 import { SlidingPill } from './SlidingPill';
 import { useToggleProgress } from '../theme/motion';
-import { icon, layout, radius, space } from '../theme/tokens';
-import type { Palette } from '../theme/tokens';
-import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
+import { icon, layout, radius, space, type } from '../theme/tokens';
+import { useTheme } from '../theme/ThemeProvider';
 import { emitSearchRequested } from '../utils/tabEvents';
-import { IconHome, IconLibrary, IconSearch } from './icons';
+import { haptics } from '../utils/haptics';
 
 /**
- * Floating liquid-glass dock — navigation and the mini-player as one object.
+ * The dock: navigation and the mini player as one floating slab of glass.
  *
- * Inset from all three edges and fully rounded, it reads as a single piece of
- * glass resting on the library rather than as screen chrome. It is one of the
- * few surfaces allowed a real blur: it floats over everything, and the
- * blurred list moving behind it is what makes it read as glass at all.
+ * Inset from three edges and fully rounded, it reads as one object resting
+ * on the content rather than as screen chrome, and it is one of the few
+ * surfaces that really blurs what passes behind it. Tabs carry printed
+ * legends under their glyphs; the selection is a raised key that slides
+ * between them.
  *
- * The active tab sits on a sliding pill that springs between icons, stretching
- * as it travels, and the active icon swells slightly — so switching tabs is a
- * movement you can follow rather than a colour that changes.
- *
- * Because it floats over the list, screens have to reserve room for it — that
- * height is exported as DOCK_CLEARANCE rather than each screen guessing.
+ * Screens reserve room for it with DOCK_CLEARANCE, sized for the dock with
+ * the mini player showing, so a list's last row is always reachable.
  */
 
-const ICONS = {
-  Home: IconHome,
-  Search: IconSearch,
-  Library: IconLibrary,
-} as const;
+const TABS: Record<string, { icon: IconComponent; label: string }> = {
+  Home: { icon: IconHome, label: 'Home' },
+  Search: { icon: IconSearch, label: 'Search' },
+  Library: { icon: IconLibrary, label: 'Library' },
+};
 
-/**
- * Bottom padding a scrolling screen needs so its last row clears the dock.
- *
- * Deliberately generous: it covers the dock with the mini-player showing, so
- * the final row stays reachable whether or not something is playing.
- */
-export const DOCK_CLEARANCE = 164;
+export const DOCK_CLEARANCE = 168;
 
 export function TabBar({ state, navigation }: BottomTabBarProps) {
-  const styles = useThemedStyles(makeStyles);
   const insets = useSafeAreaInsets();
 
   return (
     <View
       style={[styles.root, { bottom: Math.max(insets.bottom, space[3]) }]}
-      // The dock is drawn over the list, so the area beside it must stay
-      // scrollable rather than being swallowed by a full-width container.
+      // The area beside the dock must stay scrollable.
       pointerEvents="box-none"
     >
       <Glass variant="regular" blur shadow radius={layout.dockRadius} style={styles.dock}>
         <MiniPlayer />
 
         <View style={styles.bar}>
-          <SlidingPill index={state.index} count={state.routes.length} inset={4} />
+          <SlidingPill index={state.index} count={state.routes.length} inset={0} radius={radius.lg} />
 
           {state.routes.map((route, index) => {
             const focused = state.index === index;
-            const Icon = ICONS[route.name as keyof typeof ICONS];
-            if (!Icon) return null;
+            const tab = TABS[route.name];
+            if (!tab) return null;
 
             return (
               <Pressable
                 key={route.key}
-                accessibilityRole="button"
+                accessibilityRole="tab"
                 accessibilityState={{ selected: focused }}
-                accessibilityLabel={route.name}
+                accessibilityLabel={tab.label}
                 style={styles.item}
                 onPress={() => {
+                  haptics.tick();
                   const event = navigation.emit({
                     type: 'tabPress',
                     target: route.key,
@@ -87,24 +77,18 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
                     return;
                   }
 
-                  /**
-                   * Tapping the tab you are already on returns you to its top
-                   * level — the standard shortcut out of a drill-down. The
-                   * dispatch is targeted at the tab's own stack, since the tab
-                   * navigator itself has nothing to pop.
-                   */
+                  // Tapping the tab you're on returns to its top level — the
+                  // standard way out of a drill-down. Targeted at the tab's own
+                  // stack; the tab navigator has nothing to pop.
                   const stackKey = route.state?.key;
                   if (stackKey) {
                     navigation.dispatch({ ...StackActions.popToTop(), target: stackKey });
                   }
-
-                  // Search additionally raises the keyboard: coming back to a
-                  // search screen almost always means searching for something
-                  // else, and the field is what you came for.
+                  // Coming back to Search almost always means searching again.
                   if (route.name === 'Search') emitSearchRequested();
                 }}
               >
-                <TabIcon Icon={Icon} focused={focused} />
+                <TabGlyph Icon={tab.icon} label={tab.label} focused={focused} />
               </Pressable>
             );
           })}
@@ -114,53 +98,50 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
   );
 }
 
-/** Swells a little and brightens when its tab is chosen, on a spring. */
-const TabIcon = memo(function TabIcon({
+const TabGlyph = memo(function TabGlyph({
   Icon,
+  label,
   focused,
 }: {
-  Icon: (typeof ICONS)[keyof typeof ICONS];
+  Icon: IconComponent;
+  label: string;
   focused: boolean;
 }) {
   const color = useTheme();
   const on = useToggleProgress(focused);
 
   const style = useAnimatedStyle(() => ({
-    transform: [{ scale: 1 + 0.12 * on.value }],
-    opacity: 0.62 + 0.38 * on.value,
+    transform: [{ translateY: -on.value * 1 }, { scale: 1 + 0.06 * on.value }],
   }));
 
   return (
-    <Animated.View style={style}>
+    <Animated.View style={[styles.glyph, style]}>
       <Icon
-        size={24}
-        strokeWidth={focused ? 2 : icon.strokeWidth}
-        color={focused ? color.label : color.labelSecondary}
+        size={22}
+        strokeWidth={focused ? 2.1 : icon.strokeWidth}
+        color={focused ? color.accent : color.labelSecondary}
       />
+      <Text
+        style={[type.labelBold, styles.legend, { color: focused ? color.label : color.labelTertiary }]}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
     </Animated.View>
   );
 });
 
-const makeStyles = (_color: Palette) =>
-  StyleSheet.create({
-    root: {
-      position: 'absolute',
-      left: layout.dockMargin,
-      right: layout.dockMargin,
-    },
-    dock: {
-      // Clips the mini-player's artwork and progress line to the radius, so
-      // the dock stays one shape rather than a stack of rectangles.
-      overflow: 'hidden',
-      borderRadius: layout.dockRadius,
-    },
-    bar: {
-      flexDirection: 'row',
-      marginHorizontal: space[2],
-      marginBottom: space[2],
-      marginTop: space[1],
-      height: 50,
-      borderRadius: radius.full,
-    },
-    item: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  });
+const styles = StyleSheet.create({
+  root: { position: 'absolute', left: layout.dockMargin, right: layout.dockMargin },
+  dock: { overflow: 'hidden', borderRadius: layout.dockRadius },
+  bar: {
+    flexDirection: 'row',
+    marginHorizontal: space[2],
+    marginBottom: space[2],
+    marginTop: space[2],
+    height: 54,
+  },
+  item: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  glyph: { alignItems: 'center', gap: 3 },
+  legend: { fontSize: 9, letterSpacing: 1.1 },
+});

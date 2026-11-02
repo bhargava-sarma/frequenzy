@@ -1,32 +1,46 @@
 import { createNavigationContainerRef } from '@react-navigation/native';
 
-import type { RootStackParamList } from './types';
+import { usePlayerUiStore } from '../store/usePlayerUiStore';
+import type { DetailRoutes, RootStackParamList, TabParamList } from './types';
 
 /**
- * Navigation from outside the navigator.
+ * Navigation from outside a screen — the player overlay, sheets, stores.
  *
- * The player is an overlay above the navigator rather than a screen in it, so
- * it has no navigation context and `useNavigation` would throw. It still needs
- * to send you to an album or an artist, which is what this is for. Nothing
- * that lives inside a screen should use it — the hook is better there, since
- * it knows which stack it is in.
+ * Detail links open inside whichever tab is showing, so "Go to album" from a
+ * search result lands in Search and back returns to the results. The player
+ * is closed first: it sits above the navigator, and a push behind it would
+ * be invisible.
  */
 export const navigationRef = createNavigationContainerRef<RootStackParamList>();
 
-/** Opens an album in the library tab. No-op before the container is ready. */
-export function navigateToAlbum(albumId: string, albumName?: string): void {
+type TabName = keyof TabParamList;
+
+function currentTab(): TabName {
+  const root = navigationRef.getRootState();
+  const tabs = root?.routes.find((route) => route.name === 'Tabs')?.state;
+  const name = tabs?.routes[tabs.index ?? 0]?.name;
+  return name === 'Search' || name === 'Library' || name === 'Home' ? name : 'Home';
+}
+
+export function navigateToDetail<K extends keyof DetailRoutes>(
+  screen: K,
+  ...params: DetailRoutes[K] extends undefined ? [] : [DetailRoutes[K]]
+): void {
   if (!navigationRef.isReady()) return;
-  navigationRef.navigate('Tabs', {
-    screen: 'Library',
-    params: { screen: 'Album', params: { albumId, albumName } },
+  usePlayerUiStore.getState().closePlayer();
+  const tab = currentTab();
+  // The nested-navigator call is typed per tab; every tab carries the same
+  // detail routes, so the cast is a narrowing the compiler can't follow.
+  (navigationRef.navigate as (...args: unknown[]) => void)('Tabs', {
+    screen: tab,
+    params: { screen, params: params[0] },
   });
 }
 
-/** Opens an artist in the library tab. */
-export function navigateToArtist(artistId: string, artistName?: string): void {
-  if (!navigationRef.isReady()) return;
-  navigationRef.navigate('Tabs', {
-    screen: 'Library',
-    params: { screen: 'Artist', params: { artistId, artistName } },
-  });
-}
+export const navigateToAlbum = (albumId: string, albumName?: string) =>
+  navigateToDetail('Album', { albumId, albumName });
+
+export const navigateToArtist = (artistId: string, artistName?: string) =>
+  navigateToDetail('Artist', { artistId, artistName });
+
+export const navigateToGenre = (genre: string) => navigateToDetail('Genre', { genre });

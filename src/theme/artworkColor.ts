@@ -1,6 +1,7 @@
 import { decode } from 'jpeg-js';
 
-import type { ArtworkPalette } from './tokens';
+import { clamp, contrast, hslToHex, pickInk, rgbToHsl, type Hsl } from './color';
+import type { ArtworkPalette, ThemeMode } from './tokens';
 
 /**
  * Pulls usable colour out of album artwork: one accent, plus a four-colour
@@ -36,100 +37,6 @@ export interface ArtworkColors {
   /** Always present: a monochrome cover yields a neutral palette. */
   palette: ArtworkPalette;
 }
-
-// ---------------------------------------------------------------------------
-// Colour space
-// ---------------------------------------------------------------------------
-
-interface Hsl {
-  h: number;
-  s: number;
-  l: number;
-}
-
-function rgbToHsl(r: number, g: number, b: number): Hsl {
-  const rn = r / 255;
-  const gn = g / 255;
-  const bn = b / 255;
-
-  const max = Math.max(rn, gn, bn);
-  const min = Math.min(rn, gn, bn);
-  const l = (max + min) / 2;
-
-  if (max === min) return { h: 0, s: 0, l };
-
-  const d = max - min;
-  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-
-  let h: number;
-  if (max === rn) h = ((gn - bn) / d + (gn < bn ? 6 : 0)) / 6;
-  else if (max === gn) h = ((bn - rn) / d + 2) / 6;
-  else h = ((rn - gn) / d + 4) / 6;
-
-  return { h, s, l };
-}
-
-function hslToHex({ h, s, l }: Hsl): string {
-  const hue = (p: number, q: number, t: number) => {
-    let tt = t;
-    if (tt < 0) tt += 1;
-    if (tt > 1) tt -= 1;
-    if (tt < 1 / 6) return p + (q - p) * 6 * tt;
-    if (tt < 1 / 2) return q;
-    if (tt < 2 / 3) return p + (q - p) * (2 / 3 - tt) * 6;
-    return p;
-  };
-
-  let r: number;
-  let g: number;
-  let b: number;
-
-  if (s === 0) {
-    r = l;
-    g = l;
-    b = l;
-  } else {
-    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-    const p = 2 * l - q;
-    r = hue(p, q, h + 1 / 3);
-    g = hue(p, q, h);
-    b = hue(p, q, h - 1 / 3);
-  }
-
-  const byte = (v: number) =>
-    Math.round(Math.min(1, Math.max(0, v)) * 255)
-      .toString(16)
-      .padStart(2, '0');
-
-  return `#${byte(r)}${byte(g)}${byte(b)}`;
-}
-
-const INK_DARK = '#101010';
-const INK_LIGHT = '#FFFFFF';
-
-function luminance(hex: string): number {
-  const v = (i: number) => parseInt(hex.slice(i, i + 2), 16) / 255;
-  const channel = (c: number) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
-  return 0.2126 * channel(v(1)) + 0.7152 * channel(v(3)) + 0.0722 * channel(v(5));
-}
-
-function contrast(a: string, b: string): number {
-  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
-  return (hi + 0.05) / (lo + 0.05);
-}
-
-/**
- * Picks whichever ink actually contrasts better against this fill.
- *
- * A fixed luminance cut looks right until a fill lands near it, where both
- * inks are poor and the rule still confidently returns one. Comparing the two
- * candidates can't do worse than the better of them by definition.
- */
-function pickInk(fill: string): string {
-  return contrast(INK_DARK, fill) >= contrast(INK_LIGHT, fill) ? INK_DARK : INK_LIGHT;
-}
-
-const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 // ---------------------------------------------------------------------------
 // Analysis (theme-independent, once per cover)
@@ -272,7 +179,7 @@ function analyse(pixels: Uint8Array, width: number, height: number): Analysis {
  * against that ground. Hue survives untouched; a yellow cover on the light
  * theme ends up as a deep ochre rather than an invisible yellow.
  */
-function conditionAccent(hsl: Hsl, mode: 'light' | 'dark'): ArtworkAccent {
+function conditionAccent(hsl: Hsl, mode: ThemeMode): ArtworkAccent {
   const s = clamp(hsl.s * 1.1, 0.55, 0.9);
 
   if (mode === 'dark') {
@@ -287,7 +194,9 @@ function conditionAccent(hsl: Hsl, mode: 'light' | 'dark'): ArtworkAccent {
 
   let l = clamp(hsl.l, 0.36, 0.5);
   let hex = hslToHex({ h: hsl.h, s, l });
-  while (contrast(hex, '#FFFFFF') < 4 && l > 0.22) {
+  // Measured against the light theme's ground, not pure white: it is a few
+  // percent darker, and a colour that clears white can miss on it.
+  while (contrast(hex, '#ECEBE7') < 3.8 && l > 0.22) {
     l -= 0.02;
     hex = hslToHex({ h: hsl.h, s, l });
   }
@@ -306,7 +215,7 @@ interface Band {
  * readable and the blobs glow rather than glare. On white it is pastel, so
  * black text stays readable and the ground still reads as white.
  */
-const MESH_BANDS: Record<'light' | 'dark', Record<keyof ArtworkPalette, Band>> = {
+const MESH_BANDS: Record<ThemeMode, Record<keyof ArtworkPalette, Band>> = {
   dark: {
     vibrant: { s: [0.55, 0.9], l: [0.45, 0.6] },
     dominant: { s: [0.4, 0.8], l: [0.34, 0.5] },
@@ -341,7 +250,7 @@ function rotate(hsl: Hsl, turns: number): Hsl {
  * depth rather than as unrelated colours invented for it. A cover with no hue
  * at all gets greys — a black-and-white cover should not glow pink.
  */
-function conditionPalette(analysis: Analysis, mode: 'light' | 'dark'): ArtworkPalette {
+function conditionPalette(analysis: Analysis, mode: ThemeMode): ArtworkPalette {
   const bands = MESH_BANDS[mode];
   const anchor = analysis.vibrant ?? analysis.dominant ?? analysis.secondary ?? analysis.dark;
 
@@ -391,8 +300,8 @@ function remember<V>(map: Map<string, V>, key: string, value: V) {
 /** Theme-independent analysis per cover art id. Null means the cover failed. */
 const analysisCache = new Map<string, Analysis | null>();
 const inFlight = new Map<string, Promise<Analysis | null>>();
-/** Conditioned results per `${cacheKey}:${mode}`. */
-const colorsCache = new Map<string, ArtworkColors>();
+/** Conditioned results per cover art id. */
+const colorsCache = new Map<string, ArtworkColorSet>();
 
 async function analysisFor(url: string, cacheKey: string): Promise<Analysis | null> {
   if (analysisCache.has(cacheKey)) return analysisCache.get(cacheKey) ?? null;
@@ -424,44 +333,37 @@ async function analysisFor(url: string, cacheKey: string): Promise<Analysis | nu
   return work;
 }
 
+/** Conditioned colours for both luminance families, from one analysis. */
+export type ArtworkColorSet = Record<ThemeMode, ArtworkColors>;
+
 /**
- * Fetches the thumbnail and returns the accent and mesh palette for a theme,
- * or null if the cover could not be fetched or decoded.
+ * Fetches the thumbnail and returns the accent and mesh palette conditioned
+ * for both light and dark grounds, or null if the cover could not be
+ * fetched or decoded.
  *
- * Failure is always non-fatal: the caller falls back to the fixed accent and
- * palette, and a cover that won't decode is not worth an error anywhere.
+ * Both are produced every time because both are used at once: the app may
+ * be light while the player — always a dark, immersive face — needs the
+ * dark conditioning of the same cover. Conditioning is a few arithmetic
+ * passes over four colours; the decode is what costs, and it is cached.
+ *
+ * Failure is always non-fatal: the caller falls back to the preset accent
+ * and a palette built from it.
  */
 export async function extractArtworkColors(
   url: string,
   cacheKey: string,
-  mode: 'light' | 'dark',
-): Promise<ArtworkColors | null> {
-  const key = `${cacheKey}:${mode}`;
-  const cached = colorsCache.get(key);
+): Promise<ArtworkColorSet | null> {
+  const cached = colorsCache.get(cacheKey);
   if (cached) return cached;
 
   const analysis = await analysisFor(url, cacheKey);
   if (!analysis) return null;
 
-  const colors: ArtworkColors = {
+  const build = (mode: ThemeMode): ArtworkColors => ({
     accent: analysis.vibrant ? conditionAccent(analysis.vibrant, mode) : null,
     palette: conditionPalette(analysis, mode),
-  };
-  remember(colorsCache, key, colors);
+  });
+  const colors: ArtworkColorSet = { light: build('light'), dark: build('dark') };
+  remember(colorsCache, cacheKey, colors);
   return colors;
-}
-
-/**
- * The accent alone — the original entry point, kept for existing callers.
- *
- * Null when the cover has no vivid hue, as before; the palette for the same
- * cover is cached alongside, so asking for it afterwards costs nothing.
- */
-export async function extractAccent(
-  url: string,
-  cacheKey: string,
-  mode: 'light' | 'dark',
-): Promise<ArtworkAccent | null> {
-  const colors = await extractArtworkColors(url, cacheKey, mode);
-  return colors?.accent ?? null;
 }

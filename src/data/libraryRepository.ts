@@ -1,8 +1,10 @@
 import type { SubsonicClient } from '../api/client';
 import type {
   AlbumSummary,
+  ArtistInfo2,
   ArtistSummary,
   Child,
+  Genre,
 } from '../types/subsonic';
 import { cacheKeys, type CacheStore } from './cache';
 
@@ -160,6 +162,50 @@ export class LibraryRepository {
         return response.albumList2.album ?? [];
       },
       options,
+    );
+  }
+
+  /** Every genre with its counts, most songs first. */
+  async getGenres(options: ReadOptions = {}): Promise<Genre[]> {
+    return this.readThrough(
+      cacheKeys.genres(),
+      async () => {
+        const response = await this.client.getGenres();
+        return (response.genres.genre ?? [])
+          .filter((genre) => genre.value?.trim())
+          .sort((a, b) => (b.songCount ?? 0) - (a.songCount ?? 0));
+      },
+      options,
+    );
+  }
+
+  /** Up to 500 albums in a genre, alphabetically. */
+  async getAlbumsByGenre(genre: string, options: ReadOptions = {}): Promise<AlbumSummary[]> {
+    return this.readThrough(
+      cacheKeys.albumsByGenre(genre),
+      async () => {
+        const response = await this.client.getAlbumList2({ type: 'byGenre', genre, size: 500 });
+        return response.albumList2.album ?? [];
+      },
+      options,
+    );
+  }
+
+  /**
+   * Biography, images and similar artists.
+   *
+   * Comes from Navidrome's external agents (Last.fm, Spotify) and changes
+   * about never, so a week's TTL; and an artist the agents know nothing
+   * about answers with an empty object, which is cached like anything else.
+   */
+  async getArtistInfo(id: string, options: ReadOptions = {}): Promise<ArtistInfo2> {
+    return this.readThrough(
+      cacheKeys.artistInfo(id),
+      async () => {
+        const response = await this.client.getArtistInfo2(id);
+        return response.artistInfo2 ?? {};
+      },
+      { ttlMs: 7 * 24 * 60 * 60 * 1000, ...options },
     );
   }
 

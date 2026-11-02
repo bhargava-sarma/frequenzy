@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { StyleSheet, useWindowDimensions, View } from 'react-native';
+import { useEffect, useState, type ReactNode } from 'react';
+import { BackHandler, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   Easing,
@@ -7,43 +7,42 @@ import Animated, {
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
+  withSpring,
   withTiming,
 } from 'react-native-reanimated';
+import { StatusBar } from 'expo-status-bar';
 
+import { PanelDragContext } from './PanelHandle';
 import { NowPlayingScreen } from '../screens/NowPlayingScreen';
 import { LyricsScreen } from '../screens/LyricsScreen';
 import { QueueScreen } from '../screens/QueueScreen';
 import { usePlayerUiStore } from '../store/usePlayerUiStore';
+import { springs } from '../theme/motion';
 import { layout, motion } from '../theme/tokens';
+import { ImmersiveScope } from '../theme/ThemeProvider';
 
 /**
  * The full player, expanding out of whatever opened it.
  *
- * Sits above the navigator rather than inside it. As a stack screen the
+ * Sits above the navigator rather than inside it: as a stack screen the
  * player could only slide in from an edge, and Android's stack detaches the
- * screen underneath while it is up — which is what left a black rectangle
- * behind after a swipe-down. Nothing here unmounts, so there is nothing to
- * leave unpainted, and the transition is ours rather than the platform's.
+ * screen underneath while it is up. Nothing here unmounts the app, so there
+ * is nothing to leave unpainted, and the transition is ours.
  *
- * The expansion is a scale and a rise, not a morph of the container's bounds.
- * Animating width and height would relayout the whole player on every frame;
- * a transform runs on the UI thread and touches no layout at all. Starting it
- * small and centred on the dock reads as growing out of the dock, which is
- * the part that matters.
+ * It stays mounted until its collapse has finished — unmounting the moment
+ * `open` went false is what made it vanish rather than shrink back into the
+ * dock. The hardware back button closes a panel first, then the player,
+ * before navigation ever sees it.
+ *
+ * Everything inside is rendered against the immersive (dark) palette: over
+ * artwork colour, light type is the only thing that reads in every case.
  */
 
-/** How far the player must be dragged before releasing closes it. */
 const DISMISS_DISTANCE = 140;
-/** ...or how fast it must be moving, for a flick. */
 const DISMISS_VELOCITY = 900;
-
-/** Scale the player starts at. Small enough to read as growing, not as sliding. */
 const START_SCALE = 0.86;
 
-const TIMING = {
-  duration: motion.durationScreen,
-  easing: Easing.bezier(...motion.easing),
-};
+const CLOSE = { duration: motion.durationScreen, easing: Easing.bezier(...motion.easing) };
 
 export function PlayerOverlay() {
   const { height } = useWindowDimensions();
@@ -56,23 +55,36 @@ export function PlayerOverlay() {
   const lyricsOpen = usePlayerUiStore((state) => state.lyricsOpen);
   const closeLyrics = usePlayerUiStore((state) => state.closeLyrics);
 
-  /** 0 = collapsed into the origin, 1 = filling the screen. */
+  const [mounted, setMounted] = useState(open);
   const progress = useSharedValue(0);
-  /** Extra downward drag while dismissing, in points. */
   const dragY = useSharedValue(0);
 
-  // Where the player appears to come from — the centre of whatever was
-  // pressed, relative to the centre of the screen.
   const originOffset = origin ? origin.y + origin.height / 2 - height / 2 : height / 2;
 
   useEffect(() => {
     if (open) {
       dragY.value = 0;
-      progress.value = withTiming(1, TIMING);
-    } else {
-      progress.value = withTiming(0, TIMING);
+      setMounted(true);
+      progress.value = withSpring(1, springs.screen);
+      return;
     }
+    progress.value = withTiming(0, CLOSE, (finished) => {
+      if (finished) runOnJS(setMounted)(false);
+    });
   }, [open, progress, dragY]);
+
+  // Back closes the innermost thing first, and is consumed while open.
+  useEffect(() => {
+    if (!open) return;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      const ui = usePlayerUiStore.getState();
+      if (ui.lyricsOpen) ui.closeLyrics();
+      else if (ui.queueOpen) ui.closeQueue();
+      else ui.closePlayer();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [open]);
 
   const pan = Gesture.Pan()
     .activeOffsetY(24)
@@ -82,13 +94,10 @@ export function PlayerOverlay() {
     })
     .onEnd((event) => {
       if (dragY.value > DISMISS_DISTANCE || event.velocityY > DISMISS_VELOCITY) {
-        // Collapse back toward the dock rather than sliding off the bottom:
-        // it should look like it went back where it came from.
-        dragY.value = withTiming(0, TIMING);
         runOnJS(closePlayer)();
         return;
       }
-      dragY.value = withTiming(0, TIMING);
+      dragY.value = withSpring(0, springs.snappy);
     });
 
   const containerStyle = useAnimatedStyle(() => {
@@ -96,9 +105,8 @@ export function PlayerOverlay() {
     // a dismissal are the same motion at different speeds.
     const dragProgress = Math.max(0, 1 - dragY.value / (DISMISS_DISTANCE * 2.5));
     const p = progress.value * dragProgress;
-
     return {
-      opacity: interpolate(p, [0, 0.35, 1], [0, 1, 1]),
+      opacity: interpolate(p, [0, 0.3, 1], [0, 1, 1]),
       transform: [
         { translateY: interpolate(p, [0, 1], [originOffset, 0]) },
         { scale: interpolate(p, [0, 1], [START_SCALE, 1]) },
@@ -107,56 +115,64 @@ export function PlayerOverlay() {
     };
   });
 
-  // Unmounted when closed so the player's hooks — progress ticks, the sleep
-  // timer poll — are not running behind the library.
-  if (!open) return null;
+  if (!mounted) return null;
 
   return (
-    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-      <GestureDetector gesture={pan}>
+    <ImmersiveScope>
+      <View style={StyleSheet.absoluteFill} pointerEvents={open ? 'box-none' : 'none'}>
+        {open && <StatusBar style="light" />}
         <Animated.View style={[styles.container, containerStyle]}>
-          <NowPlayingScreen />
-          <SlidePanel open={queueOpen} onClose={closeQueue}>
+          {/* The swipe-down covers the player face only. Wrapped around the
+              panels too, it would turn every downward scroll of the queue
+              into closing the player. */}
+          <GestureDetector gesture={pan}>
+            <View style={StyleSheet.absoluteFill}>
+              <NowPlayingScreen />
+            </View>
+          </GestureDetector>
+          <SlidePanel open={queueOpen} onClose={closeQueue} testID="panel-queue">
             <QueueScreen />
           </SlidePanel>
-          <SlidePanel open={lyricsOpen} onClose={closeLyrics}>
+          <SlidePanel open={lyricsOpen} onClose={closeLyrics} testID="panel-lyrics">
             <LyricsScreen />
           </SlidePanel>
         </Animated.View>
-      </GestureDetector>
-    </View>
+      </View>
+    </ImmersiveScope>
   );
 }
 
 /**
- * A panel that slides up over the player and is dragged down to dismiss.
- *
- * Panels rather than screens, for the same reason the player itself is one:
- * they belong to what is playing, and pushing them onto a stack put them in
- * the same detach-the-screen-below trap that left a black rectangle behind.
- *
- * Shared by the queue and the lyrics because the dismissal is the interesting
- * part and it should behave identically in both — the drag thresholds, the
- * horizontal fail-out that keeps swipe-to-queue rows working underneath, and
- * the snap back when a drag is too short to count.
+ * A panel that slides up over the player and is dragged down by its header
+ * to dismiss. Mounted until its slide-out finishes, as the player is.
  */
 function SlidePanel({
   open,
   onClose,
   children,
+  testID,
 }: {
   open: boolean;
   onClose: () => void;
-  children: React.ReactNode;
+  children: ReactNode;
+  testID?: string;
 }) {
   const { height } = useWindowDimensions();
-
+  const [mounted, setMounted] = useState(open);
   const offset = useSharedValue(height);
   const dragY = useSharedValue(0);
 
   useEffect(() => {
-    offset.value = withTiming(open ? 0 : height, TIMING);
-    if (open) dragY.value = 0;
+    if (open) {
+      dragY.value = 0;
+      offset.value = height;
+      setMounted(true);
+      offset.value = withSpring(0, springs.screen);
+      return;
+    }
+    offset.value = withTiming(height, CLOSE, (finished) => {
+      if (finished) runOnJS(setMounted)(false);
+    });
   }, [open, height, offset, dragY]);
 
   const pan = Gesture.Pan()
@@ -168,22 +184,27 @@ function SlidePanel({
     .onEnd((event) => {
       if (dragY.value > DISMISS_DISTANCE || event.velocityY > DISMISS_VELOCITY) {
         runOnJS(onClose)();
-        dragY.value = 0;
         return;
       }
-      dragY.value = withTiming(0, TIMING);
+      dragY.value = withSpring(0, springs.snappy);
     });
 
   const style = useAnimatedStyle(() => ({
     transform: [{ translateY: offset.value + dragY.value }],
   }));
 
-  if (!open) return null;
+  if (!mounted) return null;
 
   return (
-    <GestureDetector gesture={pan}>
-      <Animated.View style={[StyleSheet.absoluteFill, style]}>{children}</Animated.View>
-    </GestureDetector>
+    <PanelDragContext.Provider value={pan}>
+      <Animated.View
+        testID={testID}
+        style={[StyleSheet.absoluteFill, style]}
+        pointerEvents={open ? 'auto' : 'none'}
+      >
+        {children}
+      </Animated.View>
+    </PanelDragContext.Provider>
   );
 }
 

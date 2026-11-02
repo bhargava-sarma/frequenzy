@@ -1,105 +1,125 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { AppState, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
+import TrackPlayer from '@rntp/player';
 
 import { ArtworkAccentBridge } from './src/components/ArtworkAccentBridge';
 import { GlassProvider } from './src/components/BlurTarget';
 import { PlayerOverlay } from './src/components/PlayerOverlay';
+import { ToastHost } from './src/components/ToastHost';
 import { RootNavigator } from './src/navigation/RootNavigator';
+import { clearSavedQueue, restoreQueue, startQueuePersistence } from './src/player/queuePersistence';
 import { startScrobbler } from './src/player/scrobbler';
+import { startStreamRepair } from './src/player/streamRepair';
 import { SetupScreen } from './src/screens/SetupScreen';
 import { usePlayerStore } from './src/store/usePlayerStore';
+import { usePlayerUiStore } from './src/store/usePlayerUiStore';
 import { useServerStore } from './src/store/useServerStore';
-import { ThemeProvider, useTheme, useThemeControls } from './src/theme/ThemeProvider';
+import { useSettingsStore } from './src/store/useSettingsStore';
+import { toast } from './src/store/useToastStore';
+import { ThemeProvider, useTheme } from './src/theme/ThemeProvider';
 
 /**
- * GestureHandlerRootView must wrap everything, and sit above SafeAreaProvider:
- * gestures registered outside it silently never fire on Android, which is the
- * kind of failure that looks like a broken swipe rather than missing setup.
+ * GestureHandlerRootView wraps everything and sits above SafeAreaProvider:
+ * gestures registered outside it silently never fire on Android.
  *
- * GlassProvider holds the named blur targets. On Android a glass surface can
- * only really blur content that sits inside a target it is not itself part
- * of, so the navigator registers one per tab and the floating dock — which
- * the tab navigator renders outside its screens — blurs whichever is showing.
+ * GlassProvider holds the named blur targets the dock blurs (BlurTarget.tsx).
  */
 export default function App() {
   return (
     <GestureHandlerRootView style={styles.fill}>
-      <ThemeProvider>
-        <GlassProvider>
-          <SafeAreaProvider>
+      <SafeAreaProvider>
+        <ThemeProvider>
+          <GlassProvider>
             <AppContent />
-          </SafeAreaProvider>
-        </GlassProvider>
-      </ThemeProvider>
+          </GlassProvider>
+        </ThemeProvider>
+      </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }
 
+/** If stored settings take longer than this to load, render with defaults. */
+const SETTINGS_GRACE_MS = 1500;
+
 function AppContent() {
   const color = useTheme();
-  // The status bar's glyphs are drawn by the OS, so they need telling which
-  // way to contrast — they don't inherit anything from the palette.
-  const { resolved } = useThemeControls();
   const status = useServerStore((state) => state.status);
   const hydrate = useServerStore((state) => state.hydrate);
   const refreshConnection = useServerStore((state) => state.refreshConnection);
+  const setOnSignOut = useServerStore((state) => state.setOnSignOut);
   const initPlayer = usePlayerStore((state) => state.init);
+  const settingsReady = useSettingsStore((state) => state.hydrated);
+  const [graceOver, setGraceOver] = useState(false);
 
   /**
-   * Manrope, in the five weights the type scale uses. Render nothing until
-   * they are resident — swapping the face mid-render reflows every title and
-   * reads as a flash of the wrong typeface.
-   *
-   * The files live in assets/ and are required directly rather than pulled
-   * from an @expo-google-fonts package. A new dependency would move the
-   * project fingerprint and force a native rebuild; an asset does not, so the
-   * typeface can ship as an over-the-air update like any other change.
+   * Space Grotesk, Space Mono and Doto. Nothing renders until they're
+   * resident — swapping faces mid-render reflows every title. Fonts are
+   * assets, not packages, so a type change ships over the air.
    */
   const [fontsLoaded] = useFonts({
-    Manrope_400Regular: require('./assets/fonts/Manrope_400Regular.ttf'),
-    Manrope_500Medium: require('./assets/fonts/Manrope_500Medium.ttf'),
-    Manrope_600SemiBold: require('./assets/fonts/Manrope_600SemiBold.ttf'),
-    Manrope_700Bold: require('./assets/fonts/Manrope_700Bold.ttf'),
-    Manrope_800ExtraBold: require('./assets/fonts/Manrope_800ExtraBold.ttf'),
+    SpaceGrotesk_400Regular: require('./assets/fonts/SpaceGrotesk_400Regular.ttf'),
+    SpaceGrotesk_500Medium: require('./assets/fonts/SpaceGrotesk_500Medium.ttf'),
+    SpaceGrotesk_600SemiBold: require('./assets/fonts/SpaceGrotesk_600SemiBold.ttf'),
+    SpaceGrotesk_700Bold: require('./assets/fonts/SpaceGrotesk_700Bold.ttf'),
+    SpaceMono_400Regular: require('./assets/fonts/SpaceMono_400Regular.ttf'),
+    SpaceMono_700Bold: require('./assets/fonts/SpaceMono_700Bold.ttf'),
+    Doto_900Black: require('./assets/fonts/Doto_900Black.ttf'),
   });
 
   useEffect(() => {
     void hydrate();
   }, [hydrate]);
 
-  /**
-   * Set the player up as soon as the app is usable, not on the first play.
-   *
-   * setupPlayer kicks off an asynchronous MediaController bind, and commands
-   * issued before it completes are silently discarded by the native module.
-   * Doing this at launch gives the bind the seconds it needs while the user is
-   * still browsing, so the first tap on Play actually plays.
-   */
+  // Settings normally load in a few milliseconds; this only guards against
+  // storage that never answers, which would otherwise leave a blank screen.
   useEffect(() => {
-    if (status === 'ready') initPlayer();
-  }, [status, initPlayer]);
+    const timer = setTimeout(() => setGraceOver(true), SETTINGS_GRACE_MS);
+    return () => clearTimeout(timer);
+  }, []);
 
   /**
-   * Report plays to Navidrome for as long as the app is alive.
-   *
-   * This lives here rather than in a screen because playback outlives every
-   * screen — scrobbling from the Now Playing screen would record nothing
-   * while the phone is locked, which is most of the listening.
+   * Player setup at launch rather than on first play: the MediaController
+   * binds asynchronously and commands sent before it lands are dropped, so
+   * starting early gives it the seconds it needs while you browse. Then the
+   * last session's queue is put back, paused, if nothing is playing.
    */
   useEffect(() => {
     if (status !== 'ready') return;
-    return startScrobbler(() => useServerStore.getState().client);
+    initPlayer();
+    void restoreQueue().catch(() => {});
+  }, [status, initPlayer]);
+
+  // Plays are reported for as long as the app lives, not while a screen does.
+  useEffect(() => {
+    if (status !== 'ready') return;
+    const stopScrobbler = startScrobbler(() => useServerStore.getState().client);
+    const stopPersistence = startQueuePersistence();
+    const stopRepair = startStreamRepair((message) =>
+      toast.error('Playback stopped', { detail: message }),
+    );
+    return () => {
+      stopScrobbler();
+      stopPersistence();
+      stopRepair();
+    };
   }, [status]);
 
-  /**
-   * Re-probe on resume. The phone may have moved between home Wi-Fi and
-   * cellular while backgrounded, which would leave the cached base URL
-   * pointing at an address that no longer resolves.
-   */
+  // Signing out drops the queue too: its tracks belong to that server.
+  useEffect(() => {
+    setOnSignOut(async () => {
+      usePlayerUiStore.getState().closePlayer();
+      if (usePlayerStore.getState().ready) usePlayerStore.getState().clearQueue();
+      else TrackPlayer.clear();
+      await clearSavedQueue();
+    });
+    return () => setOnSignOut(null);
+  }, [setOnSignOut]);
+
+  // Re-probe on resume: the phone may have moved between Wi-Fi and cellular.
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (next) => {
       if (next === 'active') refreshConnection();
@@ -107,33 +127,33 @@ function AppContent() {
     return () => subscription.remove();
   }, [refreshConnection]);
 
-  if (!fontsLoaded || status === 'hydrating') {
+  const statusBarStyle = color.mode === 'dark' ? 'light' : 'dark';
+
+  if (!fontsLoaded || status === 'hydrating' || (!settingsReady && !graceOver)) {
     return (
-      <View style={[styles.blank, { backgroundColor: color.paper }]}>
-        <StatusBar style={resolved === "dark" ? "light" : "dark"} />
+      <View style={[styles.fill, { backgroundColor: color.background }]}>
+        <StatusBar style={statusBarStyle} />
       </View>
     );
   }
 
   return (
-    <>
-      <StatusBar style={resolved === "dark" ? "light" : "dark"} />
+    <View style={[styles.fill, { backgroundColor: color.background }]}>
+      <StatusBar style={statusBarStyle} />
       {status === 'needsSetup' ? (
         <SetupScreen />
       ) : (
         <>
-          {/* Renders nothing; keeps the accent in step with what's playing. */}
           <ArtworkAccentBridge />
           <RootNavigator />
-          {/* Above the navigator, so opening the player detaches nothing. */}
           <PlayerOverlay />
         </>
       )}
-    </>
+      <ToastHost />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   fill: { flex: 1 },
-  blank: { flex: 1 },
 });

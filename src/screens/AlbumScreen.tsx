@@ -1,230 +1,282 @@
 import { useCallback, useDeferredValue, useMemo, useState } from 'react';
-import { FlatList, StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { StyleSheet, View, useWindowDimensions } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
-import { useActiveMediaItem } from '@rntp/player';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useActiveMediaItem, useIsPlaying } from '@rntp/player';
 
-import { SearchField } from '../components/SearchField';
-import { TrackRow } from '../components/TrackRow';
-import { TrackActionsSheet } from '../components/TrackActionsSheet';
-import { AmbientBackground } from '../components/AmbientBackground';
-import { ExpandFrom } from '../components/ExpandFrom';
-import { ArtworkWell } from '../components/ArtworkWell';
-import { Button, ButtonRow } from '../components/Button';
-import { DOCK_CLEARANCE } from '../components/TabBar';
-import { ScreenHeader } from '../components/ScreenHeader';
-import { SectionHeader } from '../components/SectionHeader';
+import { AlbumActionsSheet } from '../components/AlbumActionsSheet';
+import { useCollapsingHeader } from '../components/CollapsingHeader';
+import { DetailHero, HeroBackdrop } from '../components/DetailHero';
+import { IconButton } from '../components/IconButton';
+import {
+  IconArrowsShuffle,
+  IconDots,
+  IconHeart,
+  IconHeartFilled,
+  IconListDetails,
+  IconPlayerPlayFilled,
+} from '../components/icons';
+import { Keycap, KeyRow } from '../components/Keycap';
+import { Label } from '../components/Label';
+import { DetailScaffold } from '../components/Scaffold';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenState';
-import { extrasOf } from '../player/trackMapping';
+import { SearchField } from '../components/SearchField';
+import { Shelf } from '../components/Shelf';
+import { DOCK_CLEARANCE } from '../components/TabBar';
+import { TrackActionsSheet } from '../components/TrackActionsSheet';
+import { TrackRow } from '../components/TrackRow';
 import { useArtwork } from '../hooks/useArtwork';
-import { HEAVY_LIST_PROPS, trackItemLayout } from '../hooks/usePagedList';
 import { useLibraryData } from '../hooks/useLibraryData';
-import type { LibraryStackParamList } from '../navigation/types';
+import type { AnyStackParamList } from '../navigation/types';
+import { formatPlate, extrasOf } from '../player/trackMapping';
+import { useFavoritesStore, useStarred } from '../store/useFavoritesStore';
 import { usePlayerStore } from '../store/usePlayerStore';
-import { useServerStore } from '../store/useServerStore';
-import { layout, space, type } from '../theme/tokens';
-import type { Palette } from '../theme/tokens';
-import { useThemedStyles } from '../theme/ThemeProvider';
-import type { Child } from '../types/subsonic';
-import { formatDuration, pluralize } from '../utils/time';
+import { errorMessage, toast } from '../store/useToastStore';
+import { layout, space } from '../theme/tokens';
+import type { AlbumSummary, Child } from '../types/subsonic';
+import { formatLength, pluralize } from '../utils/time';
 
-/**
- * Below this many rows the list is short enough to read at a glance, and a
- * filter field would cost more space than the scrolling it saves.
- */
-const MIN_ROWS_FOR_FILTER = 8;
+/** Below this, a filter field costs more space than the scrolling it saves. */
+const MIN_ROWS_FOR_FILTER = 14;
 
-/** Album detail — artwork, actions, and the track list. */
+type Row = { kind: 'disc'; key: string; disc: number } | { kind: 'track'; key: string; song: Child; index: number };
+
 export function AlbumScreen() {
-  const styles = useThemedStyles(makeStyles);
-  const navigation = useNavigation();
-  const route = useRoute<RouteProp<LibraryStackParamList, 'Album'>>();
-  const insets = useSafeAreaInsets();
-  const artworkUrl = useArtwork();
-
+  const navigation = useNavigation<NativeStackNavigationProp<AnyStackParamList>>();
+  const route = useRoute<RouteProp<AnyStackParamList, 'Album'>>();
   const { albumId, albumName } = route.params;
+  const artworkUrl = useArtwork();
+  const { width } = useWindowDimensions();
+  const { scrollY, onScroll, progress } = useCollapsingHeader();
 
   const playNow = usePlayerStore((state) => state.playNow);
   const shufflePlay = usePlayerStore((state) => state.shufflePlay);
   const addToQueue = usePlayerStore((state) => state.addToQueue);
-  const client = useServerStore((state) => state.client);
+  const setStarred = useFavoritesStore((state) => state.setStarred);
   const activeItem = useActiveMediaItem();
+  const isPlaying = useIsPlaying();
   const activeId = extrasOf(activeItem)?.subsonicId;
 
   const { data, loading, error, refresh } = useLibraryData(
     (library, forceRefresh) => library.getAlbum(albumId, { forceRefresh }),
     [albumId],
   );
-
-  const songs = data?.songs ?? [];
   const album = data?.album;
-  const title = album?.name ?? albumName ?? 'Album';
+  const songs = useMemo(() => data?.songs ?? [], [data]);
+  const starred = useStarred(albumId, Boolean(album?.starred));
 
-  const totalDuration = songs.reduce((sum, song) => sum + (song.duration ?? 0), 0);
-
-  /** Non-null while the actions sheet is open, holding the track it acts on. */
-  const [actionTarget, setActionTarget] = useState<Child | null>(null);
+  const artistId = album?.artistId;
+  const more = useLibraryData(
+    (library) => (artistId ? library.getArtist(artistId).then((detail) => detail.albums) : Promise.resolve([])),
+    [artistId],
+  );
+  const moreAlbums = useMemo(
+    () => (more.data ?? []).filter((other) => other.id !== albumId),
+    [more.data, albumId],
+  );
 
   const [filter, setFilter] = useState('');
-
-  /**
-   * Filters on title and artist together. On a compilation the thing you
-   * remember is often who sang it rather than what it was called.
-   */
-  /**
-   * Filtering is deferred, so typing never waits on the list.
-   *
-   * React keeps the field painting at the new value while the filtered rows
-   * are rendered at lower priority, and abandons that work if another
-   * keystroke lands first. Debouncing would also stop the stutter, but it
-   * does so by making every search feel late; this only yields when it has to.
-   */
-  const deferredFilter = useDeferredValue(filter);
+  const deferredFilter = useDeferredValue(filter.trim().toLowerCase());
+  const [trackTarget, setTrackTarget] = useState<Child | null>(null);
+  const [albumTarget, setAlbumTarget] = useState<AlbumSummary | null>(null);
 
   const visible = useMemo(() => {
-    const needle = deferredFilter.trim().toLowerCase();
-    if (!needle) return songs;
+    if (!deferredFilter) return songs;
     return songs.filter(
       (song) =>
-        song.title.toLowerCase().includes(needle) ||
-        (song.artist ?? '').toLowerCase().includes(needle),
+        song.title.toLowerCase().includes(deferredFilter) ||
+        (song.artist ?? '').toLowerCase().includes(deferredFilter),
     );
   }, [songs, deferredFilter]);
 
-  const filtering = deferredFilter.trim().length > 0;
+  // Disc headings only when the album actually has more than one disc.
+  const multiDisc = useMemo(() => new Set(songs.map((s) => s.discNumber ?? 1)).size > 1, [songs]);
+  const rows = useMemo<Row[]>(() => {
+    const out: Row[] = [];
+    let disc = -1;
+    visible.forEach((song, index) => {
+      const d = song.discNumber ?? 1;
+      if (multiDisc && d !== disc) {
+        disc = d;
+        out.push({ kind: 'disc', key: `disc-${d}`, disc: d });
+      }
+      out.push({ kind: 'track', key: `${song.id}-${index}`, song, index });
+    });
+    return out;
+  }, [visible, multiDisc]);
 
-  // Stable identities, so a row only re-renders when its own data changes.
+  const source = album ? { kind: 'album' as const, label: album.name } : undefined;
+
   const handlePlay = useCallback(
-    (index: number) => void playNow(visible, index),
-    [playNow, visible],
+    (index: number) =>
+      void playNow(visible, index, source).catch((e) => toast.error("Couldn't play", { detail: errorMessage(e) })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [playNow, visible, album?.name],
   );
-  const handleQueue = useCallback((song: Child) => void addToQueue([song]), [addToQueue]);
-  const handleOptions = useCallback((song: Child) => setActionTarget(song), []);
+  const handleQueue = useCallback(
+    (song: Child) =>
+      void addToQueue([song])
+        .then(() => toast.show('Added to queue', { icon: 'queue', detail: song.title }))
+        .catch((e) => toast.error("Couldn't queue", { detail: errorMessage(e) })),
+    [addToQueue],
+  );
 
-  const handleStar = useCallback(
-    async (song: Child) => {
-      if (!client) return;
-      // Written straight back to Navidrome so favourites are server-side truth
-      // rather than local state. The cached album still holds the old value,
-      // so drop it — otherwise navigating away and back shows the heart snap
-      // back.
-      if (song.starred) await client.unstar({ id: song.id });
-      else await client.star({ id: song.id });
-      refresh();
-    },
-    [client, refresh],
+  const total = songs.reduce((sum, song) => sum + (song.duration ?? 0), 0);
+  const plate = songs[0] ? formatPlate(songs[0].suffix, songs[0].bitDepth, songs[0].samplingRate) : null;
+  const genre = album?.genres?.[0]?.name ?? album?.genre;
+  const title = album?.name ?? albumName ?? 'Album';
+  const tileSize = Math.round((width - layout.screenPadding * 2 - space[3] * 2) / 2.35);
+
+  const hero = (
+    <View>
+      <DetailHero
+        artworkUri={artworkUrl(album?.coverArt, 600)}
+        eyebrow={[album?.isCompilation ? 'Compilation' : 'Album', album?.year].filter(Boolean).join(' · ')}
+        title={title}
+        subtitle={album?.artist}
+        onSubtitlePress={
+          album?.artistId
+            ? () => navigation.navigate('Artist', { artistId: album.artistId as string, artistName: album.artist })
+            : undefined
+        }
+        meta={
+          songs.length > 0
+            ? [pluralize(songs.length, 'track'), formatLength(total), plate, genre].filter(Boolean).join('  ·  ')
+            : undefined
+        }
+        actions={
+          songs.length > 0 ? (
+            <KeyRow>
+              <Keycap
+                icon={IconPlayerPlayFilled}
+                iconFilled
+                label="Play"
+                variant="primary"
+                flex
+                onPress={() => void playNow(songs, 0, source)}
+              />
+              <Keycap icon={IconArrowsShuffle} label="Shuffle" flex onPress={() => void shufflePlay(songs, source)} />
+              <Keycap
+                icon={IconListDetails}
+                square
+                accessibilityLabel="Add album to queue"
+                onPress={() =>
+                  void addToQueue(songs).then(() =>
+                    toast.show('Added to queue', { icon: 'queue', detail: `${title} · ${pluralize(songs.length, 'track')}` }),
+                  )
+                }
+              />
+            </KeyRow>
+          ) : undefined
+        }
+      />
+      {songs.length > MIN_ROWS_FOR_FILTER && (
+        <View style={styles.filter}>
+          <SearchField value={filter} onChangeText={setFilter} placeholder="Find in album" />
+        </View>
+      )}
+    </View>
   );
+
+  const footer =
+    moreAlbums.length > 0 ? (
+      <Shelf
+        title={`More by ${album?.artist ?? 'this artist'}`}
+        albums={moreAlbums}
+        tileSize={tileSize}
+        artworkUri={artworkUrl}
+        showYear
+        onSelect={(other) => navigation.push('Album', { albumId: other.id, albumName: other.name })}
+        onLongPress={setAlbumTarget}
+      />
+    ) : null;
 
   return (
-    <ExpandFrom>
-      <View style={[styles.root, { paddingTop: insets.top }]}>
-        <AmbientBackground />
-
-        <ScreenHeader title={title} onBack={() => navigation.goBack()} />
-
-        {songs.length > MIN_ROWS_FOR_FILTER && (
-          <SearchField value={filter} onChangeText={setFilter} placeholder="Find in album" />
-        )}
-
-        <FlatList
-          data={visible}
-          {...HEAVY_LIST_PROPS}
-          keyExtractor={(song) => song.id}
-          ListHeaderComponent={
-            album ? (
-              <View>
-                <View style={styles.hero}>
-                  <ArtworkWell
-                    uri={artworkUrl(album.coverArt, 600)}
-                    size={180}
-                    surface="paper"
-                  />
-                  <Text style={styles.albumTitle} numberOfLines={2}>
-                    {album.name}
-                  </Text>
-                  <Text style={styles.albumMeta} numberOfLines={1}>
-                    {[album.artist, album.year ? String(album.year) : null]
-                      .filter(Boolean)
-                      .join(' · ')}
-                  </Text>
-
-                  {/* Play and Shuffle both replace the queue with the whole
-                    album — that's the collection you asked to hear. Anything
-                    added by hand keeps its place ahead of what's left. */}
-                  <View style={styles.actions}>
-                    <ButtonRow>
-                      <Button
-                        label="Play"
-                        variant="primary"
-                        onPress={() => void playNow(songs)}
-                      />
-                      <Button label="Shuffle" onPress={() => void shufflePlay(songs)} />
-                    </ButtonRow>
-                  </View>
-                </View>
-
-                <SectionHeader
-                  title="Tracks"
-                  count={`${pluralize(songs.length, 'track')} · ${formatDuration(totalDuration)}`}
-                />
-              </View>
-            ) : null
-          }
-          ListEmptyComponent={
-            loading ? (
-              <LoadingState />
-            ) : error ? (
-              <ErrorState message={error} onRetry={refresh} />
-            ) : (
-              <EmptyState label={filtering ? 'No matches' : 'No tracks'} />
-            )
-          }
-          contentContainerStyle={visible.length ? styles.listContent : styles.emptyContainer}
-          getItemLayout={trackItemLayout}
-          renderItem={({ item, index }) => (
+    <DetailScaffold
+      title={title}
+      progress={progress}
+      onBack={() => navigation.goBack()}
+      backdrop={<HeroBackdrop uri={artworkUrl(album?.coverArt, 200)} scrollY={scrollY} />}
+      trailing={
+        <>
+          <IconButton
+            icon={starred ? IconHeartFilled : IconHeart}
+            accessibilityLabel={starred ? 'Unlike album' : 'Like album'}
+            active={starred}
+            size={38}
+            iconSize={19}
+            onPress={() => void setStarred({ id: albumId, kind: 'album', title }, !starred)}
+          />
+          <IconButton
+            icon={IconDots}
+            accessibilityLabel="Album options"
+            size={38}
+            iconSize={20}
+            disabled={!album}
+            onPress={() => album && setAlbumTarget(album)}
+          />
+        </>
+      }
+    >
+      <Animated.FlatList
+        data={rows}
+        keyExtractor={(row) => row.key}
+        onScroll={onScroll}
+        scrollEventThrottle={16}
+        ListHeaderComponent={hero}
+        ListFooterComponent={footer}
+        ListEmptyComponent={
+          loading ? (
+            <LoadingState />
+          ) : error ? (
+            <ErrorState message={error} onRetry={refresh} />
+          ) : (
+            <EmptyState label={deferredFilter ? 'No matches' : 'No tracks'} />
+          )
+        }
+        renderItem={({ item }) =>
+          item.kind === 'disc' ? (
+            <View style={styles.disc}>
+              <Label tone="tertiary" bold>{`Disc ${item.disc}`}</Label>
+            </View>
+          ) : (
             <TrackRow
-              song={item}
-              index={index}
-              active={item.id === activeId}
-              last={index === visible.length - 1}
-              showArtwork={false}
+              song={item.song}
+              index={item.index}
+              active={item.song.id === activeId}
+              playing={isPlaying}
+              last={item.index === visible.length - 1}
+              leading="index"
+              // The album's own artist on every row is noise; only a guest
+              // or a compilation's artist is worth a second line.
+              subtitle={item.song.artist && item.song.artist !== album?.artist ? 'artist' : 'none'}
               onPlay={handlePlay}
-              onOptions={handleOptions}
+              onMore={setTrackTarget}
               onQueue={handleQueue}
-              onStar={handleStar}
             />
-          )}
-        />
+          )
+        }
+        contentContainerStyle={styles.list}
+        initialNumToRender={16}
+        windowSize={11}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+      />
 
-        <TrackActionsSheet
-          visible={actionTarget != null}
-          onClose={() => setActionTarget(null)}
-          song={actionTarget}
-          hide={['album']}
-          onStarChanged={refresh}
-        />
-      </View>
-    </ExpandFrom>
+      <TrackActionsSheet
+        visible={trackTarget != null}
+        onClose={() => setTrackTarget(null)}
+        song={trackTarget}
+        hide={['album']}
+      />
+      <AlbumActionsSheet visible={albumTarget != null} onClose={() => setAlbumTarget(null)} album={albumTarget} />
+    </DetailScaffold>
   );
 }
 
-const makeStyles = (color: Palette) =>
-  StyleSheet.create({
-    root: { flex: 1, backgroundColor: color.paper },
-    listContent: { paddingBottom: DOCK_CLEARANCE },
-    emptyContainer: { flexGrow: 1 },
-
-    hero: {
-      alignItems: 'center',
-      paddingTop: space[5],
-      paddingHorizontal: layout.screenPadding,
-    },
-    albumTitle: {
-      ...type.display,
-      color: color.textPrimary,
-      marginTop: space[4],
-      textAlign: 'center',
-    },
-    albumMeta: { ...type.meta, color: color.textSecondary, marginTop: space[1] },
-    actions: { marginTop: space[5], alignSelf: 'stretch', alignItems: 'center' },
-  });
+const styles = StyleSheet.create({
+  list: { paddingBottom: DOCK_CLEARANCE, flexGrow: 1 },
+  filter: { marginTop: space[2] },
+  disc: { paddingHorizontal: layout.screenPadding, paddingTop: space[5], paddingBottom: space[2] },
+});

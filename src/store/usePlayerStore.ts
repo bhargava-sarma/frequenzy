@@ -1,4 +1,4 @@
-import TrackPlayer, { Event } from '@rntp/player';
+import TrackPlayer, { Event, RepeatMode } from '@rntp/player';
 import { create } from 'zustand';
 
 import { setupPlayer } from '../player/setup';
@@ -9,83 +9,105 @@ import { useServerStore } from './useServerStore';
 /**
  * Queue operations.
  *
- * The player owns the authoritative queue — duplicating it here would mean two
- * sources of truth that drift the moment playback advances on its own. This
- * store holds only what the player can't: initialization state, the size of
- * the hand-picked region at the front of the queue, and the actions that
- * translate Subsonic songs into player calls.
+ * The player owns the authoritative queue — duplicating it here would mean
+ * two sources of truth that drift the moment playback advances on its own.
+ * This store holds only what the player can't: initialisation state, the
+ * size of the hand-picked region at the front of the queue, what the queue
+ * is playing *from*, and the actions that translate Subsonic songs into
+ * player calls.
  *
  * Read live playback state through the player's own hooks (useActiveMediaItem,
  * useIsPlaying, useProgress) rather than mirroring it here.
  *
  * THE TWO-TIER QUEUE
  *
- * Pressing Play on an album is a different intent from adding one track to the
- * queue, and a single flat list can't tell them apart — an added track landing
- * at the end of a 14-track album would not be heard for an hour. So the queue
- * has two regions, as Apple Music does:
- *
  *   [ now playing ][ playing next — hand-picked ][ the rest of the context ]
  *
- * Adds insert at the end of the hand-picked region, so they play in the order
- * you added them and always before the remainder of whatever album or playlist
- * is running. Pressing Play replaces everything and empties the region.
+ * Adds insert at the end of the hand-picked region, so they play in the
+ * order you added them and always before the remainder of whatever album or
+ * playlist is running. Pressing Play replaces everything and empties it.
  */
+
+export type RepeatSetting = 'off' | 'all' | 'one';
+
+export type SourceKind =
+  | 'album'
+  | 'playlist'
+  | 'liked'
+  | 'artist'
+  | 'genre'
+  | 'radio'
+  | 'mix'
+  | 'search'
+  | 'history'
+  | 'restored';
+
+/** What the queue was started from, for the player's "Playing from" line. */
+export interface QueueSource {
+  kind: SourceKind;
+  label: string;
+}
 
 interface PlayerStore {
   ready: boolean;
-  /** Set when initialization fails, so UI can explain rather than hang. */
   error: string | null;
-  /**
-   * How many hand-picked tracks sit directly after the active one. Drives the
-   * "Playing next" grouping on the queue screen.
-   */
+  /** How many hand-picked tracks sit directly after the active one. */
   priorityCount: number;
   /**
-   * Whether the queue is shuffled.
-   *
-   * Lives here rather than in the Now Playing screen because shuffle is
-   * started from albums, playlists and artists too — held locally, the
-   * player's own shuffle indicator stayed dark after pressing Shuffle
-   * anywhere else, which is exactly what it is there to report.
+   * Whether the queue is shuffled. Here rather than in the player screen
+   * because shuffle starts from albums, playlists and artists too.
    */
   shuffled: boolean;
+  /**
+   * Repeat, mirrored from the player. The player screen unmounts when it
+   * closes; held there, the control came back reading Off while the player
+   * was still repeating.
+   */
+  repeat: RepeatSetting;
+  speed: number;
+  source: QueueSource | null;
 
   init: () => void;
 
   /** Replaces the queue and starts playing at `startIndex`. */
-  playNow: (songs: Child[], startIndex?: number) => Promise<void>;
+  playNow: (songs: Child[], startIndex?: number, source?: QueueSource) => Promise<void>;
   /** Replaces the queue with a shuffled copy and plays from the top. */
-  shufflePlay: (songs: Child[]) => Promise<void>;
-  /**
-   * Reshuffles what's left, or restores the running order.
-   *
-   * Turning shuffle on always produces a new order, so toggling it off and on
-   * again gives a different sequence rather than the one you just rejected.
-   */
+  shufflePlay: (songs: Child[], source?: QueueSource) => Promise<void>;
+  /** Reshuffles what's left, or restores the running order. */
   setShuffled: (shuffled: boolean) => Promise<void>;
   /** Inserts at the front of the hand-picked region — plays next. */
   playNext: (songs: Child[]) => Promise<void>;
-  /**
-   * Plays one track immediately without disturbing the rest of the queue.
-   *
-   * For picking a single track out of search or a list: replacing the queue
-   * there threw away whatever was already lined up, which is never what
-   * tapping one result means.
-   */
+  /** Plays one track immediately without disturbing the rest of the queue. */
   playTrackNow: (song: Child) => Promise<void>;
   /** Inserts at the end of the hand-picked region. */
   addToQueue: (songs: Child[]) => Promise<void>;
+  /**
+   * Loads a queue without starting it — restoring the last session.
+   *
+   * Sent once, never re-fired: if the controller hasn't bound yet the send is
+   * dropped and this throws, which is the safe failure. A re-send landing
+   * after the bind could replace a queue the service is still playing.
+   */
+  loadPaused: (
+    songs: Child[],
+    startIndex: number,
+    position: number,
+    source?: QueueSource | null,
+  ) => Promise<void>;
 
   removeFromQueue: (index: number) => void;
-  moveInQueue: (fromIndex: number, toIndex: number) => void;
+  /** Moves an upcoming track to play straight after the current one. */
+  moveToNext: (index: number) => void;
+  /** Moves an upcoming track one slot earlier or later. */
+  nudge: (index: number, direction: -1 | 1) => void;
+  /** Drops everything after the current track. */
+  clearUpcoming: () => void;
   clearQueue: () => void;
+
+  cycleRepeat: () => void;
+  setSpeed: (speed: number) => void;
 }
 
-/**
- * Media items can only be built once a connection exists, since the stream URL
- * embeds whichever base address is currently live.
- */
 async function buildItems(songs: Child[]) {
   const client = useServerStore.getState().client;
   if (!client) throw new Error('Not connected to a server');
@@ -102,22 +124,18 @@ const REFIRE_AFTER_MS = 750;
 /**
  * Applies a queue change, then waits for the player to confirm it.
  *
- * Writes and reads do not travel the same path. `addMediaItems` and friends
- * return void, and React Native dispatches void TurboModule methods onto the
- * native method-call queue; `getQueue` is a blocking synchronous method, which
- * runs inline on the JS thread. So a read taken straight after a write sees
- * the queue as it was *before* the write — every time, not intermittently.
+ * Writes and reads do not travel the same path: `addMediaItems` and friends
+ * are void TurboModule methods dispatched onto the native method queue,
+ * while `getQueue` is synchronous and runs inline on the JS thread. A read
+ * taken straight after a write sees the queue as it was *before* the write —
+ * every time — so this fires the mutation once and polls only the
+ * confirmation. (Re-running the mutation per failed check once queued a
+ * swiped track twice.)
  *
- * That is why this fires the mutation once and polls only the confirmation.
- * The earlier version re-ran the mutation on each failed check, so its first
- * check always failed and one swipe reliably queued a track twice.
- *
- * `refire` re-sends once after a grace period, and is only for replace-style
- * changes: setMediaItems overwrites the queue, so a second send cannot
- * duplicate anything. It exists because commands issued before the
- * MediaController has bound are dropped silently by the native module — a
- * `mc?.send(...)` null-safe call with no queueing — which is what made the
- * very first play need two taps. Never set it for an append.
+ * `refire` re-sends once after a grace period, only for replace-style
+ * changes: commands issued before the MediaController binds are dropped
+ * silently, which is what made the very first play need two taps. Never set
+ * it for an append.
  */
 async function applyQueueChange(
   mutate: () => void,
@@ -133,28 +151,21 @@ async function applyQueueChange(
     if (confirm()) return;
 
     const elapsed = Date.now() - started;
-    if (elapsed >= timeoutMs) {
-      throw new Error('The player did not accept the change in time.');
-    }
+    if (elapsed >= timeoutMs) throw new Error('The player did not accept the change in time.');
     if (refire && !refired && elapsed >= REFIRE_AFTER_MS) {
       refired = true;
       mutate();
     }
-
     await sleep(CONFIRM_INTERVAL_MS);
   }
 }
 
 /**
- * Fisher-Yates on a copy.
- *
- * Shuffling the list here rather than using the player's own shuffle mode
- * keeps the queue you see and the queue that plays identical. The native
- * shuffle reorders playback behind an unchanged queue, which would make the
- * hand-picked region point at the wrong tracks and the queue screen lie about
- * what comes next.
+ * Fisher-Yates on a copy. Shuffling the list rather than using the player's
+ * own shuffle mode keeps the queue you see and the queue that plays the
+ * same; native shuffle reorders playback behind an unchanged queue.
  */
-function shuffleList<T>(items: T[]): T[] {
+export function shuffleList<T>(items: T[]): T[] {
   const out = [...items];
   for (let i = out.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -163,13 +174,17 @@ function shuffleList<T>(items: T[]): T[] {
   return out;
 }
 
+const toSetting = (mode: RepeatMode): RepeatSetting =>
+  mode === RepeatMode.One ? 'one' : mode === RepeatMode.All ? 'all' : 'off';
+
+const toMode = (setting: RepeatSetting): RepeatMode =>
+  setting === 'one' ? RepeatMode.One : setting === 'all' ? RepeatMode.All : RepeatMode.Off;
+
 export const usePlayerStore = create<PlayerStore>((set, get) => {
   /**
-   * Shrinks the hand-picked region as playback moves into it.
-   *
-   * Tracked by how far the active index moved rather than by matching ids,
-   * because the same track can legitimately appear in the queue more than
-   * once and ids would not tell those copies apart.
+   * Shrinks the hand-picked region as playback moves into it. Tracked by how
+   * far the active index moved rather than by ids, because the same track
+   * can legitimately appear in the queue more than once.
    */
   let lastActiveIndex = -1;
   let subscribed = false;
@@ -181,7 +196,6 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
     TrackPlayer.addEventListener(Event.MediaItemTransition, ({ index }) => {
       const advancedBy = index - lastActiveIndex;
       lastActiveIndex = index;
-
       if (advancedBy > 0) {
         set({ priorityCount: Math.max(0, get().priorityCount - advancedBy) });
       }
@@ -196,83 +210,93 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
   }
 
   /**
-   * The collection currently playing, in the order it was given.
-   *
-   * Kept so turning shuffle off can restore the running order — the player's
-   * queue only holds whatever order is playing now, and an album put back in
-   * a random order is not "shuffle off".
+   * The collection currently playing, in the order it was given — what
+   * turning shuffle off has to restore.
    */
-  let source: Child[] = [];
+  let original: Child[] = [];
 
   return {
     ready: false,
     error: null,
     priorityCount: 0,
     shuffled: false,
+    repeat: 'off',
+    speed: 1,
+    source: null,
 
     init: () => {
       if (get().ready) return;
       try {
         setupPlayer();
         watchQueuePosition();
-        set({ ready: true, error: null });
+        // The native player outlives the JS runtime (music keeps going when
+        // the app is swiped away), so whatever it is already doing is truth.
+        let repeat: RepeatSetting = 'off';
+        let speed = 1;
+        try {
+          repeat = toSetting(TrackPlayer.getRepeatMode());
+          speed = TrackPlayer.getPlaybackSpeed() || 1;
+          lastActiveIndex = TrackPlayer.getActiveMediaItemIndex() ?? -1;
+        } catch {
+          // Reads before the controller binds can fail; defaults are right then.
+        }
+        set({ ready: true, error: null, repeat, speed });
       } catch (error) {
         set({ ready: false, error: error instanceof Error ? error.message : String(error) });
       }
     },
 
-    playNow: async (songs, startIndex = 0) => {
+    playNow: async (songs, startIndex = 0, source) => {
       if (songs.length === 0) return;
       get().init();
 
-      // Build before touching the queue: if URL construction fails, the current
-      // queue is left intact rather than cleared into an empty player.
+      // Build before touching the queue: if URL construction fails, the
+      // current queue is left intact rather than cleared.
       const items = await buildItems(songs);
-      source = songs;
+      const start = Math.min(Math.max(0, startIndex), items.length - 1);
+      original = songs;
 
-      // A non-empty queue is proof the controller is live, which is all this
-      // needs to establish — play() is dispatched on the same native queue as
-      // setMediaItems, so it cannot overtake it.
       await applyQueueChange(
-        () => TrackPlayer.setMediaItems(items, startIndex),
+        () => TrackPlayer.setMediaItems(items, start),
         () => TrackPlayer.getQueue().length > 0,
         { refire: true },
       );
 
-      // Everything hand-picked belonged to the queue that was just replaced.
-      lastActiveIndex = startIndex;
-      set({ priorityCount: 0 });
-
+      lastActiveIndex = start;
+      set({ priorityCount: 0, shuffled: false, source: source ?? null });
       TrackPlayer.play();
     },
 
-    shufflePlay: async (songs) => {
-      const order = shuffleList(songs);
-      await get().playNow(order);
-      // playNow records the shuffled order as the source, so put the original
-      // back — that is what "shuffle off" has to restore.
-      source = songs;
+    shufflePlay: async (songs, source) => {
+      await get().playNow(shuffleList(songs), 0, source);
+      // playNow recorded the shuffled order; put the original back, since
+      // that is what "shuffle off" has to restore.
+      original = songs;
       set({ shuffled: true });
     },
 
     setShuffled: async (next) => {
       set({ shuffled: next });
-
-      if (source.length === 0) return;
+      if (original.length === 0) return;
 
       const activeIndex = TrackPlayer.getActiveMediaItemIndex();
       const currentId = TrackPlayer.getActiveMediaItem()?.mediaId;
       if (activeIndex == null) return;
 
       /**
-       * Only what comes after the current track is rebuilt.
-       *
-       * Replacing the whole queue reloaded the playing item, which stopped the
-       * music and reset it to zero every time shuffle was toggled. Removing
-       * and re-adding just the tail leaves the active item untouched, so
-       * playback carries on through the reorder without noticing.
+       * Only what comes after the current track is rebuilt. Replacing the
+       * whole queue reloaded the playing item, which stopped the music every
+       * time shuffle was toggled.
        */
-      const rest = source.filter((song) => song.id !== currentId);
+      let skippedCurrent = false;
+      const rest = original.filter((song) => {
+        // Drop one copy of the current track, not every copy of it.
+        if (!skippedCurrent && song.id === currentId) {
+          skippedCurrent = true;
+          return false;
+        }
+        return true;
+      });
       const tail = next ? shuffleList(rest) : rest;
       if (tail.length === 0) return;
 
@@ -298,7 +322,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
       get().init();
 
       const activeIndex = TrackPlayer.getActiveMediaItemIndex();
-      if (activeIndex == null) {
+      if (activeIndex == null || TrackPlayer.getQueue().length === 0) {
         await get().playNow([song]);
         return;
       }
@@ -314,25 +338,25 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
 
       // Skipping into it moves the active index forward, and the hand-picked
       // region shifts with it rather than being consumed.
+      lastActiveIndex = insertAt;
       TrackPlayer.skipToIndex(insertAt);
       TrackPlayer.play();
-      lastActiveIndex = insertAt;
     },
 
     playNext: async (songs) => {
       if (songs.length === 0) return;
       get().init();
 
-      const items = await buildItems(songs);
-      const before = TrackPlayer.getQueue().length;
       const activeIndex = TrackPlayer.getActiveMediaItemIndex();
-
-      // With nothing playing there is no "next", so this degrades to starting
-      // playback rather than quietly stacking up an unheard queue.
-      if (activeIndex == null) {
+      // With nothing playing there is no "next", so start playback rather
+      // than quietly stacking an unheard queue.
+      if (activeIndex == null || TrackPlayer.getQueue().length === 0) {
         await get().playNow(songs);
         return;
       }
+
+      const items = await buildItems(songs);
+      const before = TrackPlayer.getQueue().length;
 
       await applyQueueChange(
         () => TrackPlayer.insertMediaItems(activeIndex + 1, items),
@@ -346,45 +370,112 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
       if (songs.length === 0) return;
       get().init();
 
-      const items = await buildItems(songs);
-      const before = TrackPlayer.getQueue().length;
       const insertAt = priorityInsertIndex();
-
-      if (insertAt == null) {
+      if (insertAt == null || TrackPlayer.getQueue().length === 0) {
         await get().playNow(songs);
         return;
       }
 
+      const items = await buildItems(songs);
+      const before = TrackPlayer.getQueue().length;
+      // The region may extend past the end if items were removed under it.
+      const at = Math.min(insertAt, before);
+
       await applyQueueChange(
-        () => TrackPlayer.insertMediaItems(insertAt, items),
+        () => TrackPlayer.insertMediaItems(at, items),
         () => TrackPlayer.getQueue().length > before,
       );
 
       set({ priorityCount: get().priorityCount + items.length });
     },
 
+    loadPaused: async (songs, startIndex, position, source = null) => {
+      if (songs.length === 0) return;
+      get().init();
+
+      const items = await buildItems(songs);
+      const start = Math.min(Math.max(0, startIndex), items.length - 1);
+      original = songs;
+
+      // A last look, as close to the send as possible: something may have
+      // started playing while the items were being built.
+      if (TrackPlayer.getQueue().length > 0) return;
+      await applyQueueChange(
+        () => TrackPlayer.setMediaItems(items, start),
+        () => TrackPlayer.getQueue().length > 0,
+        { timeoutMs: 1200 },
+      );
+      // Dispatched on the same native queue as the replace, so it lands
+      // after the item is loaded rather than racing it.
+      if (position > 1) TrackPlayer.seekTo(position);
+
+      lastActiveIndex = start;
+      set({ priorityCount: 0, shuffled: false, source });
+    },
+
     removeFromQueue: (index) => {
       const activeIndex = TrackPlayer.getActiveMediaItemIndex() ?? -1;
       const count = get().priorityCount;
 
-      // Removing from inside the hand-picked region shrinks it; removing from
-      // the context after it leaves it alone.
+      // Removing from inside the hand-picked region shrinks it.
       if (index > activeIndex && index <= activeIndex + count) {
         set({ priorityCount: count - 1 });
       }
+      // Removing an already-played track shifts the active index back one,
+      // which the transition tracker must know or the region drifts.
+      if (index < activeIndex) lastActiveIndex = activeIndex - 1;
 
       TrackPlayer.removeMediaItem(index);
     },
 
-    moveInQueue: (fromIndex, toIndex) => {
-      TrackPlayer.moveMediaItem(fromIndex, toIndex);
+    moveToNext: (index) => {
+      const activeIndex = TrackPlayer.getActiveMediaItemIndex();
+      if (activeIndex == null || index <= activeIndex + 1) return;
+
+      const count = get().priorityCount;
+      const inRegion = index <= activeIndex + count;
+      TrackPlayer.moveMediaItem(index, activeIndex + 1);
+      // A track pulled up from the context joins the hand-picked region;
+      // one already in it just changes place.
+      if (!inRegion) set({ priorityCount: count + 1 });
+    },
+
+    nudge: (index, direction) => {
+      const activeIndex = TrackPlayer.getActiveMediaItemIndex() ?? -1;
+      const target = index + direction;
+      const length = TrackPlayer.getQueue().length;
+      // Upcoming tracks only: moving across the playing track would change
+      // what "previous" means mid-song.
+      if (index <= activeIndex || target <= activeIndex || target >= length) return;
+      TrackPlayer.moveMediaItem(index, target);
+    },
+
+    clearUpcoming: () => {
+      const activeIndex = TrackPlayer.getActiveMediaItemIndex();
+      const length = TrackPlayer.getQueue().length;
+      if (activeIndex == null || length <= activeIndex + 1) return;
+      TrackPlayer.removeMediaItems(activeIndex + 1, length);
+      set({ priorityCount: 0 });
     },
 
     clearQueue: () => {
       lastActiveIndex = -1;
-      source = [];
-      set({ priorityCount: 0, shuffled: false });
+      original = [];
+      set({ priorityCount: 0, shuffled: false, source: null });
       TrackPlayer.clear();
+    },
+
+    cycleRepeat: () => {
+      const order: RepeatSetting[] = ['off', 'all', 'one'];
+      const next = order[(order.indexOf(get().repeat) + 1) % order.length];
+      TrackPlayer.setRepeatMode(toMode(next));
+      set({ repeat: next });
+    },
+
+    setSpeed: (speed) => {
+      const clamped = Math.min(2, Math.max(0.5, Math.round(speed * 100) / 100));
+      TrackPlayer.setPlaybackSpeed(clamped);
+      set({ speed: clamped });
     },
   };
 });

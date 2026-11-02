@@ -16,7 +16,9 @@ import {
   useArtworkPalette,
   useMeshLayers,
   useThemeControls,
+  type MeshLayer,
 } from '../theme/ThemeProvider';
+import { useSvgId } from '../utils/svgId';
 
 /**
  * The artwork, as light in the room.
@@ -46,6 +48,12 @@ export type AmbientVariant = 'subtle' | 'immersive';
 export interface AmbientBackgroundProps {
   /** Multiplier on top of the user's ambient setting. Default 1. */
   intensity?: number;
+  /**
+   * A uniform black veil over the colour, 0-1. For screens that are mostly
+   * text — lyrics, the queue — where the legibility scrim's clear middle
+   * band would leave words sitting on the brightest part of a cover.
+   */
+  dim?: number;
   /**
    * 'subtle' (default): a colour wash behind lists and feeds.
    * 'immersive': Now Playing / Lyrics — the screen becomes the artwork's
@@ -111,21 +119,35 @@ export function AmbientBackground({
   intensity = 1,
   variant = 'subtle',
   paused = false,
+  dim = 0,
 }: AmbientBackgroundProps) {
   const { ambientIntensity } = useThemeControls();
 
   if (ambientIntensity <= 0) {
     // Nothing animates at zero. The immersive screens still need a ground
-    // colour, or the player would fall back to a flat grey panel.
+    // colour, or the player would fall back to a flat grey panel. The ground
+    // is already the cover's deepest shade, so it takes no veil.
     return variant === 'immersive' ? <StaticGround /> : null;
   }
 
-  return <Mesh strength={intensity * ambientIntensity} variant={variant} paused={paused} />;
+  return (
+    <>
+      <Mesh strength={intensity * ambientIntensity} variant={variant} paused={paused} />
+      {dim > 0 && (
+        <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.veil, { opacity: dim }]} />
+      )}
+    </>
+  );
 }
 
 /** The immersive ground: the deep colour on dark, the muted pastel on light. */
 function groundOf(palette: ArtworkPalette, mode: 'light' | 'dark'): string {
   return mode === 'dark' ? palette.deep : palette.muted;
+}
+
+/** Which of a layer's two conditionings this background paints with. */
+function paletteOf(layer: MeshLayer, immersive: boolean): ArtworkPalette {
+  return immersive ? layer.immersive : layer.mesh;
 }
 
 function StaticGround() {
@@ -148,7 +170,7 @@ function Mesh({
   variant: AmbientVariant;
   paused: boolean;
 }) {
-  const { resolved } = useThemeControls();
+  const { resolved, reduceMotion } = useThemeControls();
   const { layers, mix } = useMeshLayers();
   const { width, height } = useWindowDimensions();
   /**
@@ -162,7 +184,7 @@ function Mesh({
   const immersive = variant === 'immersive';
   // A subtle mesh behind the full player is invisible and would keep any
   // real blur over it busy for nothing.
-  const active = focused && !paused && (immersive || !playerOpen);
+  const active = focused && !paused && !reduceMotion && (immersive || !playerOpen);
 
   const clock = useSharedValue(START_SECONDS);
   const sinceTick = useSharedValue(0);
@@ -191,8 +213,10 @@ function Mesh({
   const layerA = useAnimatedStyle(() => ({ opacity: 1 - mix.value }));
   const layerB = useAnimatedStyle(() => ({ opacity: mix.value }));
 
-  const groundA = groundOf(layers.a, resolved);
-  const groundB = groundOf(layers.b, resolved);
+  const paletteA = paletteOf(layers.a, immersive);
+  const paletteB = paletteOf(layers.b, immersive);
+  const groundA = groundOf(paletteA, resolved);
+  const groundB = groundOf(paletteB, resolved);
   const groundStyle = useAnimatedStyle(() => ({
     backgroundColor: interpolateColor(mix.value, [0, 1], [groundA, groundB]),
   }));
@@ -206,7 +230,7 @@ function Mesh({
           <Blob
             key={index}
             spec={spec}
-            color={layers.a[spec.role]}
+            color={paletteA[spec.role]}
             peak={spec.peak * scale}
             clock={clock}
             mix={mix}
@@ -222,7 +246,7 @@ function Mesh({
           <Blob
             key={index}
             spec={spec}
-            color={layers.b[spec.role]}
+            color={paletteB[spec.role]}
             peak={spec.peak * scale}
             clock={clock}
             mix={mix}
@@ -302,10 +326,11 @@ function Blob({
 const BlobGradient = memo(function BlobGradient({ color, peak }: { color: string; peak: number }) {
   const r = BASE / 2;
   const alpha = Math.min(1, peak);
+  const id = useSvgId('blob');
   return (
     <Svg width={BASE} height={BASE}>
       <Defs>
-        <RadialGradient id="blob" cx="50%" cy="50%" r="50%" fx="50%" fy="50%">
+        <RadialGradient id={id} cx="50%" cy="50%" r="50%" fx="50%" fy="50%">
           <Stop offset="0" stopColor={color} stopOpacity={alpha} />
           <Stop offset="0.25" stopColor={color} stopOpacity={alpha * 0.86} />
           <Stop offset="0.5" stopColor={color} stopOpacity={alpha * 0.55} />
@@ -313,7 +338,7 @@ const BlobGradient = memo(function BlobGradient({ color, peak }: { color: string
           <Stop offset="1" stopColor={color} stopOpacity={0} />
         </RadialGradient>
       </Defs>
-      <Circle cx={r} cy={r} r={r} fill="url(#blob)" />
+      <Circle cx={r} cy={r} r={r} fill={`url(#${id})`} />
     </Svg>
   );
 });
@@ -333,6 +358,7 @@ const LegibilityScrim = memo(function LegibilityScrim({
   width: number;
   height: number;
 }) {
+  const id = useSvgId('scrim');
   return (
     <View
       style={[
@@ -346,20 +372,21 @@ const LegibilityScrim = memo(function LegibilityScrim({
     >
       <Svg width={SCRIM_W} height={SCRIM_H}>
         <Defs>
-          <LinearGradient id="scrim" x1="0" y1="0" x2="0" y2="1">
+          <LinearGradient id={id} x1="0" y1="0" x2="0" y2="1">
             <Stop offset="0" stopColor="#000000" stopOpacity={0.28} />
             <Stop offset="0.22" stopColor="#000000" stopOpacity={0} />
             <Stop offset="0.55" stopColor="#000000" stopOpacity={0} />
             <Stop offset="1" stopColor="#000000" stopOpacity={0.45} />
           </LinearGradient>
         </Defs>
-        <Rect x={0} y={0} width={SCRIM_W} height={SCRIM_H} fill="url(#scrim)" />
+        <Rect x={0} y={0} width={SCRIM_W} height={SCRIM_H} fill={`url(#${id})`} />
       </Svg>
     </View>
   );
 });
 
 const styles = StyleSheet.create({
+  veil: { backgroundColor: '#000000' },
   blob: { position: 'absolute', width: BASE, height: BASE },
   scrim: { position: 'absolute', width: SCRIM_W, height: SCRIM_H },
 });

@@ -1,195 +1,268 @@
 /**
  * Design tokens — the single source of truth for the visual language.
  *
- * Screens must pull from here rather than hardcoding values, so the web app
- * phase can consume the same tokens.
+ * The direction: a piece of portable audio hardware. Teenage Engineering's
+ * industrial grid — monospaced labels, numbered sections, keycaps in a few
+ * primary colours, one loud orange — set behind Apple-style liquid glass,
+ * with a retro black display (dot-matrix numerals, a tape counter) as the
+ * place the music's state is read from. Colour comes from the artwork and
+ * drifts behind everything.
  *
- * This file is plain data with no React Native imports beyond types, keeping
- * it liftable into a shared package alongside `api/` and `types/`.
- *
- * The direction is Apple Music with liquid glass: a true-black or clean white
- * ground, colour pulled from the artwork into a drifting mesh behind
- * everything, translucent glass chrome floating over it, bold large titles,
- * and springs instead of fixed timings.
- *
- * Every name the previous design exported is still here. Screens that have
- * not been restyled keep compiling and pick up the new values; the legacy
- * palette roles are aliases of the new semantic ones rather than a second set
- * of colours that could drift apart.
+ * Plain data plus a little colour arithmetic, no React Native imports, so it
+ * stays liftable alongside `api/` and `types/`.
  */
 
+import { contrast, ensureContrast, pickInk, rotateHue, withSl } from './color';
+
 // ---------------------------------------------------------------------------
-// 1. Color
+// 1. Colour
 // ---------------------------------------------------------------------------
 
-export type ThemeName = 'light' | 'dark';
+/** The concrete palettes. `black` is dark with a true-black OLED ground. */
+export type ThemeName = 'light' | 'dark' | 'black';
+/** The luminance family a palette belongs to. Drives materials and inks. */
+export type ThemeMode = 'light' | 'dark';
+
+export const modeOf = (name: ThemeName): ThemeMode => (name === 'light' ? 'light' : 'dark');
 
 /**
  * Every colour is an opaque #rrggbb so withAlpha() can be applied to any of
- * them. Translucency is expressed at the use site (or through the glass
- * materials below), never baked into a token.
+ * them. Translucency is expressed at the use site, never baked into a token.
  */
 export interface Palette {
-  // --- Redesign roles. Prefer these in new and restyled code. -------------
+  name: ThemeName;
+  mode: ThemeMode;
 
-  /** Screen ground. True black on dark so OLED pixels stay off. */
+  /** Screen ground. */
   background: string;
-  /** Grouped cards and raised solid surfaces sitting on the ground. */
-  backgroundElevated: string;
-  /** Placeholder wells, slider tracks, skeleton blocks, inactive controls. */
+  /** Cards and panels resting on the ground. */
+  surface: string;
+  /** Keycaps and raised controls — the brightest (light) or lifted (dark) layer. */
+  surfaceRaised: string;
+  /** Wells, slider tracks, inputs: cut into the surface rather than on it. */
+  surfaceSunken: string;
+  /** Placeholders and skeleton blocks. */
   fill: string;
-  /** A quieter fill for large areas, e.g. a grouped list's inset background. */
-  fillSecondary: string;
-  /** Hairline separators and quiet outlines. */
+  /** Hairline separators. */
   separator: string;
-  /** Primary text. */
+  /** Stronger outlines: keycap edges, panel borders. */
+  border: string;
+
   label: string;
-  /** Secondary text: artist names, counts, metadata. */
   labelSecondary: string;
-  /** Tertiary text: disabled labels, placeholder text, faint glyphs. */
   labelTertiary: string;
-  /** Base colour of glass surfaces before the material's alpha is applied. */
+
+  /** The black display inset — the same in every theme, like a real screen. */
+  display: string;
+  displayInk: string;
+  /** Unlit segments and secondary readouts on the display. */
+  displayDim: string;
+
   glassTint: string;
-  /** Specular colour for the glass sheen and the bright top rim. */
   glassHighlight: string;
-  /** Colour of the faint lower rim of a glass border. */
   glassEdge: string;
-  /** Shadow colour for floating surfaces. */
   shadow: string;
-  /** Dimming layer behind sheets and dialogs. Apply with withAlpha. */
   scrim: string;
-  /** Text and glyphs placed over the immersive artwork background (dark). */
+  /** Text over the immersive artwork background. Always light. */
   onArtwork: string;
-  /** Destructive actions: remove, sign out, clear. */
+
   destructive: string;
+  /** Status LEDs. */
+  ledGreen: string;
+  ledAmber: string;
+  ledRed: string;
 
-  // --- Legacy roles, kept so unrestyled screens still compile. ------------
-
-  /** Alias of `background`. */
-  paper: string;
-  /** Alias of `fill`. */
-  paperDim: string;
-  /** Alias of `separator`. */
-  paperLine: string;
-  /** Alias of `backgroundElevated` — the surface transport used to live on. */
-  panel: string;
-  /** Raised well on `panel`. */
-  panelRaised: string;
-  /** Hairline on `panel`. */
-  panelLine: string;
-  /** Alias of `label`. */
-  textPrimary: string;
-  /** Alias of `labelSecondary`. */
-  textSecondary: string;
-  /**
-   * Text on `panel`. In the old light palette panel was dark, so this was a
-   * light colour; panels now follow the theme, so it matches `label`.
-   */
-  textInverse: string;
-  /** Secondary text on `panel`. Matches `labelSecondary`. */
-  textInverseSecondary: string;
-
-  // --- Accent, shared by both eras. ---------------------------------------
+  /** The dark grey keycap, TE's second key colour. */
+  keyDark: string;
+  keyDarkInk: string;
 
   /**
-   * Apple Music red when the artwork accent is off; a vibrant, contrast-checked
-   * colour from the current cover when it is on. Progress fills, the primary
-   * action, the playing row, selection.
+   * The one loud colour. Legible as text on `background` and as a fill under
+   * `accentInk`. Either a preset or conditioned from the current cover.
    */
   accent: string;
-  /** Text/icon colour when placed ON an accent fill. */
   accentInk: string;
 }
 
-/** The fixed accent: Apple Music's red-pink. */
-export const brandAccent = '#FA2D48';
+/** Fields every theme shares; accent is filled in at runtime. */
+type Base = Omit<Palette, 'accent' | 'accentInk'>;
 
-export const palettes: Record<ThemeName, Palette> = {
+const display = {
+  display: '#050505',
+  displayInk: '#F4F2EC',
+  displayDim: '#5C5A55',
+};
+
+const bases: Record<ThemeName, Base> = {
+  /** Aluminium and paper: a warm light grey body, white keys, ink-black type. */
   light: {
-    background: '#FFFFFF',
-    backgroundElevated: '#F2F2F7',
-    fill: '#E5E5EA',
-    fillSecondary: '#F2F2F7',
-    separator: '#D1D1D6',
-    label: '#000000',
-    labelSecondary: '#6E6E73',
-    labelTertiary: '#AEAEB2',
-    glassTint: '#FFFFFF',
+    name: 'light',
+    mode: 'light',
+    background: '#ECEBE7',
+    surface: '#F6F5F2',
+    surfaceRaised: '#FFFFFF',
+    surfaceSunken: '#E1E0DB',
+    fill: '#DAD8D2',
+    separator: '#D3D1CB',
+    border: '#C4C2BB',
+    label: '#141413',
+    labelSecondary: '#5F5E59',
+    labelTertiary: '#94928C',
+    ...display,
+    glassTint: '#F7F6F3',
     glassHighlight: '#FFFFFF',
     glassEdge: '#000000',
-    shadow: '#000000',
-    scrim: '#000000',
+    shadow: '#2A2925',
+    scrim: '#0C0C0B',
     onArtwork: '#FFFFFF',
-    destructive: '#FF3B30',
-
-    paper: '#FFFFFF',
-    paperDim: '#E5E5EA',
-    paperLine: '#D1D1D6',
-    panel: '#F2F2F7',
-    panelRaised: '#E5E5EA',
-    panelLine: '#D1D1D6',
-    textPrimary: '#000000',
-    textSecondary: '#6E6E73',
-    textInverse: '#000000',
-    textInverseSecondary: '#6E6E73',
-
-    accent: brandAccent,
-    accentInk: '#FFFFFF',
+    destructive: '#D2261C',
+    ledGreen: '#17A34A',
+    ledAmber: '#E8930C',
+    ledRed: '#E5372B',
+    keyDark: '#2B2B2D',
+    keyDarkInk: '#F4F2EC',
   },
-  /**
-   * True black, for OLED panels.
-   *
-   * The ground is #000000 so unlit pixels stay unlit. Elevation comes from the
-   * iOS dark greys a few percent above it, and colour comes from the artwork
-   * mesh rather than from lifting the ground itself.
-   */
+  /** Graphite: anodised dark grey, lifted surfaces a few percent above it. */
   dark: {
-    background: '#000000',
-    backgroundElevated: '#1C1C1E',
-    fill: '#2C2C2E',
-    fillSecondary: '#1C1C1E',
-    separator: '#38383A',
-    label: '#FFFFFF',
-    labelSecondary: '#9A9AA0',
-    labelTertiary: '#636366',
-    glassTint: '#1C1C1E',
+    name: 'dark',
+    mode: 'dark',
+    background: '#0E0E0F',
+    surface: '#18181A',
+    surfaceRaised: '#232326',
+    surfaceSunken: '#0A0A0B',
+    fill: '#2A2A2D',
+    separator: '#28282B',
+    border: '#38383C',
+    label: '#F2F1EC',
+    labelSecondary: '#9D9C97',
+    labelTertiary: '#64635F',
+    ...display,
+    glassTint: '#1A1A1C',
     glassHighlight: '#FFFFFF',
     glassEdge: '#FFFFFF',
     shadow: '#000000',
     scrim: '#000000',
     onArtwork: '#FFFFFF',
-    destructive: '#FF453A',
-
-    paper: '#000000',
-    paperDim: '#2C2C2E',
-    paperLine: '#38383A',
-    panel: '#1C1C1E',
-    panelRaised: '#2C2C2E',
-    panelLine: '#3A3A3C',
-    textPrimary: '#FFFFFF',
-    textSecondary: '#9A9AA0',
-    textInverse: '#FFFFFF',
-    textInverseSecondary: '#9A9AA0',
-
-    accent: brandAccent,
-    accentInk: '#FFFFFF',
+    destructive: '#FF5247',
+    ledGreen: '#38E07B',
+    ledAmber: '#FFB020',
+    ledRed: '#FF4D42',
+    keyDark: '#2E2E32',
+    keyDarkInk: '#F2F1EC',
+  },
+  /** True black so OLED pixels stay off; elevation is a whisper above it. */
+  black: {
+    name: 'black',
+    mode: 'dark',
+    background: '#000000',
+    surface: '#0F0F10',
+    surfaceRaised: '#1B1B1D',
+    surfaceSunken: '#000000',
+    fill: '#202022',
+    separator: '#1F1F22',
+    border: '#2E2E32',
+    label: '#F2F1EC',
+    labelSecondary: '#9A9994',
+    labelTertiary: '#5F5E5A',
+    ...display,
+    glassTint: '#121214',
+    glassHighlight: '#FFFFFF',
+    glassEdge: '#FFFFFF',
+    shadow: '#000000',
+    scrim: '#000000',
+    onArtwork: '#FFFFFF',
+    destructive: '#FF5247',
+    ledGreen: '#38E07B',
+    ledAmber: '#FFB020',
+    ledRed: '#FF4D42',
+    keyDark: '#262629',
+    keyDarkInk: '#F2F1EC',
   },
 };
 
+// ---------------------------------------------------------------------------
+// 1a. Accent presets — the keycap colours
+// ---------------------------------------------------------------------------
+
+export type AccentPreset =
+  | 'orange'
+  | 'red'
+  | 'pink'
+  | 'violet'
+  | 'blue'
+  | 'cyan'
+  | 'green'
+  | 'yellow'
+  | 'mono';
+
 /**
- * Static fallback for the few places that run outside React — the navigation
- * theme's initial value, and any module-scope default. Anything rendered
- * inside the app must read the live palette through useTheme() instead, or it
- * will not follow the toggle.
+ * Two values per preset: the bright one sits on dark grounds, the deeper one
+ * on the light ground where the bright one would fail as text. Both were
+ * measured against the grounds above (WCAG ≥ 3.9 on light, ≥ 6 on dark).
  */
-export const color = palettes.dark;
+export const accentPresets: Record<AccentPreset, { label: string; dark: string; light: string }> = {
+  orange: { label: 'Orange', dark: '#FF6B2C', light: '#CC4409' },
+  red: { label: 'Red', dark: '#FF5247', light: '#D2261C' },
+  pink: { label: 'Pink', dark: '#FF5C9E', light: '#C92A6C' },
+  violet: { label: 'Violet', dark: '#A08BFF', light: '#6744E0' },
+  blue: { label: 'Blue', dark: '#5B9BFF', light: '#1F5ED6' },
+  cyan: { label: 'Cyan', dark: '#3CCFE4', light: '#0A7C8E' },
+  green: { label: 'Green', dark: '#3ED57F', light: '#13824A' },
+  yellow: { label: 'Yellow', dark: '#FFCC33', light: '#8F6200' },
+  mono: { label: 'Mono', dark: '#F2F1EC', light: '#141413' },
+};
+
+export const ACCENT_PRESET_ORDER: AccentPreset[] = [
+  'orange',
+  'red',
+  'pink',
+  'violet',
+  'blue',
+  'cyan',
+  'green',
+  'yellow',
+  'mono',
+];
+
+export interface AccentPair {
+  accent: string;
+  accentInk: string;
+}
+
+export function presetAccent(preset: AccentPreset, mode: ThemeMode): AccentPair {
+  const accent = accentPresets[preset][mode];
+  return { accent, accentInk: pickInk(accent) };
+}
+
+/**
+ * Builds a palette for a theme with a given accent.
+ *
+ * The accent is re-checked against this theme's ground: an artwork accent
+ * conditioned for "dark" is also used on the true-black theme, and a
+ * colour that was legible on one ground is pulled until it is on this one.
+ */
+export function buildPalette(name: ThemeName, accent: AccentPair): Palette {
+  const base = bases[name];
+  const minimum = base.mode === 'light' ? 3.6 : 4.5;
+  const legible =
+    contrast(accent.accent, base.background) >= minimum
+      ? accent.accent
+      : ensureContrast(accent.accent, base.background, minimum);
+  return {
+    ...base,
+    accent: legible,
+    accentInk: legible === accent.accent ? accent.accentInk : pickInk(legible),
+  };
+}
+
+/** Static default for the few places that run outside React. */
+export const defaultPalette = buildPalette('dark', presetAccent('orange', 'dark'));
 
 /**
  * Applies an alpha to a #rrggbb token.
  *
- * React Native accepts #rrggbbaa, so this stays a plain string rather than
- * needing rgba() plumbing through every style. Only pass 6-digit colours —
- * every palette and artwork colour is one.
+ * React Native accepts #rrggbbaa, so this stays a plain string. Only pass
+ * 6-digit colours — every palette and artwork colour is one.
  */
 export function withAlpha(hex: string, alpha: number): string {
   const byte = Math.round(Math.min(1, Math.max(0, alpha)) * 255)
@@ -203,43 +276,42 @@ export function withAlpha(hex: string, alpha: number): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Four colours taken from a cover, already conditioned for the active theme,
- * that the background mesh is painted from.
- *
- * Four rather than one because a single hue at several opacities reads as a
- * tinted screen; a few related colours drifting past each other is what makes
- * the background feel like it came out of the artwork.
+ * Four colours from a cover, conditioned for a theme, that the ambient mesh
+ * is painted from. Four rather than one: a single hue at several opacities
+ * reads as a tinted screen, while a few related colours drifting past each
+ * other reads as light coming off the record.
  */
 export interface ArtworkPalette {
-  /** The most saturated, eye-catching colour. The mesh's brightest blob. */
+  /** The most saturated colour. The mesh's brightest blob. */
   vibrant: string;
   /** The colour covering most of the cover. */
   dominant: string;
   /** A softer, distinct hue that keeps the mesh from being monochrome. */
   muted: string;
-  /** A dark anchor. Grounds the mesh and paints the immersive backdrop. */
+  /** A dark anchor. Grounds the immersive backdrop. */
   deep: string;
 }
 
 /**
- * What the mesh uses when nothing is playing, the cover yields nothing, or the
- * artwork accent is switched off: Apple Music's red drifting into magenta and
- * violet.
+ * The mesh when nothing is playing or artwork colour is off: built from the
+ * accent, so a blue accent gets a blue room rather than a stray orange one.
  */
-export const fallbackArtworkPalette: Record<ThemeName, ArtworkPalette> = {
-  dark: {
-    vibrant: '#FA2D48',
-    dominant: '#B8176E',
-    muted: '#5E2B8C',
-    deep: '#2B0916',
-  },
-  light: {
-    vibrant: '#FF7A8E',
-    dominant: '#FFB0BE',
-    muted: '#DCC3F5',
-    deep: '#E8506A',
-  },
-};
+export function fallbackArtworkPalette(accent: string, mode: ThemeMode): ArtworkPalette {
+  if (mode === 'dark') {
+    return {
+      vibrant: withSl(accent, 0.85, 0.55),
+      dominant: withSl(rotateHue(accent, -0.05), 0.7, 0.36),
+      muted: withSl(rotateHue(accent, 0.18), 0.45, 0.34),
+      deep: withSl(rotateHue(accent, -0.03), 0.55, 0.12),
+    };
+  }
+  return {
+    vibrant: withSl(accent, 0.85, 0.68),
+    dominant: withSl(rotateHue(accent, -0.05), 0.7, 0.78),
+    muted: withSl(rotateHue(accent, 0.18), 0.5, 0.86),
+    deep: withSl(rotateHue(accent, -0.03), 0.6, 0.58),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // 1c. Glass materials
@@ -248,120 +320,44 @@ export const fallbackArtworkPalette: Record<ThemeName, ArtworkPalette> = {
 export type GlassVariant = 'regular' | 'thin' | 'prominent' | 'clear';
 
 /**
- * How one glass variant is built, per theme. All alphas are 0-1.
+ * How one glass variant is built, per luminance family. All alphas are 0-1.
  *
- * Two tint strengths exist because the same surface is drawn two ways: over a
- * real blur (where the blur does most of the separating and the tint can be
- * light) and faked without one (where the tint alone has to keep the content
- * behind from fighting the content on top).
+ * Two tint strengths exist because the same surface is drawn two ways: over
+ * a real blur (where the blur does most of the separating and the tint can
+ * be light) and faked without one (where the tint alone has to keep content
+ * behind from fighting content on top).
  */
 export interface GlassMaterial {
-  /** Which palette colour tints the surface. */
   tintSource: 'glassTint' | 'glassHighlight';
-  /** Tint alpha over a real blur. */
   blurTint: number;
-  /** Tint alpha with no blur underneath. */
   fakeTint: number;
   /** Peak alpha of the specular sheen at the top edge. */
   sheen: number;
-  /** Alpha of the bright top rim of the border. */
+  /** The bright top rim and the faint bottom rim of the border. */
   borderTop: number;
-  /** Alpha of the faint bottom rim of the border. */
   borderBottom: number;
-  /** Shadow opacity when the surface floats. */
+  /** Alpha of the inner glow line just inside the rim — the "thickness" of the glass. */
+  innerGlow: number;
   shadow: number;
-  /** Multiplier on the user's blur intensity. */
+  /** Multiplier on the user's blur setting. */
   blurScale: number;
 }
 
-export const glass: Record<ThemeName, Record<GlassVariant, GlassMaterial>> = {
+export const glass: Record<ThemeMode, Record<GlassVariant, GlassMaterial>> = {
   dark: {
-    regular: {
-      tintSource: 'glassTint',
-      blurTint: 0.58,
-      fakeTint: 0.86,
-      sheen: 0.1,
-      borderTop: 0.24,
-      borderBottom: 0.05,
-      shadow: 0.5,
-      blurScale: 1,
-    },
-    thin: {
-      tintSource: 'glassTint',
-      blurTint: 0.4,
-      fakeTint: 0.74,
-      sheen: 0.08,
-      borderTop: 0.2,
-      borderBottom: 0.04,
-      shadow: 0.35,
-      blurScale: 0.75,
-    },
-    prominent: {
-      tintSource: 'glassTint',
-      blurTint: 0.76,
-      fakeTint: 0.94,
-      sheen: 0.12,
-      borderTop: 0.28,
-      borderBottom: 0.06,
-      shadow: 0.55,
-      blurScale: 1.25,
-    },
-    clear: {
-      tintSource: 'glassHighlight',
-      blurTint: 0.06,
-      fakeTint: 0.1,
-      sheen: 0.14,
-      borderTop: 0.34,
-      borderBottom: 0.08,
-      shadow: 0.25,
-      blurScale: 0.8,
-    },
+    regular: { tintSource: 'glassTint', blurTint: 0.55, fakeTint: 0.86, sheen: 0.1, borderTop: 0.3, borderBottom: 0.06, innerGlow: 0.06, shadow: 0.55, blurScale: 1 },
+    thin: { tintSource: 'glassTint', blurTint: 0.38, fakeTint: 0.72, sheen: 0.08, borderTop: 0.24, borderBottom: 0.05, innerGlow: 0.05, shadow: 0.4, blurScale: 0.75 },
+    prominent: { tintSource: 'glassTint', blurTint: 0.74, fakeTint: 0.95, sheen: 0.12, borderTop: 0.32, borderBottom: 0.07, innerGlow: 0.07, shadow: 0.6, blurScale: 1.25 },
+    clear: { tintSource: 'glassHighlight', blurTint: 0.07, fakeTint: 0.12, sheen: 0.16, borderTop: 0.4, borderBottom: 0.1, innerGlow: 0.1, shadow: 0.25, blurScale: 0.8 },
   },
   light: {
-    regular: {
-      tintSource: 'glassTint',
-      blurTint: 0.62,
-      fakeTint: 0.88,
-      sheen: 0.5,
-      borderTop: 0.9,
-      borderBottom: 0.06,
-      shadow: 0.12,
-      blurScale: 1,
-    },
-    thin: {
-      tintSource: 'glassTint',
-      blurTint: 0.42,
-      fakeTint: 0.76,
-      sheen: 0.4,
-      borderTop: 0.8,
-      borderBottom: 0.05,
-      shadow: 0.08,
-      blurScale: 0.75,
-    },
-    prominent: {
-      tintSource: 'glassTint',
-      blurTint: 0.8,
-      fakeTint: 0.95,
-      sheen: 0.55,
-      borderTop: 1,
-      borderBottom: 0.08,
-      shadow: 0.16,
-      blurScale: 1.25,
-    },
-    clear: {
-      tintSource: 'glassHighlight',
-      blurTint: 0.16,
-      fakeTint: 0.26,
-      sheen: 0.45,
-      borderTop: 0.85,
-      borderBottom: 0.06,
-      shadow: 0.1,
-      blurScale: 0.8,
-    },
+    regular: { tintSource: 'glassTint', blurTint: 0.6, fakeTint: 0.9, sheen: 0.55, borderTop: 0.95, borderBottom: 0.08, innerGlow: 0.5, shadow: 0.16, blurScale: 1 },
+    thin: { tintSource: 'glassTint', blurTint: 0.42, fakeTint: 0.78, sheen: 0.45, borderTop: 0.85, borderBottom: 0.06, innerGlow: 0.4, shadow: 0.1, blurScale: 0.75 },
+    prominent: { tintSource: 'glassTint', blurTint: 0.8, fakeTint: 0.96, sheen: 0.6, borderTop: 1, borderBottom: 0.1, innerGlow: 0.55, shadow: 0.2, blurScale: 1.25 },
+    clear: { tintSource: 'glassHighlight', blurTint: 0.16, fakeTint: 0.28, sheen: 0.5, borderTop: 0.9, borderBottom: 0.08, innerGlow: 0.4, shadow: 0.12, blurScale: 0.8 },
   },
 };
 
-/** Stroke width of the luminous glass border. */
 export const glassBorderWidth = 1;
 
 // ---------------------------------------------------------------------------
@@ -369,164 +365,89 @@ export const glassBorderWidth = 1;
 // ---------------------------------------------------------------------------
 
 /**
- * Manrope in five weights. Loaded from assets/fonts in App.tsx; these names
- * must match the keys passed to useFonts, or RN silently falls back to the
+ * Space Grotesk for words, Space Mono for labels and figures, Doto for the
+ * dot-matrix display. Loaded from assets/fonts in App.tsx; these names must
+ * match the keys passed to useFonts, or RN silently falls back to the
  * platform face.
  *
- * Android does not synthesise weights from a custom family, so each weight is
- * its own family name and `fontWeight` must never be used alongside these —
- * it would either do nothing or fake-bold an already bold face.
+ * Android does not synthesise weights from a custom family, so each weight
+ * is its own family name and `fontWeight` must never be set alongside these.
  *
- * Manrope carries true tabular figures, which the running timers depend on.
+ * Space Mono is monospaced, so every figure set in it holds its column
+ * while a timer runs — no tabular-nums feature needed.
  */
 export const fontFamily = {
-  regular: 'Manrope_400Regular',
-  medium: 'Manrope_500Medium',
-  semibold: 'Manrope_600SemiBold',
-  bold: 'Manrope_700Bold',
-  extrabold: 'Manrope_800ExtraBold',
+  regular: 'SpaceGrotesk_400Regular',
+  medium: 'SpaceGrotesk_500Medium',
+  semibold: 'SpaceGrotesk_600SemiBold',
+  bold: 'SpaceGrotesk_700Bold',
+  mono: 'SpaceMono_400Regular',
+  monoBold: 'SpaceMono_700Bold',
+  dot: 'Doto_900Black',
 } as const;
 
 /**
- * Apple-style scale, sentence case throughout.
- *
- * Tracking is absolute points. Large sizes are pulled in because Manrope is
- * set wide, and a 34pt bold line at default tracking reads as loose next to
- * the platform faces this is imitating.
- *
- * No lineHeight: Manrope's natural metrics are generous, and a fixed line
- * height smaller than them clips ascenders on Android. Set one at the use
- * site only for multi-line paragraphs.
+ * The scale. Sentence case for words; mono labels are uppercase and tracked
+ * out, the way hardware is labelled. No lineHeight on single-line styles:
+ * a fixed line height below the face's natural one clips ascenders on
+ * Android. Set one at the use site for paragraphs.
  */
 export const type = {
-  /** Screen titles: "Library", "Home". */
-  largeTitle: {
-    fontFamily: fontFamily.extrabold,
-    fontSize: 34,
-    letterSpacing: -0.8,
-  },
-  /** Hero titles: album name on the album screen, artist name. */
-  title1: {
-    fontFamily: fontFamily.extrabold,
-    fontSize: 28,
-    letterSpacing: -0.6,
-  },
-  /** Section headers: "Recently Played", "Top Songs". */
-  title2: {
-    fontFamily: fontFamily.bold,
-    fontSize: 22,
-    letterSpacing: -0.4,
-  },
-  /** Now Playing track title, sheet titles. */
-  title3: {
-    fontFamily: fontFamily.bold,
-    fontSize: 20,
-    letterSpacing: -0.3,
-  },
-  /** Compact navigation bar title, emphasised row text, buttons. */
-  headline: {
-    fontFamily: fontFamily.semibold,
-    fontSize: 17,
-    letterSpacing: -0.2,
-  },
-  /**
-   * List row titles and standard UI text.
-   *
-   * Also the legacy `body` token, now larger: rows grew to fit it.
-   */
-  body: {
-    fontFamily: fontFamily.medium,
-    fontSize: 16,
-    letterSpacing: -0.1,
-  },
-  /** Button labels and slightly quieter emphasis. */
-  callout: {
-    fontFamily: fontFamily.semibold,
-    fontSize: 15,
-    letterSpacing: -0.1,
-  },
-  /** Row subtitles: artist, album · year. */
-  subheadline: {
-    fontFamily: fontFamily.medium,
-    fontSize: 14,
-    letterSpacing: 0,
-  },
-  /** Hints, footers, explanatory text. */
-  footnote: {
-    fontFamily: fontFamily.regular,
-    fontSize: 13,
-    letterSpacing: 0,
-  },
-  /** Tile subtitles, small metadata. */
-  caption: {
-    fontFamily: fontFamily.medium,
-    fontSize: 12,
-    letterSpacing: 0.1,
-  },
-  /** Badges and the tiniest labels. */
-  caption2: {
-    fontFamily: fontFamily.semibold,
-    fontSize: 11,
-    letterSpacing: 0.2,
-  },
-  /** Alias of `title2` under the name screens reach for. */
-  sectionTitle: {
-    fontFamily: fontFamily.bold,
-    fontSize: 22,
-    letterSpacing: -0.4,
-  },
-  /** Timestamps and counters. Tabular figures so running timers don't jitter. */
-  numeral: {
-    fontFamily: fontFamily.medium,
-    fontSize: 12,
-    letterSpacing: 0,
-    // Mutable tuple, not `as const`: React Native's TextStyle declares
-    // fontVariant as a mutable array and rejects a readonly one.
-    fontVariant: ['tabular-nums'] as ['tabular-nums'],
-  },
-  /** Larger tabular figures, e.g. Now Playing elapsed/remaining. */
-  numeralLarge: {
-    fontFamily: fontFamily.semibold,
-    fontSize: 13,
-    letterSpacing: 0,
-    fontVariant: ['tabular-nums'] as ['tabular-nums'],
-  },
+  /** Greeting on Home. */
+  hero: { fontFamily: fontFamily.bold, fontSize: 36, letterSpacing: -1.4 },
+  /** Screen titles: "Library". */
+  largeTitle: { fontFamily: fontFamily.bold, fontSize: 32, letterSpacing: -1.1 },
+  /** Hero titles: album and artist names. */
+  title1: { fontFamily: fontFamily.bold, fontSize: 26, letterSpacing: -0.8 },
+  /** Section titles. */
+  title2: { fontFamily: fontFamily.bold, fontSize: 20, letterSpacing: -0.5 },
+  /** Player track title, sheet titles. */
+  title3: { fontFamily: fontFamily.semibold, fontSize: 18, letterSpacing: -0.3 },
+  /** Emphasised row text, nav bar titles. */
+  headline: { fontFamily: fontFamily.semibold, fontSize: 16, letterSpacing: -0.2 },
+  /** Row titles and standard UI text. */
+  body: { fontFamily: fontFamily.medium, fontSize: 15, letterSpacing: -0.1 },
+  /** Paragraphs. */
+  bodyRegular: { fontFamily: fontFamily.regular, fontSize: 15, letterSpacing: -0.05 },
+  /** Quieter emphasis. */
+  callout: { fontFamily: fontFamily.medium, fontSize: 14, letterSpacing: -0.05 },
+  /** Row subtitles. */
+  subhead: { fontFamily: fontFamily.regular, fontSize: 13.5, letterSpacing: 0 },
+  /** Hints and explanations. */
+  footnote: { fontFamily: fontFamily.regular, fontSize: 12.5, letterSpacing: 0 },
+  /** Tile subtitles. */
+  caption: { fontFamily: fontFamily.medium, fontSize: 12, letterSpacing: 0 },
 
-  // --- Legacy names, remapped onto the new scale. -------------------------
-
-  /** Legacy: track title on Now Playing. Now `title3`. */
-  display: {
-    fontFamily: fontFamily.bold,
-    fontSize: 20,
-    letterSpacing: -0.3,
-  },
-  /** Legacy: album/playlist titles. Now `headline`. */
-  title: {
-    fontFamily: fontFamily.semibold,
-    fontSize: 17,
-    letterSpacing: -0.2,
-  },
-  /**
-   * Legacy: section headers and small labels.
-   *
-   * No longer uppercase — the redesign sets headers in bold sentence case —
-   * so callers passing sentence-case text now render it as written.
-   */
+  /** Hardware labels: section numbers, spec plates, button legends. */
   label: {
-    fontFamily: fontFamily.semibold,
-    fontSize: 13,
-    letterSpacing: 0,
+    fontFamily: fontFamily.mono,
+    fontSize: 10.5,
+    letterSpacing: 1.1,
+    textTransform: 'uppercase' as const,
   },
-  /** Legacy: artist name, secondary row text. Now `subheadline`. */
-  meta: {
-    fontFamily: fontFamily.medium,
-    fontSize: 14,
-    letterSpacing: 0,
+  labelBold: {
+    fontFamily: fontFamily.monoBold,
+    fontSize: 10.5,
+    letterSpacing: 1.1,
+    textTransform: 'uppercase' as const,
   },
+  /** Keycap legends. */
+  key: {
+    fontFamily: fontFamily.monoBold,
+    fontSize: 11.5,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase' as const,
+  },
+  /** Figures: timers, counts, durations. */
+  mono: { fontFamily: fontFamily.mono, fontSize: 12, letterSpacing: 0 },
+  monoLarge: { fontFamily: fontFamily.monoBold, fontSize: 14, letterSpacing: 0 },
+  /** Dot-matrix display readouts. Latin and figures only — never titles. */
+  dot: { fontFamily: fontFamily.dot, fontSize: 24, letterSpacing: 1 },
+  dotLarge: { fontFamily: fontFamily.dot, fontSize: 40, letterSpacing: 1 },
 };
 
 // ---------------------------------------------------------------------------
-// 3. Spacing — 4px base unit
+// 3. Spacing — 4pt base unit
 // ---------------------------------------------------------------------------
 
 export const space = {
@@ -544,128 +465,82 @@ export const space = {
 } as const;
 
 export const layout = {
-  /** Screen padding, horizontal. */
-  screenPadding: space[5],
-  /** Card/panel/sheet internal padding. */
+  /** Screen gutter. TE's grid is tight; 16 keeps a phone's width usable. */
+  screenPadding: space[4],
   panelPadding: space[4],
   /**
-   * List row height. trackItemLayout reads this, so every row a list renders
-   * with getItemLayout must be exactly this tall — including skeleton rows.
+   * List row height. Every row a list renders with getItemLayout must be
+   * exactly this tall, skeletons included.
    */
-  rowHeight: 64,
-  /** Square thumbnail in a list row. */
-  thumbSize: 48,
-  /** Progress bar thickness. */
-  progressHeight: 5,
-  /** Fraction of screen width the Now Playing artwork occupies. */
-  artworkWidthRatio: 0.84,
-  /** Corner radius of the floating dock and the cards that echo it. */
-  dockRadius: 28,
-  /**
-   * Legacy default opacity of floating surfaces. Glass now reads the user's
-   * Tint setting instead; kept for the one screen that still uses it.
-   */
-  floatingOpacity: 0.75,
-
-  /** Compact navigation bar height, below the status bar inset. */
+  rowHeight: 62,
+  thumbSize: 46,
+  /** Corner radius of the floating dock and the glass cards that echo it. */
+  dockRadius: 30,
   navBarHeight: 52,
-  /** Vertical space the large title block occupies in a list header. */
-  largeTitleHeight: 56,
-  /** How far a list scrolls before the compact bar is fully in. */
-  headerCollapseDistance: 56,
-  /** Square hero artwork on album/playlist screens. */
-  heroArtworkSize: 248,
-  /** Height of the parallax hero area on detail screens. */
-  heroHeight: 340,
-  /** Width of a square tile in a horizontal shelf. */
-  shelfTileSize: 156,
-  /** Gap between tiles in a shelf or grid. */
-  tileGap: space[3],
-  /** Standard control height: buttons, search field, segmented control. */
-  controlHeight: 44,
-  /** Compact pill control height. */
-  pillHeight: 36,
-  /** Minimum tap target. */
+  /** How far a list scrolls before the compact glass bar is fully in. */
+  headerCollapseDistance: 64,
+  /** Standard control height: keycaps, search field. */
+  controlHeight: 48,
+  pillHeight: 34,
   minTapTarget: 44,
-  /** Inset of the floating dock from the screen edges. */
   dockMargin: space[3],
-  /** Vertical rhythm between major sections on a feed screen. */
   sectionGap: space[7],
+  tileGap: space[3],
 } as const;
 
 // ---------------------------------------------------------------------------
-// 4. Corner radius — generous and continuous-looking
+// 4. Corner radius
 // ---------------------------------------------------------------------------
 
 export const radius = {
-  /** Tiny chips, badges. */
   xs: 4,
-  /** List-row thumbnails, small buttons. */
   sm: 8,
-  /** Artwork wells, text fields. */
   md: 12,
-  /** Cards, tiles, grouped sections. */
-  lg: 20,
-  /** Floating bars, the dock, the mini player. */
-  xl: 28,
-  /** Sheets. */
-  xxl: 32,
-  /** Genuinely circular or pill-shaped controls. */
+  lg: 16,
+  xl: 24,
+  xxl: 30,
   full: 999,
 } as const;
+
+/** Hairline separators. Strokes that must read as edges use `stroke`. */
+export const hairline = 0.5;
+export const stroke = 1;
 
 // ---------------------------------------------------------------------------
 // 5. Motion — springs first
 // ---------------------------------------------------------------------------
 
 /**
- * Durations and easing for the few things that should not spring: crossfades,
- * colour changes, native navigator transitions that only accept a duration.
- *
- * Anything that moves under the finger or settles into place uses the spring
- * presets below — see src/theme/motion.ts for the ready-made configs.
+ * Durations for the things that should not spring: crossfades, colour
+ * changes, navigator transitions that only accept a duration.
  */
 export const motion = {
-  /** Icon swaps and image fades — should read as near-instant. */
   durationFast: 120,
-  /** Reveals, small fades, settling. */
   durationBase: 220,
-  /** Screen transitions. */
-  durationScreen: 300,
-  /** Colour crossfades between tracks. */
+  durationScreen: 280,
   durationCrossfade: 1100,
-  /** Strong ease-out. Feed to Easing.bezier(...easing). */
   easing: [0.2, 0.8, 0.2, 1] as const,
-  /** How far a pressable sinks. */
   pressScale: 0.96,
-  /** Delay between consecutive items in a staggered list entrance. */
-  staggerStep: 36,
-  /** No item in a staggered entrance waits longer than this. */
-  staggerMaxDelay: 300,
-  /** Items at or past this index never play an entrance. */
+  staggerStep: 32,
+  staggerMaxDelay: 260,
   staggerMaxItems: 10,
 } as const;
 
-/**
- * Spring presets as plain physics numbers (damping ratio in the comments).
- *
- * Kept here as data so they stay liftable; motion.ts re-exports them typed
- * for Reanimated.
- */
+/** Spring presets as plain physics numbers; motion.ts types them. */
 export const springs = {
-  /** Press-in: fast with almost no overshoot. ζ≈0.69 */
+  /** Press-in: fast with almost no overshoot. */
   press: { damping: 22, stiffness: 420, mass: 0.6 },
-  /** Release: a touch of life on the way back up. ζ≈0.59 */
+  /** Release: a touch of life on the way back up. */
   release: { damping: 16, stiffness: 260, mass: 0.7 },
-  /** Controls morphing, pills sliding, toggles. ζ≈0.75 */
+  /** Controls morphing, pills sliding, toggles. */
   snappy: { damping: 26, stiffness: 380, mass: 0.8 },
-  /** Large surfaces settling, headers, sheets. Critically damped. ζ≈1.0 */
+  /** Large surfaces settling. Critically damped. */
   gentle: { damping: 24, stiffness: 140, mass: 1 },
-  /** Playful emphasis — a like, a pop-in. Lively, not cartoonish. ζ≈0.5 */
+  /** A like, a pop-in. Lively, not cartoonish. */
   bouncy: { damping: 13, stiffness: 190, mass: 0.9 },
-  /** Layout transitions and list entrances. ζ≈0.78 */
+  /** Layout transitions and list entrances. */
   layout: { damping: 24, stiffness: 240, mass: 0.9 },
-  /** Screen-sized expansions. Clamped so content never overshoots its bounds. */
+  /** Screen-sized moves. Clamped so content never overshoots its bounds. */
   screen: { damping: 30, stiffness: 260, mass: 1, overshootClamping: true },
 } as const;
 
@@ -673,19 +548,11 @@ export const springs = {
 // 6. Iconography
 // ---------------------------------------------------------------------------
 
-/** Line-based, consistent stroke weight. Filled only for genuine filled states. */
 export const icon = {
-  /** Slightly heavier than before, to sit with the bold type. */
   strokeWidth: 1.75,
-  /** Standard glyph: nav bar actions, prev/next. */
   size: 22,
-  /** Secondary glyphs: shuffle/repeat, row actions. */
   sizeSmall: 18,
-  /** Large transport glyphs. */
+  sizeTiny: 15,
   sizeLarge: 28,
-  /** Now Playing play/pause. */
-  sizeHero: 44,
+  sizeHero: 34,
 } as const;
-
-/** Hairline borders — 0.5px, not the platform default. */
-export const hairline = 0.5;

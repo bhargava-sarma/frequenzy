@@ -1,90 +1,79 @@
+import { memo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import Animated from 'react-native-reanimated';
 
-import { Glass } from './Glass';
-import { PressScale } from './Pressable';
-import { IconChevronRight } from './icons';
-import { enter } from '../theme/motion';
-import { icon, layout, radius, space, type } from '../theme/tokens';
-import type { Palette } from '../theme/tokens';
-import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
+import { ConnectionBadge } from './ConnectionBadge';
+import { Label } from './Label';
+import { layout, space, type } from '../theme/tokens';
+import { useTheme } from '../theme/ThemeProvider';
 
 /**
- * Screen header: an Apple-style large title, or a compact one with a back
- * button for screens you drilled into.
+ * The top of a tab: a screen-printed eyebrow line and a large title.
  *
- * Root screens — Home, Library — get the large bold title, because on those
- * the title is the only thing telling you which tab you are on. Pushed
- * screens get a glass back button and a smaller title, since the hero below
- * them already names what you opened.
+ *   MON 02 NOV · 14:32                         ● LAN
+ *   Library                                   [+] [⚙]
+ *
+ * Root screens get this; screens you drill into get the collapsing glass
+ * bar instead, since their hero already names what you opened.
  */
 export interface ScreenHeaderProps {
   title: string;
-  /** Optional right-hand slot for a single action. */
-  action?: React.ReactNode;
-  onBack?: () => void;
+  eyebrow?: string;
+  /** Actions beside the title. */
+  trailing?: React.ReactNode;
+  /** Show the connection light on the eyebrow line. Default true. */
+  status?: boolean;
+  /** Use the larger greeting size. */
+  hero?: boolean;
 }
 
-const BACK_SIZE = 36;
-
-export function ScreenHeader({ title, action, onBack }: ScreenHeaderProps) {
+export const ScreenHeader = memo(function ScreenHeader({
+  title,
+  eyebrow,
+  trailing,
+  status = true,
+  hero = false,
+}: ScreenHeaderProps) {
   const color = useTheme();
-  const styles = useThemedStyles(makeStyles);
-  const large = onBack == null;
 
   return (
-    <Animated.View entering={enter.fade()} style={[styles.root, large && styles.rootLarge]}>
-      {onBack && (
-        <PressScale
-          noOrigin
-          accessibilityRole="button"
-          accessibilityLabel="Back"
-          hitSlop={space[3]}
-          onPress={onBack}
-          scaleTo={0.88}
-          style={styles.back}
+    <View style={styles.root}>
+      <View style={styles.eyebrowRow}>
+        {eyebrow ? <Label tone="tertiary">{eyebrow}</Label> : <View />}
+        {status && <ConnectionBadge />}
+      </View>
+      <View style={styles.titleRow}>
+        <Text
+          style={[hero ? type.hero : type.largeTitle, styles.title, { color: color.label }]}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.8}
         >
-          <Glass variant="thin" lite radius={BACK_SIZE / 2} style={StyleSheet.absoluteFill} />
-          {/* Chevron rotated rather than shipping a second icon — the set is
-              deliberately small and this keeps stroke weight identical. */}
-          <IconChevronRight
-            size={icon.size}
-            strokeWidth={2}
-            color={color.label}
-            style={styles.backIcon}
-          />
-        </PressScale>
-      )}
-
-      <Text style={large ? styles.titleLarge : styles.title} numberOfLines={1}>
-        {title}
-      </Text>
-
-      {action != null && <View style={styles.action}>{action}</View>}
-    </Animated.View>
+          {title}
+        </Text>
+        {trailing != null && <View style={styles.trailing}>{trailing}</View>}
+      </View>
+    </View>
   );
-}
+});
 
-const makeStyles = (color: Palette) =>
-  StyleSheet.create({
-    root: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: layout.screenPadding,
-      paddingVertical: space[2],
-      minHeight: layout.navBarHeight,
-    },
-    rootLarge: { paddingTop: space[3], paddingBottom: space[1] },
-    back: {
-      width: BACK_SIZE,
-      height: BACK_SIZE,
-      borderRadius: radius.full,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginRight: space[3],
-    },
-    backIcon: { transform: [{ rotate: '180deg' }] },
-    title: { ...type.headline, color: color.label, flex: 1 },
-    titleLarge: { ...type.largeTitle, color: color.label, flex: 1 },
-    action: { marginLeft: space[3] },
-  });
+const styles = StyleSheet.create({
+  root: {
+    paddingHorizontal: layout.screenPadding,
+    paddingTop: space[2],
+    paddingBottom: space[2],
+  },
+  eyebrowRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: 24,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: space[1],
+    minHeight: 48,
+  },
+  title: { flex: 1 },
+  trailing: { flexDirection: 'row', alignItems: 'center', gap: space[2], marginLeft: space[3] },
+});

@@ -87,6 +87,21 @@ export interface Child {
   samplingRate?: number;
   /** OpenSubsonic: channel count. */
   channelCount?: number;
+  discNumber?: number;
+  /** Times played, as counted by the server across every client. */
+  playCount?: number;
+  /** ISO timestamp of the last play. */
+  played?: string;
+  /** ISO timestamp the file was added to the library. */
+  created?: string;
+  /** 1-5, or absent when unrated. */
+  userRating?: number;
+  bpm?: number;
+  comment?: string;
+  /** OpenSubsonic: every genre, where `genre` carries only the first. */
+  genres?: { name: string }[];
+  /** OpenSubsonic: the credited artists as one display string. */
+  displayArtist?: string;
 }
 
 export interface ArtistSummary {
@@ -122,6 +137,15 @@ export interface AlbumSummary {
   year?: number;
   genre?: string;
   starred?: string;
+  /** ISO timestamp the album was added — drives "newest" sorting. */
+  created?: string;
+  /** Navidrome extras, present on getAlbumList2 and getAlbum. */
+  playCount?: number;
+  played?: string;
+  userRating?: number;
+  genres?: { name: string }[];
+  isCompilation?: boolean;
+  displayArtist?: string;
 }
 
 /** getArtist returns the artist plus their albums. */
@@ -177,4 +201,82 @@ export interface Starred2Response {
   };
 }
 
+/** getSong. */
+export interface SongResponse {
+  song: Child;
+}
+
+export interface Genre {
+  /** The genre's name. Subsonic calls it `value`. */
+  value: string;
+  songCount?: number;
+  albumCount?: number;
+}
+
+export interface GenresResponse {
+  genres: { genre?: Genre[] };
+}
+
+export interface SongsByGenreResponse {
+  songsByGenre: { song?: Child[] };
+}
+
+export interface RandomSongsResponse {
+  randomSongs: { song?: Child[] };
+}
+
+export interface TopSongsResponse {
+  topSongs: { song?: Child[] };
+}
+
+export interface SimilarSongs2Response {
+  similarSongs2: { song?: Child[] };
+}
+
+export interface SimilarSongsResponse {
+  similarSongs: { song?: Child[] };
+}
+
+export interface ArtistInfo2 {
+  biography?: string;
+  musicBrainzId?: string;
+  lastFmUrl?: string;
+  smallImageUrl?: string;
+  mediumImageUrl?: string;
+  largeImageUrl?: string;
+  /** Similar artists. With includeNotPresent=false, only ones in the library. */
+  similarArtist?: ArtistSummary[];
+}
+
+export interface ArtistInfo2Response {
+  artistInfo2: ArtistInfo2;
+}
+
+/** OpenSubsonic `songLyrics` extension: one entry per language/sync variant. */
+export interface StructuredLyrics {
+  lang?: string;
+  synced: boolean;
+  /** `start` is in milliseconds and present only on synced lyrics. */
+  line?: { start?: number; value: string }[];
+  displayArtist?: string;
+  displayTitle?: string;
+  /** Milliseconds to add to every start. */
+  offset?: number;
+}
+
+export interface LyricsListResponse {
+  lyricsList: { structuredLyrics?: StructuredLyrics[] };
+}
+
+export interface ScanStatus {
+  scanning: boolean;
+  count?: number;
+  folderCount?: number;
+  /** ISO timestamp, Navidrome extension. */
+  lastScan?: string;
+}
+
+export interface ScanStatusResponse {
+  scanStatus: ScanStatus;
+}
 
