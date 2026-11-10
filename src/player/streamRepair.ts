@@ -84,13 +84,35 @@ export function startStreamRepair(onUnrecoverable: (message: string) => void): (
         return;
       }
       retried.set(key, Date.now());
+      // Entries only matter inside the retry window; without this the map
+      // would keep one for every track that ever stumbled.
+      for (const [id, at] of retried) {
+        if (Date.now() - at > RETRY_WINDOW_MS) retried.delete(id);
+      }
+
+      // Where it broke off. A re-pointed item is a new source and starts
+      // from the top, so the place has to be carried over by hand.
+      let resumeAt = 0;
+      try {
+        resumeAt = TrackPlayer.getProgress().position;
+      } catch {
+        resumeAt = 0;
+      }
 
       try {
         client.invalidateConnection();
         const connection = await client.ensureConnection(true);
-        const next = rebasedItem(item, connection.url);
+
+        // The queue may have moved while the probe ran. Repairing by a stale
+        // index would overwrite whatever track is at that position now.
+        const now = TrackPlayer.getActiveMediaItem();
+        const nowIndex = TrackPlayer.getActiveMediaItemIndex();
+        if (!now || nowIndex == null || now.mediaId !== item.mediaId) return;
+
+        const next = rebasedItem(now, connection.url);
         if (next) {
-          TrackPlayer.replaceMediaItem(index, next);
+          TrackPlayer.replaceMediaItem(nowIndex, next);
+          if (resumeAt > 1) TrackPlayer.seekTo(resumeAt);
         } else {
           // Same address: the failure was transient. Re-prepare in place.
           TrackPlayer.retry();

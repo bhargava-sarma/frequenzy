@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { LibraryRepository } from '../data/libraryRepository';
 import { useServerStore } from '../store/useServerStore';
+import { errorMessage } from '../store/useToastStore';
 
 /**
  * Loads data through the cached library repository.
@@ -31,7 +32,13 @@ export function useLibraryData<T>(
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
-  const [forced, setForced] = useState(false);
+  /**
+   * Whether the next run should bypass the cache. A ref, not state: as state
+   * it was a dependency of the effect below, so clearing it once a refresh
+   * finished ran the whole load a second time — a cached read straight after
+   * the forced one, with `loading` flickering back on in between.
+   */
+  const forceNext = useRef(false);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const run = useCallback(loader, deps);
@@ -40,6 +47,8 @@ export function useLibraryData<T>(
     if (!library) return;
 
     let cancelled = false;
+    const forced = forceNext.current;
+    forceNext.current = false;
     setLoading(true);
     setError(null);
 
@@ -50,22 +59,19 @@ export function useLibraryData<T>(
         if (!cancelled) setData(result);
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+        if (!cancelled) setError(errorMessage(err));
       })
       .finally(() => {
-        if (!cancelled) {
-          setLoading(false);
-          setForced(false);
-        }
+        if (!cancelled) setLoading(false);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [library, run, refreshToken, forced]);
+  }, [library, run, refreshToken]);
 
   const refresh = useCallback(() => {
-    setForced(true);
+    forceNext.current = true;
     setRefreshToken((token) => token + 1);
   }, []);
 

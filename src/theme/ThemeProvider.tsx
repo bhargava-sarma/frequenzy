@@ -75,9 +75,17 @@ export const useArtworkColorStore = create<ArtworkColorStore>((set, get) => ({
       light: { ...next.light, accent: next.light.accent ?? previous?.light.accent ?? null },
       dark: { ...next.dark, accent: next.dark.accent ?? previous?.dark.accent ?? null },
     };
+    // The same cover reported again — a reconnect re-runs the extraction —
+    // must not hand the provider a new object: that alone re-renders every
+    // background for colours that haven't changed.
+    if (previous && colorSetKey(previous) === colorSetKey(merged)) return;
     set({ colors: merged });
   },
 }));
+
+const colorsKey = (c: ArtworkColorSet[ThemeMode]) =>
+  `${c.accent?.accent ?? ''}${c.accent?.accentInk ?? ''}${c.palette.vibrant}${c.palette.dominant}${c.palette.muted}${c.palette.deep}`;
+const colorSetKey = (set: ArtworkColorSet) => `${colorsKey(set.light)}|${colorsKey(set.dark)}`;
 
 // ---------------------------------------------------------------------------
 // Contexts

@@ -16,10 +16,26 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
  * few thousand entries once is cheaper than three times.
  */
 
-const STORAGE_KEY = 'playHistory.v1';
+/**
+ * The log is stored as a run of fixed-size chunks rather than one value.
+ *
+ * As a single key it was rewritten whole on every play — over a megabyte of
+ * JSON serialised on the JS thread at the cap — and it was heading for a
+ * wall: Android reads a stored value through a 2 MB cursor window, and a
+ * value past that cannot be read back at all. A few thousand plays with
+ * long or non-Latin titles gets there, at which point the read fails, the
+ * log loads as empty, and the next play overwrites it. Chunked, a play
+ * rewrites only the newest few hundred entries, and no value comes close.
+ */
+const LEGACY_KEY = 'playHistory.v1';
+const META_KEY = 'playHistory.v2';
+const CHUNK_PREFIX = 'playHistory.v2:';
+const chunkKey = (n: number) => `${CHUNK_PREFIX}${n}`;
 
-/** Roughly two years of heavy listening, well inside AsyncStorage's ceiling. */
-const MAX_ENTRIES = 5000;
+/** Entries per stored chunk — about 150 KB of JSON at most. */
+const CHUNK_SIZE = 500;
+/** Roughly two years of heavy listening: 5000 plays. */
+const MAX_CHUNKS = 10;
 
 export interface PlayEntry {
   songId: string;
@@ -93,8 +109,13 @@ export interface ListeningStats {
   firstPlayAt: number | null;
 }
 
-let memory: PlayEntry[] | null = null;
-let loading: Promise<PlayEntry[]> | null = null;
+/** The chunks as stored, oldest first; null until first read. */
+let chunks: PlayEntry[][] | null = null;
+/** The storage number of `chunks[0]`. Climbs as old chunks are dropped. */
+let firstChunk = 0;
+/** Every entry in order, rebuilt lazily after a change. */
+let flat: PlayEntry[] | null = null;
+let loading: Promise<void> | null = null;
 const listeners = new Set<() => void>();
 
 /** Called whenever the log changes, so open screens can re-read. */
@@ -113,39 +134,114 @@ function isEntry(value: unknown): value is PlayEntry {
   return typeof entry.songId === 'string' && typeof entry.playedAt === 'number';
 }
 
-async function readAll(): Promise<PlayEntry[]> {
-  if (memory) return memory;
-  if (loading) return loading;
+/** Filtered rather than trusted: a corrupt entry should cost itself, not the chart. */
+function parseEntries(raw: string | null | undefined): PlayEntry[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter(isEntry) : [];
+  } catch {
+    return [];
+  }
+}
 
-  loading = (async () => {
-    try {
-      const raw = await AsyncStorage.getItem(STORAGE_KEY);
-      const parsed: unknown = raw ? JSON.parse(raw) : [];
-      // Filtered rather than trusted: a corrupt entry should cost itself, not
-      // the whole chart. Sorted so every reader can assume chronology.
-      memory = Array.isArray(parsed)
-        ? parsed.filter(isEntry).sort((a, b) => a.playedAt - b.playedAt)
-        : [];
-    } catch {
-      memory = [];
+function split(entries: PlayEntry[]): PlayEntry[][] {
+  const out: PlayEntry[][] = [];
+  for (let i = 0; i < entries.length; i += CHUNK_SIZE) out.push(entries.slice(i, i + CHUNK_SIZE));
+  return out;
+}
+
+async function load(): Promise<void> {
+  try {
+    const rawMeta = await AsyncStorage.getItem(META_KEY);
+    const meta = rawMeta ? (JSON.parse(rawMeta) as { first?: unknown; last?: unknown }) : null;
+
+    if (
+      meta &&
+      Number.isInteger(meta.first) &&
+      Number.isInteger(meta.last) &&
+      (meta.last as number) >= (meta.first as number) &&
+      (meta.last as number) - (meta.first as number) < MAX_CHUNKS * 4
+    ) {
+      const first = meta.first as number;
+      const last = meta.last as number;
+      const keys = Array.from({ length: last - first + 1 }, (_, i) => chunkKey(first + i));
+      const pairs = await AsyncStorage.multiGet(keys);
+      const byKey = new Map(pairs);
+      chunks = keys.map((key) => parseEntries(byKey.get(key)));
+      firstChunk = first;
+      return;
     }
-    return memory;
-  })().finally(() => {
-    loading = null;
-  });
 
-  return loading;
+    // First run on this layout: carry the single-key log over, once.
+    const legacy = parseEntries(await AsyncStorage.getItem(LEGACY_KEY))
+      .sort((a, b) => a.playedAt - b.playedAt)
+      .slice(-CHUNK_SIZE * MAX_CHUNKS);
+    chunks = split(legacy);
+    firstChunk = 0;
+
+    if (legacy.length > 0) {
+      try {
+        await AsyncStorage.multiSet([
+          ...chunks.map((chunk, i): [string, string] => [chunkKey(i), JSON.stringify(chunk)]),
+          [META_KEY, JSON.stringify({ first: 0, last: chunks.length - 1 })],
+        ]);
+        await AsyncStorage.removeItem(LEGACY_KEY);
+      } catch {
+        // Left where it was; the move is tried again next launch.
+      }
+    }
+  } catch {
+    chunks = [];
+    firstChunk = 0;
+  }
+}
+
+async function readAll(): Promise<PlayEntry[]> {
+  if (!chunks) {
+    loading ??= load().finally(() => {
+      loading = null;
+    });
+    await loading;
+  }
+  // Sorted so every reader can assume chronology. Chunks are written in
+  // order, so this is a no-op pass unless the clock moved between plays.
+  flat ??= (chunks ?? []).flat().sort((a, b) => a.playedAt - b.playedAt);
+  return flat;
 }
 
 /** Appends one play. Called from the scrobbler, alongside the server submission. */
 export async function recordPlay(entry: PlayEntry): Promise<void> {
-  const entries = [...(await readAll()), entry];
+  await readAll();
+  const stored = (chunks ??= []);
+
+  let last = stored[stored.length - 1];
+  let layoutChanged = false;
+  if (!last || last.length >= CHUNK_SIZE) {
+    last = [];
+    stored.push(last);
+    layoutChanged = true;
+  }
+  last.push(entry);
+
   // Trim from the front: the oldest plays fall out of every window first.
-  memory = entries.length > MAX_ENTRIES ? entries.slice(-MAX_ENTRIES) : entries;
+  const dropped: string[] = [];
+  while (stored.length > MAX_CHUNKS) {
+    stored.shift();
+    dropped.push(chunkKey(firstChunk));
+    firstChunk += 1;
+    layoutChanged = true;
+  }
+
+  flat = null;
   notify();
 
   try {
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(memory));
+    const lastNumber = firstChunk + stored.length - 1;
+    const writes: [string, string][] = [[chunkKey(lastNumber), JSON.stringify(last)]];
+    if (layoutChanged) writes.push([META_KEY, JSON.stringify({ first: firstChunk, last: lastNumber })]);
+    await AsyncStorage.multiSet(writes);
+    if (dropped.length > 0) await AsyncStorage.multiRemove(dropped);
   } catch {
     // Out of storage, most likely. The scrobble already reached the server.
   }
@@ -311,7 +407,14 @@ export async function getPlaysToday(): Promise<number> {
 
 /** Wipes the log. Offered in settings, and used on sign-out. */
 export async function clearPlayHistory(): Promise<void> {
-  memory = [];
+  chunks = [];
+  firstChunk = 0;
+  flat = [];
   notify();
-  await AsyncStorage.removeItem(STORAGE_KEY);
+
+  const keys = await AsyncStorage.getAllKeys();
+  const ours = keys.filter(
+    (key) => key === LEGACY_KEY || key === META_KEY || key.startsWith(CHUNK_PREFIX),
+  );
+  if (ours.length > 0) await AsyncStorage.multiRemove(ours);
 }

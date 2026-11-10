@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSequence,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
@@ -17,7 +24,7 @@ import {
   IconCornerDownRight,
   type IconComponent,
 } from './icons';
-import { useTimings } from '../theme/motion';
+import { useMotion } from '../theme/motion';
 import { radius, space, stroke, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
@@ -29,10 +36,15 @@ import { haptics } from '../utils/haptics';
  *
  * At the top rather than above the dock, so it never collides with the
  * dock, the mini player, a sheet or the keyboard, and it stays visible over
- * the full player. It fades in and out — no drop, no bounce — and a toast
- * arriving while one is up simply replaces its text. Tap or flick it up to
- * dismiss; an action, when there is one, is printed on its right.
+ * the full player. It drops in from under the status bar and leaves back up
+ * the way it came — the direction you flick to dismiss it. A toast arriving
+ * while one is up replaces its text in place, with a small nudge so the
+ * change is noticed. Tap or flick it up to dismiss; an action, when there
+ * is one, is printed on its right.
  */
+
+/** How far above its resting place a toast starts and ends. */
+const DROP = 18;
 
 const ICONS: Record<ToastIcon, IconComponent> = {
   check: IconCheck,
@@ -53,19 +65,23 @@ export function ToastHost() {
   const insets = useSafeAreaInsets();
   const color = useTheme();
   const styles = useThemedStyles(makeStyles);
-  const { fast, exit } = useTimings();
+  const { timings, springs } = useMotion();
 
   const [shown, setShown] = useState<Toast | null>(null);
   const progress = useSharedValue(0);
   const dragY = useSharedValue(0);
+  const nudge = useSharedValue(1);
   const shownRef = useRef<Toast | null>(null);
 
   useEffect(() => {
     if (current) {
+      const replacing = shownRef.current != null;
       shownRef.current = current;
       setShown(current);
       dragY.value = 0;
-      progress.value = withTiming(1, fast);
+      progress.value = withTiming(1, timings.appear);
+      // Already on screen: the words change under the eye, so mark the change.
+      if (replacing) nudge.value = withSequence(withTiming(1.04, timings.press), withSpring(1, springs.press));
       if (current.tone === 'error') haptics.error();
 
       const timer = setTimeout(() => dismiss(current.id), current.duration);
@@ -73,7 +89,7 @@ export function ToastHost() {
     }
 
     if (shownRef.current) {
-      progress.value = withTiming(0, exit, (finished) => {
+      progress.value = withTiming(0, timings.exit, (finished) => {
         if (finished) runOnJS(clear)();
       });
     }
@@ -82,6 +98,8 @@ export function ToastHost() {
   }, [current]);
 
   function clear() {
+    // A toast that arrived as the last one finished leaving owns the slot now.
+    if (useToastStore.getState().current) return;
     shownRef.current = null;
     setShown(null);
   }
@@ -91,14 +109,17 @@ export function ToastHost() {
     .onUpdate((event) => {
       dragY.value = Math.min(0, event.translationY);
     })
-    .onEnd((event) => {
-      if (dragY.value < -24 || event.velocityY < -500) runOnJS(dismiss)(undefined);
-      else dragY.value = withTiming(0, fast);
+    .onEnd((event, success) => {
+      if (success && (dragY.value < -24 || event.velocityY < -500)) runOnJS(dismiss)(undefined);
+      else dragY.value = withSpring(0, springs.settle);
     });
 
   const style = useAnimatedStyle(() => ({
     opacity: progress.value,
-    transform: [{ translateY: dragY.value }],
+    transform: [
+      { translateY: (progress.value - 1) * DROP + dragY.value },
+      { scale: nudge.value },
+    ],
   }));
 
   if (!shown) return null;

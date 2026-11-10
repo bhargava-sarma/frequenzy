@@ -13,6 +13,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { AlbumActionsSheet } from '../components/AlbumActionsSheet';
 import { AlbumTile } from '../components/AlbumTile';
 import { AlphabetRail, indexLetter } from '../components/AlphabetRail';
+import { Appear } from '../components/Appear';
 import { Chip, ChipRow } from '../components/Chip';
 import { IconButton } from '../components/IconButton';
 import {
@@ -39,6 +40,7 @@ import { DOCK_CLEARANCE } from '../components/TabBar';
 import { useArtwork } from '../hooks/useArtwork';
 import { useLibraryData } from '../hooks/useLibraryData';
 import { trackItemLayout } from '../hooks/usePagedList';
+import { usePullRefresh } from '../hooks/usePullRefresh';
 import { LIKED_PLAYLIST_ID, type LibraryStackParamList } from '../navigation/types';
 import { EmptyMixError, playLiked } from '../player/mixes';
 import { usePlayerStore, shuffleList } from '../store/usePlayerStore';
@@ -175,16 +177,22 @@ export function LibraryScreen() {
 
   // --- Derived lists --------------------------------------------------------
 
+  // Sorted once per ordering, filtered per keystroke. As one step, typing in
+  // the filter re-ran the sort — and under Random that meant a fresh shuffle
+  // for every letter, the grid rearranging itself under the word being typed.
+  const sortedAlbums = useMemo(
+    () => sortAlbums(albums.data ?? [], sort, sort === 'random' ? seed : -1),
+    [albums.data, sort, seed],
+  );
   const shownAlbums = useMemo(() => {
-    const sorted = sortAlbums(albums.data ?? [], sort, sort === 'random' ? seed : -1);
-    if (!deferredFilter) return sorted;
-    return sorted.filter(
+    if (!deferredFilter) return sortedAlbums;
+    return sortedAlbums.filter(
       (album) =>
         album.name.toLowerCase().includes(deferredFilter) ||
         (album.artist ?? '').toLowerCase().includes(deferredFilter) ||
         String(album.year ?? '').includes(deferredFilter),
     );
-  }, [albums.data, sort, seed, deferredFilter]);
+  }, [sortedAlbums, deferredFilter]);
 
   const shownArtists = useMemo(() => {
     const list = artists.data ?? [];
@@ -280,7 +288,9 @@ export function LibraryScreen() {
     mode === 'albums' ? albums : mode === 'artists' ? artists : mode === 'genres' ? genres : null;
   const loading = status ? status.loading && !status.data?.length : playlistsLoading && playlists.length === 0;
   const error = status ? status.error : playlistError;
-  const refresh = status ? status.refresh : () => void loadPlaylists();
+  const reloadPlaylists = useCallback(() => void loadPlaylists(), [loadPlaylists]);
+  const refresh = status ? status.refresh : reloadPlaylists;
+  const pull = usePullRefresh(status ? status.loading : playlistsLoading, refresh);
 
   const emptyComponent = loading ? (
     <LoadingState label="Loading library" />
@@ -345,7 +355,7 @@ export function LibraryScreen() {
     </View>
   );
 
-  const refreshControl = <RefreshControl refreshing={false} onRefresh={refresh} />;
+  const refreshControl = <RefreshControl {...pull} />;
 
   let body: React.ReactNode;
   if (mode === 'albums' && view === 'grid') {
@@ -511,10 +521,12 @@ export function LibraryScreen() {
   return (
     <TabScaffold>
       {header}
-      {/* Keyed on mode and view, so a switch starts the new list at its top. */}
-      <View key={`${mode}:${view}`} style={styles.fill}>
+      {/* Keyed on mode and view, so a switch starts the new list at its top
+          — and fades it up, so the change of mode reads as one list making
+          way for another rather than the rows being swapped under you. */}
+      <Appear key={`${mode}:${view}`} rise={6} style={styles.fill}>
         {body}
-      </View>
+      </Appear>
 
       <AlbumActionsSheet visible={albumTarget != null} onClose={() => setAlbumTarget(null)} album={albumTarget} />
 

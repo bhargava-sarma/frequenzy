@@ -2,7 +2,7 @@ import TrackPlayer, { Event, RepeatMode } from '@rntp/player';
 import { create } from 'zustand';
 
 import { setupPlayer } from '../player/setup';
-import { toMediaItems } from '../player/trackMapping';
+import { songFromMediaItem, toMediaItems } from '../player/trackMapping';
 import type { Child } from '../types/subsonic';
 import { useServerStore } from './useServerStore';
 
@@ -194,11 +194,16 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
     subscribed = true;
 
     TrackPlayer.addEventListener(Event.MediaItemTransition, ({ index }) => {
-      const advancedBy = index - lastActiveIndex;
+      const movedBy = index - lastActiveIndex;
       lastActiveIndex = index;
-      if (advancedBy > 0) {
-        set({ priorityCount: Math.max(0, get().priorityCount - advancedBy) });
-      }
+
+      const count = get().priorityCount;
+      if (count === 0 || movedBy === 0) return;
+      // Forward eats into the region. Back grows it by the tracks stepped
+      // over, so it still ends where the hand-picked tracks end: without
+      // that, pressing Previous left the region covering the wrong tracks
+      // and the next add landed ahead of ones queued before it.
+      set({ priorityCount: Math.max(0, count - movedBy) });
     });
   }
 
@@ -254,7 +259,6 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
       // current queue is left intact rather than cleared.
       const items = await buildItems(songs);
       const start = Math.min(Math.max(0, startIndex), items.length - 1);
-      original = songs;
 
       await applyQueueChange(
         () => TrackPlayer.setMediaItems(items, start),
@@ -262,6 +266,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
         { refire: true },
       );
 
+      // Only once the player has it: a rejected change must not leave the
+      // remembered running order describing a queue that never loaded.
+      original = songs;
       lastActiveIndex = start;
       set({ priorityCount: 0, shuffled: false, source: source ?? null });
       TrackPlayer.play();
@@ -276,46 +283,86 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
     },
 
     setShuffled: async (next) => {
+      const was = get().shuffled;
+      // The control answers the press; the queue follows.
       set({ shuffled: next });
-      if (original.length === 0) return;
 
-      const activeIndex = TrackPlayer.getActiveMediaItemIndex();
-      const currentId = TrackPlayer.getActiveMediaItem()?.mediaId;
-      if (activeIndex == null) return;
+      try {
+        // Two passes at most: building the items can wait on a probe, and if
+        // the track changed meanwhile the plan was made for another moment.
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const activeIndex = TrackPlayer.getActiveMediaItemIndex();
+          const queue = TrackPlayer.getQueue();
+          if (activeIndex == null || queue.length === 0) return;
 
-      /**
-       * Only what comes after the current track is rebuilt. Replacing the
-       * whole queue reloaded the playing item, which stopped the music every
-       * time shuffle was toggled.
-       */
-      let skippedCurrent = false;
-      const rest = original.filter((song) => {
-        // Drop one copy of the current track, not every copy of it.
-        if (!skippedCurrent && song.id === currentId) {
-          skippedCurrent = true;
-          return false;
-        }
-        return true;
-      });
-      const tail = next ? shuffleList(rest) : rest;
-      if (tail.length === 0) return;
-
-      const items = await buildItems(tail);
-      const queueLength = TrackPlayer.getQueue().length;
-
-      await applyQueueChange(
-        () => {
-          if (queueLength > activeIndex + 1) {
-            TrackPlayer.removeMediaItems(activeIndex + 1, queueLength);
+          // The JS runtime can restart under a queue that kept playing, and
+          // what is queued is then the only running order there is.
+          if (original.length === 0) {
+            original = queue
+              .map((item) => songFromMediaItem(item))
+              .filter((song): song is Child => song != null);
           }
-          TrackPlayer.addMediaItems(items);
-        },
-        () => TrackPlayer.getQueue().length === activeIndex + 1 + items.length,
-      );
+          if (original.length === 0) return;
 
-      lastActiveIndex = activeIndex;
-      // The hand-picked region was part of the tail that just got rebuilt.
-      set({ priorityCount: 0 });
+          const currentId = queue[activeIndex]?.mediaId;
+          /**
+           * Only the context behind the hand-picked tracks is rebuilt. The
+           * playing item stays, because replacing it stops the music; the
+           * hand-picked ones stay, because they are not part of the
+           * collection being reordered — rebuilding from just after the
+           * current track used to throw them away.
+           */
+          const picked = Math.max(0, Math.min(get().priorityCount, queue.length - activeIndex - 1));
+          const from = activeIndex + 1 + picked;
+
+          let tail: Child[];
+          if (next) {
+            // Everything but one copy of what's playing, in a new order.
+            let skippedCurrent = false;
+            tail = shuffleList(
+              original.filter((song) => {
+                if (!skippedCurrent && song.id === currentId) {
+                  skippedCurrent = true;
+                  return false;
+                }
+                return true;
+              }),
+            );
+          } else {
+            // Back to the running order *from here*: what follows the playing
+            // track in the collection, not the whole collection again.
+            const at = original.findIndex((song) => song.id === currentId);
+            if (at >= 0) {
+              tail = original.slice(at + 1);
+            } else {
+              // A track queued by hand has no place in the running order, so
+              // keep what was still to come and put that back in order.
+              const upcoming = new Set(queue.slice(from).map((item) => item.mediaId));
+              tail = original.filter((song) => upcoming.has(song.id));
+            }
+          }
+
+          const items = tail.length > 0 ? await buildItems(tail) : [];
+          if (TrackPlayer.getActiveMediaItemIndex() !== activeIndex) continue;
+
+          const length = TrackPlayer.getQueue().length;
+          if (length <= from && items.length === 0) return;
+
+          await applyQueueChange(
+            () => {
+              if (length > from) TrackPlayer.removeMediaItems(from, length);
+              if (items.length > 0) TrackPlayer.addMediaItems(items);
+            },
+            () => TrackPlayer.getQueue().length === from + items.length,
+          );
+
+          lastActiveIndex = activeIndex;
+          return;
+        }
+      } catch (error) {
+        set({ shuffled: was });
+        throw error;
+      }
     },
 
     playTrackNow: async (song) => {
@@ -395,7 +442,6 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
 
       const items = await buildItems(songs);
       const start = Math.min(Math.max(0, startIndex), items.length - 1);
-      original = songs;
 
       // A last look, as close to the send as possible: something may have
       // started playing while the items were being built.
@@ -405,6 +451,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
         () => TrackPlayer.getQueue().length > 0,
         { timeoutMs: 1200 },
       );
+      original = songs;
       // Dispatched on the same native queue as the replace, so it lands
       // after the item is loaded rather than racing it.
       if (position > 1) TrackPlayer.seekTo(position);
@@ -448,6 +495,15 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
       // what "previous" means mid-song.
       if (index <= activeIndex || target <= activeIndex || target >= length) return;
       TrackPlayer.moveMediaItem(index, target);
+
+      // A move across the edge of the hand-picked region swaps a picked track
+      // with one from the context. Both are now where you put them, so the
+      // region takes both rather than disowning the one you chose earlier.
+      const count = get().priorityCount;
+      const edge = activeIndex + count;
+      if (count > 0 && Math.min(index, target) === edge && Math.max(index, target) === edge + 1) {
+        set({ priorityCount: count + 1 });
+      }
     },
 
     clearUpcoming: () => {

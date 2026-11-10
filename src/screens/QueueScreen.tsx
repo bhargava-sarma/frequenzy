@@ -86,61 +86,104 @@ export function QueueScreen() {
   const [menu, setMenu] = useState<'none' | 'queue' | 'save'>('none');
   const [target, setTarget] = useState<{ item: MediaItem; index: number } | null>(null);
   const [adding, setAdding] = useState<string[] | null>(null);
-  const [position, setPosition] = useState(0);
+  /**
+   * Where the track was, and when that was read. The pair, because the
+   * finishing time is worked out from both: computed from "now" on each
+   * render against a position read minutes ago, it crept later every time
+   * anything re-rendered.
+   */
+  const [clock, setClock] = useState({ position: 0, at: Date.now() });
+
+  const readClock = useCallback(() => {
+    try {
+      setClock({ position: TrackPlayer.getProgress().position, at: Date.now() });
+    } catch {
+      // Nothing to read before the player is bound.
+    }
+  }, []);
 
   const sync = useCallback(() => {
-    setQueue(TrackPlayer.getQueue());
-    setActiveIndex(TrackPlayer.getActiveMediaItemIndex() ?? -1);
-    setPosition(TrackPlayer.getProgress().position);
-  }, []);
+    try {
+      setQueue(TrackPlayer.getQueue());
+      setActiveIndex(TrackPlayer.getActiveMediaItemIndex() ?? -1);
+    } catch {
+      // The same: an unbound player has no queue to mirror yet.
+    }
+    readClock();
+  }, [readClock]);
 
   useEffect(() => {
     sync();
     const queueSub = TrackPlayer.addEventListener(Event.QueueChanged, sync);
     const transitionSub = TrackPlayer.addEventListener(Event.MediaItemTransition, sync);
+    // Keeps "left" honest through a long track without copying the queue.
+    const timer = setInterval(readClock, 15_000);
     return () => {
       queueSub.remove();
       transitionSub.remove();
+      clearInterval(timer);
     };
-  }, [sync]);
+  }, [sync, readClock]);
+
+  // A pause or a resume moves the finishing time; read again at each.
+  useEffect(() => {
+    readClock();
+  }, [isPlaying, readClock]);
 
   const current = activeIndex >= 0 ? queue[activeIndex] : undefined;
   const upcoming = activeIndex >= 0 ? queue.slice(activeIndex + 1) : queue;
   const remainingSeconds =
-    Math.max(0, (current?.duration ?? 0) - position) +
+    Math.max(0, (current?.duration ?? 0) - clock.position) +
     upcoming.reduce((sum, item) => sum + (item.duration ?? 0), 0);
-  const endsAt = Date.now() + (remainingSeconds / (speed || 1)) * 1000;
+  const endsAt = clock.at + (remainingSeconds / (speed || 1)) * 1000;
 
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = [];
     if (queue.length === 0 || activeIndex < 0) return out;
 
-    const priorityEnd = activeIndex + priorityCount;
-    const restStart = priorityEnd + 1;
+    /**
+     * A key per track that survives the queue shifting around it: its id and
+     * which copy of that id it is. Keyed on position, removing one track
+     * renamed every row after it, so the list tore all of them down and
+     * built them again — each with its gesture — to close a single gap.
+     */
+    const seen = new Map<string, number>();
+    const keys = queue.map((item, i) => {
+      const id = item.mediaId ?? `at-${i}`;
+      const nth = seen.get(id) ?? 0;
+      seen.set(id, nth + 1);
+      return `${id}#${nth}`;
+    });
+    const track = (i: number, dimmed: boolean, last: boolean): Row => ({
+      kind: 'track',
+      key: keys[i],
+      item: queue[i],
+      index: i,
+      dimmed,
+      last,
+    });
 
-    if (priorityCount > 0) {
-      out.push({ kind: 'header', key: 'h-next', title: 'Playing next', detail: pluralize(priorityCount, 'track') });
-      for (let i = activeIndex + 1; i <= Math.min(priorityEnd, queue.length - 1); i++) {
-        out.push({ kind: 'track', key: `${queue[i].mediaId}-${i}`, item: queue[i], index: i, dimmed: false, last: i === priorityEnd });
-      }
+    const priorityEnd = Math.min(activeIndex + priorityCount, queue.length - 1);
+    const restStart = priorityEnd + 1;
+    const picked = priorityEnd - activeIndex;
+
+    if (picked > 0) {
+      out.push({ kind: 'header', key: 'h-next', title: 'Playing next', detail: pluralize(picked, 'track') });
+      for (let i = activeIndex + 1; i <= priorityEnd; i++) out.push(track(i, false, i === priorityEnd));
     }
     if (restStart < queue.length) {
       out.push({
         kind: 'header',
         key: 'h-rest',
-        title: priorityCount > 0 ? 'Then' : 'Up next',
+        title: picked > 0 ? 'Then' : 'Up next',
         detail: source ? source.label : pluralize(queue.length - restStart, 'track'),
       });
-      for (let i = restStart; i < queue.length; i++) {
-        out.push({ kind: 'track', key: `${queue[i].mediaId}-${i}`, item: queue[i], index: i, dimmed: false, last: i === queue.length - 1 });
-      }
+      for (let i = restStart; i < queue.length; i++) out.push(track(i, false, i === queue.length - 1));
     }
     if (activeIndex > 0) {
       out.push({ kind: 'history-toggle', key: 'h-history', count: activeIndex });
       if (showHistory) {
-        for (let i = activeIndex - 1; i >= 0; i--) {
-          out.push({ kind: 'track', key: `${queue[i].mediaId}-${i}`, item: queue[i], index: i, dimmed: true, last: i === 0 });
-        }
+        for (let i = activeIndex - 1; i >= 0; i--) out.push(track(i, true, i === 0));
       }
     }
     return out;
@@ -186,7 +229,15 @@ export function QueueScreen() {
               <Text style={styles.title}>Queue</Text>
               <Label tone="secondary" numberOfLines={1}>
                 {queue.length > 0
-                  ? `${pluralize(queue.length, 'track')} · ${formatLength(remainingSeconds)} left · ends ${formatClock(endsAt)}`
+                  ? [
+                      pluralize(queue.length, 'track'),
+                      `${formatLength(remainingSeconds)} left`,
+                      // Only while it is running: paused, there is no time
+                      // it ends at, just one that keeps slipping.
+                      isPlaying ? `ends ${formatClock(endsAt)}` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')
                   : 'Empty'}
               </Label>
             </View>
@@ -221,11 +272,20 @@ export function QueueScreen() {
           ) : null
         }
         ListEmptyComponent={
-          <EmptyState
-            icon={IconListDetails}
-            label="Queue is empty"
-            hint="Play an album, or swipe a track right to queue it."
-          />
+          current ? (
+            // Something is playing; there is just nothing lined up after it.
+            <EmptyState
+              icon={IconListDetails}
+              label="Nothing up next"
+              hint="Swipe a track right anywhere in the app to line it up."
+            />
+          ) : (
+            <EmptyState
+              icon={IconListDetails}
+              label="Queue is empty"
+              hint="Play an album, or swipe a track right to queue it."
+            />
+          )
         }
         renderItem={({ item: row }) => {
           if (row.kind === 'header') {
@@ -291,7 +351,7 @@ export function QueueScreen() {
           icon={IconArrowsShuffle}
           onPress={() => {
             setMenu('none');
-            void setShuffled(!shuffled);
+            toast.guard(setShuffled(!shuffled), "Couldn't change shuffle");
           }}
         />
         <SheetRow label="Save as playlist…" icon={IconPlaylistAdd} onPress={() => setMenu('save')} />
@@ -435,6 +495,18 @@ export function QueueScreen() {
  * One queued track. Memoised: a queue is long, every row carries a pan
  * gesture, and without this each queue change re-rendered all of them.
  */
+interface QueueRowProps {
+  item: MediaItem;
+  index: number;
+  dimmed: boolean;
+  last: boolean;
+  upcoming: boolean;
+  onJump: (index: number) => void;
+  onNext: (index: number, title?: string) => void;
+  onRemove: (index: number, title?: string) => void;
+  onMenu: (item: MediaItem, index: number) => void;
+}
+
 const QueueRow = memo(function QueueRow({
   item,
   index,
@@ -445,17 +517,7 @@ const QueueRow = memo(function QueueRow({
   onNext,
   onRemove,
   onMenu,
-}: {
-  item: MediaItem;
-  index: number;
-  dimmed: boolean;
-  last: boolean;
-  upcoming: boolean;
-  onJump: (index: number) => void;
-  onNext: (index: number, title?: string) => void;
-  onRemove: (index: number, title?: string) => void;
-  onMenu: (item: MediaItem, index: number) => void;
-}) {
+}: QueueRowProps) {
   const color = useTheme();
   const artworkUrl = useArtwork();
   const row = (
@@ -489,13 +551,37 @@ const QueueRow = memo(function QueueRow({
         icon: <IconTrash size={20} color="#FFFFFF" strokeWidth={2} />,
         label: 'Remove',
         tone: 'danger',
+        removes: true,
         onAction: () => onRemove(index, item.title),
       }}
     >
       {row}
     </SwipeableRow>
   );
-});
+}, sameQueueRow);
+
+/**
+ * The player hands back fresh item objects on every read, so comparing by
+ * identity made every row "change" on every queue event. A row is the same
+ * row if it shows the same track in the same place.
+ */
+function sameQueueRow(a: QueueRowProps, b: QueueRowProps): boolean {
+  return (
+    a.index === b.index &&
+    a.dimmed === b.dimmed &&
+    a.last === b.last &&
+    a.upcoming === b.upcoming &&
+    a.onJump === b.onJump &&
+    a.onNext === b.onNext &&
+    a.onRemove === b.onRemove &&
+    a.onMenu === b.onMenu &&
+    a.item.mediaId === b.item.mediaId &&
+    a.item.title === b.item.title &&
+    a.item.artist === b.item.artist &&
+    a.item.duration === b.item.duration &&
+    extrasOf(a.item)?.coverArt === extrasOf(b.item)?.coverArt
+  );
+}
 
 const makeStyles = (color: Palette) =>
   StyleSheet.create({

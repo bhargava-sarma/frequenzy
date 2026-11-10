@@ -143,9 +143,11 @@ export const useSettingsStore = create<SettingsStore>()(
       setLyricsOffset: (trackId, seconds) => {
         const next = { ...get().lyricsOffsets };
         delete next[trackId];
-        // Rounded to a tenth: finer than anyone can hear, and it keeps the
-        // readout from showing floating-point dust.
-        const rounded = Math.round(seconds * 10) / 10;
+        // Rounded to a hundredth: it keeps the readout free of floating-point
+        // dust without bending the quarter-second steps the nudge keys take.
+        // (Rounding to a tenth turned ±0.25 into +0.3 and −0.2, so the two
+        // keys moved by different amounts and couldn't return to zero.)
+        const rounded = Math.round(seconds * 100) / 100;
         if (rounded !== 0) next[trackId] = rounded;
 
         const keys = Object.keys(next);
@@ -153,7 +155,10 @@ export const useSettingsStore = create<SettingsStore>()(
         set({ lyricsOffsets: next });
       },
 
-      reset: () => set({ ...DEFAULT_SETTINGS, migratedLegacy: true }),
+      // Preferences go back to their defaults. The per-track lyric timings
+      // stay: they are corrections made by ear, one track at a time — work,
+      // not preference — and nothing about a reset asks for them to go.
+      reset: () => set({ ...DEFAULT_SETTINGS, lyricsOffsets: get().lyricsOffsets, migratedLegacy: true }),
     }),
     {
       name: 'settings.v2',

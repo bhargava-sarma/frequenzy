@@ -1,8 +1,10 @@
-import { memo } from 'react';
+import { memo, useEffect, useRef } from 'react';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withSequence, withSpring, withTiming } from 'react-native-reanimated';
 
 import type { IconComponent } from './icons';
 import { Touchable } from './Touchable';
+import { useMotion } from '../theme/motion';
 import { icon as iconTokens, space } from '../theme/tokens';
 import { useTheme } from '../theme/ThemeProvider';
 import { haptics } from '../utils/haptics';
@@ -13,6 +15,11 @@ import { haptics } from '../utils/haptics';
  * `surface` (default) is a solid raised disc — it reads over a list, a
  * cover or the player's colour alike. `plain` is a bare glyph that only
  * needs a hit area, `accent` the one button that matters on a screen.
+ *
+ * `popOn` is for toggles whose change is the news: pass the toggled value
+ * (a heart's liked state, shuffle on or off) and the glyph gives a small
+ * pop each time it changes — confirmation at the spot the finger just left,
+ * before the toast gets there.
  */
 export interface IconButtonProps {
   icon: IconComponent;
@@ -29,6 +36,8 @@ export interface IconButtonProps {
   /** A small status dot in the corner. */
   badge?: boolean;
   disabled?: boolean;
+  /** When this value changes, the glyph pops. */
+  popOn?: unknown;
   style?: StyleProp<ViewStyle>;
 }
 
@@ -44,12 +53,27 @@ export const IconButton = memo(function IconButton({
   active = false,
   badge = false,
   disabled = false,
+  popOn,
   style,
 }: IconButtonProps) {
   const color = useTheme();
+  const { timings, springs } = useMotion();
   const glyph =
     colorOverride ??
     (variant === 'accent' ? color.accentInk : active ? color.accent : color.label);
+
+  const pop = useSharedValue(1);
+  const lastPop = useRef(popOn);
+  useEffect(() => {
+    if (Object.is(lastPop.current, popOn)) return;
+    lastPop.current = popOn;
+    // Out fast, back on a loose spring: the one place a little bounce reads
+    // as feedback rather than as decoration.
+    pop.value = withSequence(withTiming(1.28, timings.press), withSpring(1, springs.pop));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [popOn, pop]);
+
+  const glyphStyle = useAnimatedStyle(() => ({ transform: [{ scale: pop.value }] }));
 
   return (
     <Touchable
@@ -58,6 +82,7 @@ export const IconButton = memo(function IconButton({
       accessibilityState={{ disabled, selected: active }}
       disabled={disabled}
       hitSlop={size < 40 ? space[2] : space[1]}
+      pressedScale={0.92}
       onPress={() => {
         haptics.tick();
         onPress?.();
@@ -75,11 +100,13 @@ export const IconButton = memo(function IconButton({
         style,
       ]}
     >
-      <Icon
-        size={iconSize ?? Math.round(size * 0.5)}
-        color={glyph}
-        strokeWidth={iconTokens.strokeWidth + 0.25}
-      />
+      <Animated.View style={glyphStyle}>
+        <Icon
+          size={iconSize ?? Math.round(size * 0.5)}
+          color={glyph}
+          strokeWidth={iconTokens.strokeWidth + 0.25}
+        />
+      </Animated.View>
       {badge && <View style={[styles.badge, { backgroundColor: color.accent }]} />}
     </Touchable>
   );

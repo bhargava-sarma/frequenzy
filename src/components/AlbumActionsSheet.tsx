@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Share, StyleSheet, View } from 'react-native';
 
 import { AddToPlaylistSheet } from './AddToPlaylistSheet';
@@ -51,19 +51,23 @@ export function AlbumActionsSheet({ visible, onClose, album, hide = [] }: AlbumA
   const setStarred = useFavoritesStore((state) => state.setStarred);
   const starred = useStarred(album?.id, Boolean(album?.starred));
 
+  // The album this sheet was opened for, captured on the way open and held
+  // through close: the caller clears its target then, and the sheet still
+  // has an exit to play and perhaps a follow-on to show.
   const [held, setHeld] = useState<AlbumSummary | null>(album);
   const [pending, setPending] = useState(false);
   const [picking, setPicking] = useState<string[] | null>(null);
-
-  useEffect(() => {
-    if (visible && album) {
+  const [wasVisible, setWasVisible] = useState(visible);
+  if (visible !== wasVisible) {
+    setWasVisible(visible);
+    if (visible) {
       setHeld(album);
       setPicking(null);
       setPending(false);
     }
-  }, [visible, album]);
+  }
 
-  const target = album ?? held;
+  const target = held ?? album;
 
   async function songs(): Promise<Child[]> {
     if (!library || !target) return [];
@@ -95,15 +99,21 @@ export function AlbumActionsSheet({ visible, onClose, album, hide = [] }: AlbumA
         visible={visible && picking == null && !pending}
         onClose={onClose}
         onClosed={() => {
-          if (pending) {
-            setPending(false);
-            void songs()
-              .then((tracks) => setPicking(tracks.map((t) => t.id)))
-              .catch((error) => {
-                toast.error("Couldn't load tracks", { detail: errorMessage(error) });
-                onClose();
-              });
-          }
+          if (!pending) return;
+          // `pending` stays set until the tracks are in hand. Cleared first,
+          // there was a stretch with nothing pending and nothing picked —
+          // which is this sheet's own cue to show — so it rose again for as
+          // long as the fetch took and dropped a second time.
+          void songs()
+            .then((tracks) => {
+              setPicking(tracks.map((t) => t.id));
+              setPending(false);
+            })
+            .catch((error) => {
+              setPending(false);
+              toast.error("Couldn't load tracks", { detail: errorMessage(error) });
+              onClose();
+            });
         }}
         title={target?.name ?? 'Album'}
         subtitle={[target?.artist, target?.year ? String(target.year) : null].filter(Boolean).join(' · ')}

@@ -87,6 +87,24 @@ export const toast = {
     useToastStore.getState().show(message, { ...options, tone: 'success' }),
   error: (message: string, options?: Partial<Omit<Toast, 'id' | 'message' | 'tone'>>) =>
     useToastStore.getState().show(message, { ...options, tone: 'error' }),
+  /**
+   * Runs fire-and-forget work and says so if it fails.
+   *
+   * A key that starts playback kicks off a promise nobody awaits. Left bare,
+   * a failure — the server out of reach, the player refusing a queue — is an
+   * unhandled rejection: nothing plays and nothing says why, which reads as
+   * a dead button. Pass `quiet` errors (a mix that found nothing, say) as
+   * a class to be shown as information rather than as a fault.
+   */
+  guard: (work: Promise<unknown>, failure = "Couldn't play", quiet?: new (...args: never[]) => Error): void => {
+    work.catch((error: unknown) => {
+      if (quiet && error instanceof quiet) {
+        useToastStore.getState().show(error.message, { icon: 'info' });
+        return;
+      }
+      useToastStore.getState().show(failure, { tone: 'error', detail: errorMessage(error) });
+    });
+  },
 };
 
 /** A readable message from anything thrown. */
@@ -96,6 +114,7 @@ export function errorMessage(error: unknown): string {
     const match = /Subsonic error \d+ on \w+: (.*)$/.exec(error.message);
     if (match) return match[1];
     if (/Could not reach the server/.test(error.message)) return 'Server unreachable';
+    if (/Network request failed|Timed out after/.test(error.message)) return 'Server unreachable';
     return error.message;
   }
   return String(error);

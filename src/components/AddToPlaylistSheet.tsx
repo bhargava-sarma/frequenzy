@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { IconPlaylist, IconPlus } from './icons';
 import { Keycap, KeyRow } from './Keycap';
@@ -124,7 +124,7 @@ export function AddToPlaylistSheet({
             </View>
           </SheetBody>
         ) : (
-          <ScrollView style={styles.list} bounces={false}>
+          <View>
             <SheetRow label="New playlist…" icon={IconPlus} tone="accent" onPress={() => setCreating(true)} />
             {options.map((playlist, index) => (
               <SheetRow
@@ -143,7 +143,7 @@ export function AddToPlaylistSheet({
                 onPress={() => void choose(playlist)}
               />
             ))}
-          </ScrollView>
+          </View>
         )}
       </Sheet>
 
@@ -172,7 +172,6 @@ export function AddToPlaylistSheet({
 
 const makeStyles = (color: Palette) =>
   StyleSheet.create({
-    list: { flexGrow: 0 },
     warning: { ...type.body, color: color.label, lineHeight: 21 },
     hint: { ...type.footnote, color: color.labelSecondary, marginTop: space[2], lineHeight: 18 },
     actions: { marginTop: space[5], marginBottom: space[2] },

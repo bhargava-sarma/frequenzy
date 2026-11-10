@@ -1,10 +1,17 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import Animated, {
+  interpolateColor,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import TrackPlayer, { useActiveMediaItem, useProgress } from '@rntp/player';
 
 import { activeLineIndex } from '../api/lrclib';
 import { AmbientBackground } from '../components/AmbientBackground';
+import { Appear } from '../components/Appear';
 import { Chip, ChipRow } from '../components/Chip';
 import { IconButton } from '../components/IconButton';
 import {
@@ -24,6 +31,7 @@ import { useLyrics } from '../hooks/useLyrics';
 import { extrasOf } from '../player/trackMapping';
 import { usePlayerUiStore } from '../store/usePlayerUiStore';
 import { useSettingsStore, type LyricsSize } from '../store/useSettingsStore';
+import { useMotion } from '../theme/motion';
 import { layout, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
@@ -33,19 +41,25 @@ import { romanizeLine } from '../utils/romanize';
  * Lyrics, following the voice.
  *
  * From the server's own tags when it has them, LRCLIB otherwise. The current
- * line is the only thing in the accent and at full strength; it changes in
- * place, with no fade or lift. The one motion is the scroll that keeps it in
- * view. Lines are tappable and seek. Scroll by hand and following pauses —
- * reading ahead is impossible if every tick drags the view back — with a key
- * to resume.
+ * line is the only thing in the accent and at full strength: the light
+ * passes from one line to the next over a quarter of a second, the new line
+ * swelling a touch as it takes it, while the scroll keeps it in view. Lines
+ * are tappable and seek. Scroll by hand and following pauses — reading
+ * ahead is impossible if every tick drags the view back — with a key to
+ * resume.
  *
  * Timing that's a little early or late can be nudged per track; the
- * correction is remembered.
+ * correction is remembered. It is stored as how far the lyric clock runs
+ * ahead of the track, so a positive figure shows the words sooner.
  */
 
 const TICK_SECONDS = 0.25;
 const MANUAL_SCROLL_GRACE_MS = 6000;
 const INACTIVE_OPACITY = 0.36;
+/** How much the line being sung grows. Small enough that a full-width line stays inside the gutter. */
+const ACTIVE_SWELL = 0.025;
+/** One press of Earlier or Later. */
+const LYRIC_NUDGE_SECONDS = 0.25;
 
 const SIZES: Record<LyricsSize, { fontSize: number; lineHeight: number }> = {
   small: { fontSize: 20, lineHeight: 28 },
@@ -132,6 +146,18 @@ export function LyricsScreen() {
   };
 
   const fontStyle = SIZES[size];
+
+  // A new size or a romanised line under each one moves every line, so the
+  // one being sung is no longer where the view left it. Back to it, once the
+  // new layout has reported in.
+  useEffect(() => {
+    if (!synced || index < 0) return;
+    if (Date.now() < manualUntil.current) return;
+    const timer = setTimeout(() => scrollToLine(index, false), 80);
+    return () => clearTimeout(timer);
+    // Only the layout-changing settings; the line itself has its own effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [size, romanize]);
 
   const body = () => {
     if (status === 'loading' || status === 'idle') return <LoadingState label="Looking for lyrics" />;
@@ -251,15 +277,34 @@ export function LyricsScreen() {
           )}
           {synced && (
             <>
-              <Chip label="Earlier" icon={IconMinus} tone="onArtwork" onPress={() => setLyricsOffset(trackId, offset - 0.25)} />
+              {/* The offset is how far the lyric clock runs ahead, so showing
+                  the words earlier means raising it. These two were wired the
+                  other way round: "Earlier" made every line arrive later. */}
               <Chip
-                label={offset === 0 ? 'In sync' : `${offset > 0 ? '+' : ''}${offset.toFixed(2)}s`}
+                label="Earlier"
+                icon={IconMinus}
+                tone="onArtwork"
+                accessibilityLabel="Show lyrics earlier"
+                onPress={() => setLyricsOffset(trackId, offset + LYRIC_NUDGE_SECONDS)}
+              />
+              <Chip
+                label={
+                  offset === 0
+                    ? 'In sync'
+                    : `${Math.abs(offset).toFixed(2)}s ${offset > 0 ? 'early' : 'late'}`
+                }
                 tone="onArtwork"
                 selected={offset !== 0}
                 onPress={() => setLyricsOffset(trackId, 0)}
                 accessibilityLabel="Reset lyric timing"
               />
-              <Chip label="Later" icon={IconPlus} tone="onArtwork" onPress={() => setLyricsOffset(trackId, offset + 0.25)} />
+              <Chip
+                label="Later"
+                icon={IconPlus}
+                tone="onArtwork"
+                accessibilityLabel="Show lyrics later"
+                onPress={() => setLyricsOffset(trackId, offset - LYRIC_NUDGE_SECONDS)}
+              />
             </>
           )}
         </ChipRow>
@@ -282,9 +327,9 @@ export function LyricsScreen() {
       </ScrollView>
 
       {synced && !following && (
-        <View style={[styles.follow, { bottom: insets.bottom + space[5] }]}>
+        <Appear rise={10} style={[styles.follow, { bottom: insets.bottom + space[5] }]}>
           <Keycap label="Follow" icon={IconArrowBarToDown} variant="primary" size="sm" onPress={resume} />
-        </View>
+        </Appear>
       )}
     </View>
   );
@@ -321,11 +366,23 @@ const LyricRow = memo(function LyricRow({
   onLayout: (index: number, y: number) => void;
   onSeek: (seconds: number) => void;
 }) {
-  const textStyle = {
-    color: active ? activeColor : idleColor,
-    opacity: active ? 1 : past ? INACTIVE_OPACITY * 0.8 : INACTIVE_OPACITY,
-  };
-  const romanStyle = { opacity: active ? 0.8 : INACTIVE_OPACITY * 0.8 };
+  const { timings } = useMotion();
+  // 0 unlit, 1 the line being sung. Mounts already in its state.
+  const lit = useSharedValue(active ? 1 : 0);
+  useEffect(() => {
+    lit.value = withTiming(active ? 1 : 0, timings.appear);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, lit]);
+
+  const rest = past ? INACTIVE_OPACITY * 0.8 : INACTIVE_OPACITY;
+  const textStyle = useAnimatedStyle(() => ({
+    color: interpolateColor(lit.value, [0, 1], [idleColor, activeColor]),
+    opacity: rest + (1 - rest) * lit.value,
+    transform: [{ scale: 1 + lit.value * ACTIVE_SWELL }],
+  }));
+  const romanStyle = useAnimatedStyle(() => ({
+    opacity: INACTIVE_OPACITY * 0.8 + (0.8 - INACTIVE_OPACITY * 0.8) * lit.value,
+  }));
 
   return (
     <Pressable
@@ -333,13 +390,14 @@ const LyricRow = memo(function LyricRow({
       onLayout={(e) => onLayout(index, e.nativeEvent.layout.y)}
       accessibilityRole="button"
       accessibilityLabel={`Play from "${text}"`}
-      style={lineStyles.press}
+      accessibilityState={{ selected: active }}
+      style={({ pressed }) => [lineStyles.press, pressed && lineStyles.pressed]}
     >
-      <Text style={[lineStyles.line, { fontSize, lineHeight }, textStyle]}>{text}</Text>
+      <Animated.Text style={[lineStyles.line, { fontSize, lineHeight }, textStyle]}>{text}</Animated.Text>
       {roman && (
-        <Text style={[lineStyles.roman, romanStyle]} numberOfLines={2}>
+        <Animated.Text style={[lineStyles.roman, romanStyle]} numberOfLines={2}>
           {roman}
-        </Text>
+        </Animated.Text>
       )}
     </Pressable>
   );
@@ -350,8 +408,12 @@ const lineStyles = StyleSheet.create({
     paddingVertical: space[3],
     paddingHorizontal: space[3],
     marginHorizontal: -space[3],
+    borderRadius: 12,
   },
-  line: { fontFamily: type.title1.fontFamily, letterSpacing: -0.6 },
+  pressed: { backgroundColor: 'rgba(255,255,255,0.07)' },
+  // Swells from its leading edge, so the start of the line — where the eye
+  // is — holds still.
+  line: { fontFamily: type.title1.fontFamily, letterSpacing: -0.6, transformOrigin: 'left' },
   roman: { ...type.subhead, fontSize: 13.5, lineHeight: 19, color: '#FFFFFF', marginTop: space[1] },
 });
 

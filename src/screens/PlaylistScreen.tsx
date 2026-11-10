@@ -1,12 +1,12 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { RefreshControl, StyleSheet, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useActiveMediaItem, useIsPlaying } from '@rntp/player';
 
 import { AddToPlaylistSheet } from '../components/AddToPlaylistSheet';
-import { useCollapsingHeader } from '../components/CollapsingHeader';
+import { useCollapsingHeader, useNavBarHeight } from '../components/CollapsingHeader';
 import { DetailHero, HeroBackdrop } from '../components/DetailHero';
 import { IconButton } from '../components/IconButton';
 import {
@@ -32,6 +32,7 @@ import { DOCK_CLEARANCE } from '../components/TabBar';
 import { TrackActionsSheet } from '../components/TrackActionsSheet';
 import { TrackRow } from '../components/TrackRow';
 import { useArtwork } from '../hooks/useArtwork';
+import { usePullRefresh } from '../hooks/usePullRefresh';
 import { LIKED_PLAYLIST_ID, type AnyStackParamList } from '../navigation/types';
 import { extrasOf } from '../player/trackMapping';
 import { useFavoritesStore } from '../store/useFavoritesStore';
@@ -65,6 +66,7 @@ export function PlaylistScreen() {
   const { playlistId, playlistName } = route.params;
   const isLiked = playlistId === LIKED_PLAYLIST_ID;
   const artworkUrl = useArtwork();
+  const navHeight = useNavBarHeight();
   const { scrollY, onScroll, progress } = useCollapsingHeader();
 
   const client = useServerStore((state) => state.client);
@@ -86,6 +88,7 @@ export function PlaylistScreen() {
   const [error, setError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
   const refresh = useCallback(() => setReloadToken((token) => token + 1), []);
+  const pull = usePullRefresh(loading, refresh);
 
   useEffect(() => {
     if (!client) return;
@@ -163,33 +166,67 @@ export function PlaylistScreen() {
   const total = playlist?.duration ?? songs.reduce((sum, song) => sum + (song.duration ?? 0), 0);
 
   const handlePlay = useCallback(
-    (index: number) =>
-      void playNow(filtered, index, source).catch((e) => toast.error("Couldn't play", { detail: errorMessage(e) })),
+    (index: number) => toast.guard(playNow(filtered, index, source)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [playNow, filtered, title, isLiked],
   );
   const handleQueue = useCallback(
     (song: Child) =>
-      void addToQueue([song])
-        .then(() => toast.show('Added to queue', { icon: 'queue', detail: song.title }))
-        .catch((e) => toast.error("Couldn't queue", { detail: errorMessage(e) })),
+      toast.guard(
+        addToQueue([song]).then(() => toast.show('Added to queue', { icon: 'queue', detail: song.title })),
+        "Couldn't queue",
+      ),
     [addToQueue],
   );
+
+  /**
+   * Removals in flight, sent one at a time.
+   *
+   * The server removes by position, and each position here is read off the
+   * list as it stands after the removals before it. Sent side by side, two
+   * requests could land in either order and the second would take out the
+   * wrong track. The reload waits for the last of them: one fired after each
+   * came back while the next was still pending, and briefly put that row
+   * back on screen. If one fails, the positions after it are all off by one,
+   * so the rest are dropped rather than sent.
+   */
+  const removals = useRef({ tail: Promise.resolve(), pending: 0, failed: false });
 
   const removeSong = useCallback(
     (song: Child) => {
       if (isLiked) {
-        void setStarred({ id: song.id, kind: 'song', albumId: song.albumId, title: song.title }, false).then(refresh);
+        // Optimistic here too: the row goes with the swipe, and the reload
+        // puts it back if the server wouldn't have it.
+        setSongs((current) => current.filter((other) => other !== song));
+        void setStarred({ id: song.id, kind: 'song', albumId: song.albumId, title: song.title }, false).finally(
+          refresh,
+        );
         return;
       }
       const position = positionOf(song);
       if (position < 0) return;
       // Optimistic, so the row closes the gap at once; the reload confirms.
       setSongs((current) => current.filter((_, index) => index !== position));
-      void removeTrackAt(playlistId, position)
-        .then(() => toast.show('Removed from playlist', { icon: 'playlist', detail: song.title }))
-        .catch((e) => toast.error("Couldn't remove", { detail: errorMessage(e) }))
-        .finally(refresh);
+
+      const queue = removals.current;
+      queue.pending += 1;
+      queue.tail = queue.tail
+        .then(async () => {
+          if (queue.failed) return;
+          await removeTrackAt(playlistId, position);
+          toast.show('Removed from playlist', { icon: 'playlist', detail: song.title });
+        })
+        .catch((e: unknown) => {
+          queue.failed = true;
+          toast.error("Couldn't remove", { detail: errorMessage(e) });
+        })
+        .finally(() => {
+          queue.pending -= 1;
+          if (queue.pending === 0) {
+            queue.failed = false;
+            refresh();
+          }
+        });
     },
     [isLiked, setStarred, refresh, positionOf, removeTrackAt, playlistId],
   );
@@ -210,7 +247,15 @@ export function PlaylistScreen() {
     <View>
       <DetailHero
         artworkUri={artworkUrl(playlist?.coverArt, 600)}
-        eyebrow={isLiked ? 'Collection · Hearted' : `Playlist · ${playlist?.public ? 'Public' : 'Private'}`}
+        // Public or private only once it is known: assumed private until
+        // loaded, a public playlist opened with the wrong word on it.
+        eyebrow={
+          isLiked
+            ? 'Collection · Hearted'
+            : playlist
+              ? `Playlist · ${playlist.public ? 'Public' : 'Private'}`
+              : 'Playlist'
+        }
         title={title}
         subtitle={!isLiked && playlist?.owner ? `by ${playlist.owner}` : undefined}
         meta={songs.length > 0 ? [pluralize(songs.length, 'track'), formatLength(total)].join('  ·  ') : undefined}
@@ -231,16 +276,27 @@ export function PlaylistScreen() {
                 label="Play"
                 variant="primary"
                 flex
-                onPress={() => void playNow(songs, 0, source)}
+                onPress={() => toast.guard(playNow(songs, 0, source))}
               />
-              <Keycap icon={IconArrowsShuffle} label="Shuffle" flex onPress={() => void shufflePlay(songs, source)} />
+              <Keycap
+                icon={IconArrowsShuffle}
+                label="Shuffle"
+                flex
+                onPress={() => toast.guard(shufflePlay(songs, source))}
+              />
               <Keycap
                 icon={IconListDetails}
                 square
                 accessibilityLabel="Add all to queue"
                 onPress={() =>
-                  void addToQueue(songs).then(() =>
-                    toast.show('Added to queue', { icon: 'queue', detail: `${title} · ${pluralize(songs.length, 'track')}` }),
+                  toast.guard(
+                    addToQueue(songs).then(() =>
+                      toast.show('Added to queue', {
+                        icon: 'queue',
+                        detail: `${title} · ${pluralize(songs.length, 'track')}`,
+                      }),
+                    ),
+                    "Couldn't queue",
                   )
                 }
               />
@@ -320,6 +376,7 @@ export function PlaylistScreen() {
         removeClippedSubviews
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
+        refreshControl={<RefreshControl {...pull} progressViewOffset={navHeight} />}
       />
 
       <Sheet

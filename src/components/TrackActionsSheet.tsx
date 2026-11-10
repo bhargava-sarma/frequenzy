@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Share, StyleSheet, View } from 'react-native';
 
 import { AddToPlaylistSheet } from './AddToPlaylistSheet';
@@ -21,10 +21,10 @@ import { Sheet, SheetRow } from './Sheet';
 import { TrackInfoSheet } from './TrackInfoSheet';
 import { useArtwork } from '../hooks/useArtwork';
 import { navigateToAlbum, navigateToArtist } from '../navigation/ref';
-import { EmptyMixError, startTrackRadio } from '../player/mixes';
+import { EmptyMixError, completeSong, startTrackRadio } from '../player/mixes';
 import { useFavoritesStore, useStarred } from '../store/useFavoritesStore';
 import { usePlayerStore } from '../store/usePlayerStore';
-import { errorMessage, toast } from '../store/useToastStore';
+import { toast } from '../store/useToastStore';
 import { layout, space } from '../theme/tokens';
 import type { Child } from '../types/subsonic';
 
@@ -60,28 +60,42 @@ export function TrackActionsSheet({ visible, onClose, song, hide = [], extraActi
   /** The follow-on sheet showing, and the one waiting for this to close. */
   const [next, setNext] = useState<Next>('none');
   const [pending, setPending] = useState<Next>('none');
-  // The song is held while a follow-on sheet is up: the caller usually
-  // clears its target when this one closes.
+  /**
+   * The track this sheet was opened for, fixed for as long as it is up.
+   *
+   * Captured on the way open rather than followed from the prop. The player
+   * hands over the playing track, which is a new object on every one of its
+   * once-a-second renders and a different track altogether when the song
+   * changes: following it reset the follow-on sheets every second — "Add to
+   * playlist" opened and shut again before a playlist could be picked — and
+   * would have put the wrong track in a playlist if the song ended while
+   * one was being chosen. Held past close too, since the caller usually
+   * clears its target then and the sheet still has an exit to play.
+   */
   const [held, setHeld] = useState<Child | null>(song);
-
-  useEffect(() => {
-    if (visible && song) {
+  const [wasVisible, setWasVisible] = useState(visible);
+  if (visible !== wasVisible) {
+    setWasVisible(visible);
+    if (visible) {
       setHeld(song);
       setNext('none');
       setPending('none');
     }
-  }, [visible, song]);
+  }
 
-  const target = song ?? held;
+  const target = held ?? song;
 
   function run(work: () => Promise<unknown> | void, message?: string, icon?: 'queue' | 'next') {
     onClose();
-    void Promise.resolve()
-      .then(work)
-      .then(() => {
-        if (message) toast.show(message, { icon, detail: target?.title });
-      })
-      .catch((error) => toast.error('Something went wrong', { detail: errorMessage(error) }));
+    toast.guard(
+      Promise.resolve()
+        .then(work)
+        .then(() => {
+          if (message) toast.show(message, { icon, detail: target?.title });
+        }),
+      'Something went wrong',
+      EmptyMixError,
+    );
   }
 
   const showAlbum = !hide.includes('album') && target?.albumId;
@@ -116,7 +130,7 @@ export function TrackActionsSheet({ visible, onClose, song, hide = [], extraActi
                     size="sm"
                     variant="primary"
                     flex
-                    onPress={() => run(() => playTrackNow(target))}
+                    onPress={() => run(async () => playTrackNow(await completeSong(target)))}
                   />
                 )}
                 <Keycap
@@ -125,7 +139,7 @@ export function TrackActionsSheet({ visible, onClose, song, hide = [], extraActi
                   accessibilityLabel="Play next"
                   size="sm"
                   flex
-                  onPress={() => run(() => playNext([target]), 'Playing next', 'next')}
+                  onPress={() => run(async () => playNext([await completeSong(target)]), 'Playing next', 'next')}
                 />
                 <Keycap
                   icon={IconListDetails}
@@ -133,7 +147,7 @@ export function TrackActionsSheet({ visible, onClose, song, hide = [], extraActi
                   accessibilityLabel="Play last"
                   size="sm"
                   flex
-                  onPress={() => run(() => addToQueue([target]), 'Added to queue', 'queue')}
+                  onPress={() => run(async () => addToQueue([await completeSong(target)]), 'Added to queue', 'queue')}
                 />
                 <Keycap
                   icon={starred ? IconHeartFilled : IconHeart}
@@ -159,13 +173,8 @@ export function TrackActionsSheet({ visible, onClose, song, hide = [], extraActi
               icon={IconRadio}
               onPress={() =>
                 run(async () => {
-                  try {
-                    const count = await startTrackRadio(target);
-                    toast.show('Radio started', { icon: 'radio', detail: `${count} tracks like ${target.title}` });
-                  } catch (error) {
-                    if (error instanceof EmptyMixError) toast.show(error.message, { icon: 'info' });
-                    else throw error;
-                  }
+                  const count = await startTrackRadio(await completeSong(target));
+                  toast.show('Radio started', { icon: 'radio', detail: `${count} tracks like ${target.title}` });
                 })
               }
             />

@@ -1,4 +1,4 @@
-import { memo, useState, type ReactNode } from 'react';
+import { memo, useMemo, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { Image } from 'expo-image';
 import Animated, { useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
@@ -9,7 +9,8 @@ import { Label } from './Label';
 import { useNavBarHeight } from './CollapsingHeader';
 import { layout, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
-import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
+import { useTheme, useThemeControls, useThemedStyles } from '../theme/ThemeProvider';
+import { artworkCacheKey } from '../utils/artworkKey';
 import { useSvgId } from '../utils/svgId';
 
 /**
@@ -114,21 +115,26 @@ export const HeroBackdrop = memo(function HeroBackdrop({
   scrollY: SharedValue<number>;
 }) {
   const color = useTheme();
+  const { reduceMotion } = useThemeControls();
   const fadeId = useSvgId('herofade');
 
   const style = useAnimatedStyle(() => ({ transform: [{ translateY: -scrollY.value }] }));
+  const cacheKey = artworkCacheKey(uri);
+  const source = useMemo(() => (uri ? { uri, cacheKey } : null), [uri, cacheKey]);
 
-  if (!uri) return null;
+  if (!source) return null;
 
   return (
     <Animated.View pointerEvents="none" style={[backdropStyles.root, style]}>
       <Image
-        source={{ uri }}
+        source={source}
         style={StyleSheet.absoluteFill}
         contentFit="cover"
         blurRadius={40}
         cachePolicy="memory-disk"
-        transition={0}
+        // The wash arrives after the page does; fading it in keeps a slow
+        // server from snapping a block of colour onto a screen being read.
+        transition={reduceMotion ? 0 : 260}
       />
       <View
         style={[

@@ -16,6 +16,7 @@ import { DetailScaffold } from '../components/Scaffold';
 import { EmptyState, LoadingState } from '../components/ScreenState';
 import { SectionHeader } from '../components/SectionHeader';
 import { DOCK_CLEARANCE } from '../components/TabBar';
+import { TrackActionsSheet } from '../components/TrackActionsSheet';
 import {
   getListeningStats,
   onPlayHistoryChanged,
@@ -24,8 +25,11 @@ import {
 } from '../data/playHistory';
 import { useArtwork } from '../hooks/useArtwork';
 import type { AnyStackParamList } from '../navigation/types';
+import { playOutline } from '../player/mixes';
+import { toast } from '../store/useToastStore';
 import { layout, radius, space, type } from '../theme/tokens';
 import { useTheme } from '../theme/ThemeProvider';
+import type { Child } from '../types/subsonic';
 import { formatDate, formatListening, pluralize } from '../utils/time';
 
 /**
@@ -55,6 +59,7 @@ export function StatsScreen() {
 
   const [range, setRange] = useState<ChartWindow>('month');
   const [stats, setStats] = useState<ListeningStats | null>(null);
+  const [trackTarget, setTrackTarget] = useState<Child | null>(null);
 
   const load = useCallback(() => {
     void getListeningStats(range, { top: 10 }).then(setStats);
@@ -171,20 +176,32 @@ export function StatsScreen() {
                 {stats.topTracks.length > 0 && (
                   <>
                     <SectionHeader index="05" title="Top tracks" />
-                    {stats.topTracks.map((track, index) => (
-                      <ListRow
-                        key={track.songId}
-                        rank={index + 1}
-                        title={track.title}
-                        subtitle={track.artist}
-                        artworkUri={artworkUrl(track.coverArt)}
-                        trailingText={`${track.plays}×`}
-                        last={index === stats.topTracks.length - 1}
-                        onPress={
-                          track.albumId ? () => navigation.navigate('Album', { albumId: track.albumId as string }) : undefined
-                        }
-                      />
-                    ))}
+                    {stats.topTracks.map((track, index) => {
+                      const song: Child = {
+                        id: track.songId,
+                        isDir: false,
+                        title: track.title,
+                        artist: track.artist,
+                        albumId: track.albumId,
+                        coverArt: track.coverArt,
+                      };
+                      return (
+                        <ListRow
+                          key={track.songId}
+                          rank={index + 1}
+                          title={track.title}
+                          subtitle={track.artist}
+                          artworkUri={artworkUrl(track.coverArt)}
+                          trailingText={`${track.plays}×`}
+                          last={index === stats.topTracks.length - 1}
+                          // Plays, like a track row anywhere; its album and
+                          // the rest are in the menu.
+                          onPress={() => toast.guard(playOutline(song))}
+                          onLongPress={() => setTrackTarget(song)}
+                          onMore={() => setTrackTarget(song)}
+                        />
+                      );
+                    })}
                   </>
                 )}
               </>
@@ -198,6 +215,8 @@ export function StatsScreen() {
           </>
         )}
       </Animated.ScrollView>
+
+      <TrackActionsSheet visible={trackTarget != null} onClose={() => setTrackTarget(null)} song={trackTarget} />
     </DetailScaffold>
   );
 }

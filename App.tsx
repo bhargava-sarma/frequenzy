@@ -4,22 +4,28 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
+import { Image } from 'expo-image';
 import TrackPlayer from '@rntp/player';
 
 import { ArtworkAccentBridge } from './src/components/ArtworkAccentBridge';
 import { PlayerOverlay } from './src/components/PlayerOverlay';
 import { ToastHost } from './src/components/ToastHost';
+import { clearLyricsCache } from './src/data/lyricsCache';
+import { clearPlayHistory } from './src/data/playHistory';
+import { clearRecentSearches } from './src/data/recentSearches';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { clearSavedQueue, restoreQueue, startQueuePersistence } from './src/player/queuePersistence';
 import { startScrobbler } from './src/player/scrobbler';
 import { startStreamRepair } from './src/player/streamRepair';
 import { SetupScreen } from './src/screens/SetupScreen';
+import { useFavoritesStore } from './src/store/useFavoritesStore';
 import { usePlayerStore } from './src/store/usePlayerStore';
 import { usePlayerUiStore } from './src/store/usePlayerUiStore';
+import { usePlaylistStore } from './src/store/usePlaylistStore';
 import { useServerStore } from './src/store/useServerStore';
 import { useSettingsStore } from './src/store/useSettingsStore';
 import { toast } from './src/store/useToastStore';
-import { ThemeProvider, useTheme } from './src/theme/ThemeProvider';
+import { ThemeProvider, useArtworkColorStore, useTheme } from './src/theme/ThemeProvider';
 
 /**
  * GestureHandlerRootView wraps everything and sits above SafeAreaProvider:
@@ -55,7 +61,7 @@ function AppContent() {
    * resident — swapping faces mid-render reflows every title. Fonts are
    * assets, not packages, so a type change ships over the air.
    */
-  const [fontsLoaded] = useFonts({
+  const [fontsLoaded, fontError] = useFonts({
     SpaceGrotesk_400Regular: require('./assets/fonts/SpaceGrotesk_400Regular.ttf'),
     SpaceGrotesk_500Medium: require('./assets/fonts/SpaceGrotesk_500Medium.ttf'),
     SpaceGrotesk_600SemiBold: require('./assets/fonts/SpaceGrotesk_600SemiBold.ttf'),
@@ -103,13 +109,35 @@ function AppContent() {
     };
   }, [status]);
 
-  // Signing out drops the queue too: its tracks belong to that server.
+  /**
+   * Signing out drops everything that belongs to the account: the queue,
+   * and every record keyed on that server's ids. Left behind, the next
+   * account would open onto someone else's playlists, a history whose rows
+   * point at tracks that don't exist there, and hearts lit for the wrong
+   * songs. Each step stands alone, so one failing doesn't stop the rest.
+   */
   useEffect(() => {
     setOnSignOut(async () => {
       usePlayerUiStore.getState().closePlayer();
-      if (usePlayerStore.getState().ready) usePlayerStore.getState().clearQueue();
-      else TrackPlayer.clear();
-      await clearSavedQueue();
+      try {
+        if (usePlayerStore.getState().ready) usePlayerStore.getState().clearQueue();
+        else TrackPlayer.clear();
+      } catch {
+        // A player that was never set up has no queue to clear.
+      }
+      usePlaylistStore.setState({ playlists: [], loading: false, error: null });
+      useFavoritesStore.setState({ overrides: {} });
+      useArtworkColorStore.getState().setColors(null);
+
+      await Promise.allSettled([
+        clearSavedQueue(),
+        clearPlayHistory(),
+        clearLyricsCache(),
+        clearRecentSearches(),
+        // Covers are cached under their ids, which mean nothing elsewhere.
+        Image.clearMemoryCache(),
+        Image.clearDiskCache(),
+      ]);
     });
     return () => setOnSignOut(null);
   }, [setOnSignOut]);
@@ -124,7 +152,11 @@ function AppContent() {
 
   const statusBarStyle = color.mode === 'dark' ? 'light' : 'dark';
 
-  if (!fontsLoaded || status === 'hydrating' || (!settingsReady && !graceOver)) {
+  // A font that fails to load is worth less than the app: carry on in the
+  // platform face rather than sit on a blank screen forever.
+  const fontsReady = fontsLoaded || fontError != null;
+
+  if (!fontsReady || status === 'hydrating' || (!settingsReady && !graceOver)) {
     return (
       <View style={[styles.fill, { backgroundColor: color.background }]}>
         <StatusBar style={statusBarStyle} />
@@ -150,5 +182,7 @@ function AppContent() {
 }
 
 const styles = StyleSheet.create({
-  fill: { flex: 1 },
+  // Clipped to the window: the player's colour wash is drawn larger than the
+  // screen on purpose, and nothing should be able to size itself by it.
+  fill: { flex: 1, overflow: 'hidden' },
 });

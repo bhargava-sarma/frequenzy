@@ -288,6 +288,9 @@ function conditionPalette(analysis: Analysis, mode: ThemeMode): ArtworkPalette {
  */
 const MAX_CACHED_COVERS = 400;
 
+/** A 64px thumbnail is a couple of kilobytes; past this the address is wrong. */
+const THUMBNAIL_TIMEOUT_MS = 8000;
+
 function remember<V>(map: Map<string, V>, key: string, value: V) {
   map.set(key, value);
   while (map.size > MAX_CACHED_COVERS) {
@@ -310,8 +313,13 @@ async function analysisFor(url: string, cacheKey: string): Promise<Analysis | nu
   if (existing) return existing;
 
   const work = (async () => {
+    // Bounded: a request to an address the phone has left can hang for the
+    // length of a TCP timeout, and while it does every later attempt for the
+    // same cover is handed this same promise.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), THUMBNAIL_TIMEOUT_MS);
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, { signal: controller.signal });
       // Not cached: a network failure is worth retrying on the next play.
       if (!response.ok) return null;
 
@@ -325,6 +333,7 @@ async function analysisFor(url: string, cacheKey: string): Promise<Analysis | nu
     } catch {
       return null;
     } finally {
+      clearTimeout(timer);
       inFlight.delete(cacheKey);
     }
   })();

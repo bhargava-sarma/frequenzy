@@ -3,18 +3,21 @@ import { StyleSheet, View } from 'react-native';
 
 import { Artwork } from '../Artwork';
 import { radius, withAlpha } from '../../theme/tokens';
-import { useArtworkPalette } from '../../theme/ThemeProvider';
+import { useArtworkPalette, useThemeControls } from '../../theme/ThemeProvider';
 
 /**
  * The cover, as it is.
  *
  * A soft glow in the cover's own colour sits under it and a hairline edge
  * keeps a dark cover from dissolving into a dark background. It holds still
- * whether the music is playing or not — the transport already says which —
- * and a new cover replaces the old one without a crossfade.
+ * whether the music is playing or not — the transport already says which.
+ * A new cover dissolves in over the old one, in step with the background
+ * fading to its colours, so a track change is one soft turn of the page
+ * rather than two things snapping at slightly different moments.
  */
 export const ArtworkFace = memo(function ArtworkFace({ uri, size }: { uri?: string; size: number }) {
   const palette = useArtworkPalette();
+  const { reduceMotion } = useThemeControls();
   const corner = radius.xl;
 
   return (
@@ -34,7 +37,7 @@ export const ArtworkFace = memo(function ArtworkFace({ uri, size }: { uri?: stri
         ],
       }}
     >
-      <Artwork uri={uri} size={size} radius={corner} shadow={false} />
+      <Artwork uri={uri} size={size} radius={corner} shadow={false} transitionMs={reduceMotion ? 0 : 280} />
       <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.edge, { borderRadius: corner }]} />
     </View>
   );

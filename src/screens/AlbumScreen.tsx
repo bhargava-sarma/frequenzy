@@ -1,12 +1,12 @@
 import { useCallback, useDeferredValue, useMemo, useState } from 'react';
-import { StyleSheet, View, useWindowDimensions } from 'react-native';
+import { RefreshControl, StyleSheet, View, useWindowDimensions } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useActiveMediaItem, useIsPlaying } from '@rntp/player';
 
 import { AlbumActionsSheet } from '../components/AlbumActionsSheet';
-import { useCollapsingHeader } from '../components/CollapsingHeader';
+import { useCollapsingHeader, useNavBarHeight } from '../components/CollapsingHeader';
 import { DetailHero, HeroBackdrop } from '../components/DetailHero';
 import { IconButton } from '../components/IconButton';
 import {
@@ -28,11 +28,12 @@ import { TrackActionsSheet } from '../components/TrackActionsSheet';
 import { TrackRow } from '../components/TrackRow';
 import { useArtwork } from '../hooks/useArtwork';
 import { useLibraryData } from '../hooks/useLibraryData';
+import { usePullRefresh } from '../hooks/usePullRefresh';
 import type { AnyStackParamList } from '../navigation/types';
 import { formatPlate, extrasOf } from '../player/trackMapping';
 import { useFavoritesStore, useStarred } from '../store/useFavoritesStore';
 import { usePlayerStore } from '../store/usePlayerStore';
-import { errorMessage, toast } from '../store/useToastStore';
+import { toast } from '../store/useToastStore';
 import { layout, space } from '../theme/tokens';
 import type { AlbumSummary, Child } from '../types/subsonic';
 import { formatLength, pluralize } from '../utils/time';
@@ -48,6 +49,7 @@ export function AlbumScreen() {
   const { albumId, albumName } = route.params;
   const artworkUrl = useArtwork();
   const { width } = useWindowDimensions();
+  const navHeight = useNavBarHeight();
   const { scrollY, onScroll, progress } = useCollapsingHeader();
 
   const playNow = usePlayerStore((state) => state.playNow);
@@ -62,6 +64,9 @@ export function AlbumScreen() {
     (library, forceRefresh) => library.getAlbum(albumId, { forceRefresh }),
     [albumId],
   );
+  // Albums are served from a day-long cache; pulling is how a retagged or
+  // re-added one is fetched again without clearing everything in Settings.
+  const pull = usePullRefresh(loading, refresh);
   const album = data?.album;
   const songs = useMemo(() => data?.songs ?? [], [data]);
   const starred = useStarred(albumId, Boolean(album?.starred));
@@ -109,16 +114,16 @@ export function AlbumScreen() {
   const source = album ? { kind: 'album' as const, label: album.name } : undefined;
 
   const handlePlay = useCallback(
-    (index: number) =>
-      void playNow(visible, index, source).catch((e) => toast.error("Couldn't play", { detail: errorMessage(e) })),
+    (index: number) => toast.guard(playNow(visible, index, source)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [playNow, visible, album?.name],
   );
   const handleQueue = useCallback(
     (song: Child) =>
-      void addToQueue([song])
-        .then(() => toast.show('Added to queue', { icon: 'queue', detail: song.title }))
-        .catch((e) => toast.error("Couldn't queue", { detail: errorMessage(e) })),
+      toast.guard(
+        addToQueue([song]).then(() => toast.show('Added to queue', { icon: 'queue', detail: song.title })),
+        "Couldn't queue",
+      ),
     [addToQueue],
   );
 
@@ -154,16 +159,27 @@ export function AlbumScreen() {
                 label="Play"
                 variant="primary"
                 flex
-                onPress={() => void playNow(songs, 0, source)}
+                onPress={() => toast.guard(playNow(songs, 0, source))}
               />
-              <Keycap icon={IconArrowsShuffle} label="Shuffle" flex onPress={() => void shufflePlay(songs, source)} />
+              <Keycap
+                icon={IconArrowsShuffle}
+                label="Shuffle"
+                flex
+                onPress={() => toast.guard(shufflePlay(songs, source))}
+              />
               <Keycap
                 icon={IconListDetails}
                 square
                 accessibilityLabel="Add album to queue"
                 onPress={() =>
-                  void addToQueue(songs).then(() =>
-                    toast.show('Added to queue', { icon: 'queue', detail: `${title} · ${pluralize(songs.length, 'track')}` }),
+                  toast.guard(
+                    addToQueue(songs).then(() =>
+                      toast.show('Added to queue', {
+                        icon: 'queue',
+                        detail: `${title} · ${pluralize(songs.length, 'track')}`,
+                      }),
+                    ),
+                    "Couldn't queue",
                   )
                 }
               />
@@ -206,6 +222,7 @@ export function AlbumScreen() {
             active={starred}
             size={38}
             iconSize={19}
+            popOn={starred}
             onPress={() => void setStarred({ id: albumId, kind: 'album', title }, !starred)}
           />
           <IconButton
@@ -262,6 +279,7 @@ export function AlbumScreen() {
         windowSize={11}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
+        refreshControl={<RefreshControl {...pull} progressViewOffset={navHeight} />}
       />
 
       <TrackActionsSheet

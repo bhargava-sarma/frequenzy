@@ -32,8 +32,21 @@ interface ServerStore {
   client: SubsonicClient | null;
   /** Cached library reads. Screens use this rather than the raw client. */
   library: LibraryRepository | null;
-  /** Mirrors the client's active connection so UI can show local vs remote. */
+  /**
+   * Mirrors the client's active connection so UI can show local vs remote.
+   * Held through a re-probe: it only goes null once a probe has finished
+   * with nothing answering, so a resume from background doesn't read as
+   * going offline for the length of a ping.
+   */
   connection: ConnectionState | null;
+  /** A probe is in flight. With no connection, this is "linking", not "offline". */
+  connecting: boolean;
+  /**
+   * The address cover art is requested from: the live one, else the last
+   * that answered. Artwork is cached under a key that ignores the address,
+   * so covers stay on screen while the connection is being re-proven.
+   */
+  artworkBase: string | null;
   info: ServerInfo | null;
   /**
    * Runs when the session is torn down on sign-out, so modules holding
@@ -63,16 +76,28 @@ interface ServerStore {
 export const useServerStore = create<ServerStore>((set, get) => {
   /** Builds the client and its cached read layer as one unit. */
   const buildSession = (config: ServerConfig) => {
-    const client = new SubsonicClient({
+    const client: SubsonicClient = new SubsonicClient({
       config,
-      onConnectionChange: (connection) => set({ connection }),
+      onConnectionChange: (connection, cause) => {
+        // A client that has been replaced (sign-out, new credentials) must
+        // not write its last gasp over the session that replaced it.
+        if (get().client !== client) return;
+        if (connection) {
+          set({ connection, connecting: false, artworkBase: connection.url });
+        } else if (cause === 'invalidated') {
+          // A re-probe follows; keep showing the last address until it lands.
+          set({ connecting: true });
+        } else {
+          set({ connection: null, connecting: false });
+        }
+      },
       log: (message) => {
         if (__DEV__) console.log(`[subsonic] ${message}`);
       },
     });
 
     const library = new LibraryRepository({ client, cache: createAsyncStorageCache() });
-    return { client, library };
+    return { client, library, artworkBase: client.getArtworkBaseUrl() };
   };
 
   /**
@@ -98,7 +123,21 @@ export const useServerStore = create<ServerStore>((set, get) => {
       })
       .catch(() => {
         // Unreachable right now; the connection indicator already says so.
+      })
+      .finally(() => {
+        if (get().client === client) set({ connecting: false });
       });
+  };
+
+  const signedOut = {
+    status: 'needsSetup' as const,
+    config: null,
+    client: null,
+    library: null,
+    connection: null,
+    connecting: false,
+    artworkBase: null,
+    info: null,
   };
 
   return {
@@ -107,37 +146,45 @@ export const useServerStore = create<ServerStore>((set, get) => {
     client: null,
     library: null,
     connection: null,
+    connecting: false,
+    artworkBase: null,
     info: null,
     onSignOut: null,
     setOnSignOut: (handler) => set({ onSignOut: handler }),
 
     hydrate: async () => {
-      const config = await loadServerConfig();
+      let config: ServerConfig | null = null;
+      try {
+        config = await loadServerConfig();
+      } catch {
+        // The keystore can refuse to decrypt — after a device restore, say —
+        // and an app that waits forever on it is a blank screen with no way
+        // out. Unreadable credentials are the same as none: ask again.
+        void clearServerConfig().catch(() => {});
+      }
 
       if (!config) {
-        set({
-          status: 'needsSetup',
-          config: null,
-          client: null,
-          library: null,
-          connection: null,
-          info: null,
-        });
+        set(signedOut);
         return;
       }
 
-      const session = buildSession(config);
-      set({ status: 'ready', config, ...session, connection: null, info: null });
-      greet(session.client);
+      try {
+        const session = buildSession(config);
+        set({ status: 'ready', config, ...session, connection: null, connecting: true, info: null });
+        greet(session.client);
+      } catch {
+        set(signedOut);
+      }
     },
 
     saveConfig: async (config, verified) => {
       await saveServerConfig(config);
 
       const session = buildSession(config);
+      // Stored before adopting, so the adoption's own change notice is for
+      // the client the store already holds rather than one it would ignore.
+      set({ status: 'ready', config, ...session, connection: null, connecting: !verified, info: null });
       if (verified) session.client.adoptConnection(verified);
-
-      set({ status: 'ready', config, ...session, connection: verified ?? null, info: null });
       greet(session.client);
     },
 
@@ -145,38 +192,48 @@ export const useServerStore = create<ServerStore>((set, get) => {
       // Drop cached library data and the queue too. They belong to the
       // account being signed out of, and leaving them behind would show a
       // stale library — or queue unplayable tracks — for whoever is next.
+      // Each step is best-effort: a failed cleanup must never leave someone
+      // unable to sign out.
       try {
         await get().onSignOut?.();
       } catch {
-        // Clearing account state is best-effort; signing out must not fail.
+        // Account state is cleared as far as it could be.
       }
-      await get().library?.clear();
-      await clearServerConfig();
+      try {
+        await get().library?.clear();
+      } catch {
+        // A cache that would not clear is orphaned by the next account's keys.
+      }
+      try {
+        await clearServerConfig();
+      } catch {
+        // Falls through to the setup screen either way.
+      }
 
-      set({
-        status: 'needsSetup',
-        config: null,
-        client: null,
-        library: null,
-        connection: null,
-        info: null,
-      });
+      set(signedOut);
     },
 
     refreshConnection: () => {
       const client = get().client;
       if (!client) return;
 
+      // Invalidated, so requests made in the meantime wait for the probe
+      // rather than going to an address the phone may have walked away from.
+      // The store keeps showing the last connection until the probe settles
+      // (see onConnectionChange): a resume shouldn't flash "offline".
+      set({ connecting: true });
       client.invalidateConnection();
-      set({ connection: null });
 
-      // Re-probe immediately rather than waiting for the next request. Without
-      // this the indicator sits at "not connected" for as long as the app is
-      // idle after a resume — reporting a problem that doesn't exist. The
+      // Re-probe immediately rather than waiting for the next request. The
       // probe is cheap (~135ms at home) and self-corrects if the network moved.
-      void client.ensureConnection(true).catch(() => {
-        // Genuinely unreachable: the null connection state already says so.
-      });
+      void client
+        .ensureConnection(true)
+        .catch(() => {
+          // Genuinely unreachable: the null connection state already says so.
+        })
+        .finally(() => {
+          if (get().client === client) set({ connecting: false });
+        });
     },
   };
 });
