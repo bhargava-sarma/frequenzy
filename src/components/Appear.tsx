@@ -36,10 +36,13 @@ export function Appear({ children, delay = 0, rise = 8, style }: AppearProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const animated = useAnimatedStyle(() => ({
-    opacity: progress.value,
-    transform: [{ translateY: (1 - progress.value) * rise }],
-  }));
+  // A plain fade carries no transform at all: one left at rest on a view
+  // that wraps a whole screen is a layer the compositor keeps for nothing.
+  const animated = useAnimatedStyle(() =>
+    rise === 0
+      ? { opacity: progress.value }
+      : { opacity: progress.value, transform: [{ translateY: (1 - progress.value) * rise }] },
+  );
 
   return <Animated.View style={[style, animated]}>{children}</Animated.View>;
 }

@@ -252,7 +252,7 @@ export function SettingsScreen() {
             <Row label="Grid paper" hint="A faint dot grid behind every screen.">
               <Toggle value={settings.gridPaper} onChange={(on) => set('gridPaper', on)} accessibilityLabel="Grid paper" />
             </Row>
-            <Row label="Reduce motion" hint="Stops the record and the tape turning, and has sheets and the player appear without sliding." last>
+            <Row label="Reduce motion" hint="Stills the record, the tape and the level bars, and turns every slide and fade into a cut." last>
               <Toggle value={settings.reduceMotion} onChange={(on) => set('reduceMotion', on)} accessibilityLabel="Reduce motion" />
             </Row>
           </Panel>

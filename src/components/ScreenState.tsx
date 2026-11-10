@@ -1,6 +1,7 @@
 import { memo, useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
+import { Appear } from './Appear';
 import { IconAlertTriangle, type IconComponent } from './icons';
 import { Keycap } from './Keycap';
 import { Label } from './Label';
@@ -14,18 +15,26 @@ import { useTheme, useThemeControls, useThemedStyles } from '../theme/ThemeProvi
  * Typographic rather than a spinner: a centred platform spinner is exactly
  * the generic look this design avoids. Loading is three status lights
  * stepping in sequence above a printed label — a device thinking. The
- * lights switch rather than fade, and the states themselves simply appear.
+ * lights switch rather than fade.
+ *
+ * The states themselves fade in, and the loader waits a moment before it
+ * does. Most reads here come back from the cache within a frame or two, and
+ * a loader shown for that long isn't information — it is a flash before the
+ * content. Held back briefly, it only ever appears for a wait worth naming.
  */
+
+/** How long a load may run before the loader shows itself. */
+const LOADER_PATIENCE_MS = 140;
 
 export const LoadingState = memo(function LoadingState({ label = 'Loading' }: { label?: string }) {
   const styles = useThemedStyles(makeStyles);
   return (
-    <View style={styles.root}>
+    <Appear rise={0} delay={LOADER_PATIENCE_MS} style={styles.root}>
       <SteppingLights />
       <Label tone="tertiary" style={styles.loadingLabel}>
         {label}
       </Label>
-    </View>
+    </Appear>
   );
 });
 
@@ -72,7 +81,7 @@ export const EmptyState = memo(function EmptyState({ label, hint, icon: Icon, ac
   const color = useTheme();
   const styles = useThemedStyles(makeStyles);
   return (
-    <View style={styles.root}>
+    <Appear style={styles.root}>
       {Icon && (
         <View style={styles.iconWell}>
           <Icon size={22} color={color.labelSecondary} strokeWidth={1.75} />
@@ -85,7 +94,7 @@ export const EmptyState = memo(function EmptyState({ label, hint, icon: Icon, ac
           <Keycap label={action.label} size="sm" onPress={action.onPress} />
         </View>
       )}
-    </View>
+    </Appear>
   );
 });
 
@@ -99,7 +108,7 @@ export const ErrorState = memo(function ErrorState({
   const color = useTheme();
   const styles = useThemedStyles(makeStyles);
   return (
-    <View style={styles.root}>
+    <Appear style={styles.root}>
       <View style={[styles.iconWell, { borderColor: color.destructive }]}>
         <IconAlertTriangle size={22} color={color.destructive} strokeWidth={1.75} />
       </View>
@@ -112,7 +121,7 @@ export const ErrorState = memo(function ErrorState({
           <Keycap label="Try again" size="sm" onPress={onRetry} />
         </View>
       )}
-    </View>
+    </Appear>
   );
 });
 

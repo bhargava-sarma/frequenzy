@@ -7,6 +7,7 @@ import { useFonts } from 'expo-font';
 import { Image } from 'expo-image';
 import TrackPlayer from '@rntp/player';
 
+import { Appear } from './src/components/Appear';
 import { ArtworkAccentBridge } from './src/components/ArtworkAccentBridge';
 import { PlayerOverlay } from './src/components/PlayerOverlay';
 import { ToastHost } from './src/components/ToastHost';
@@ -167,15 +168,20 @@ function AppContent() {
   return (
     <View style={[styles.fill, { backgroundColor: color.background }]}>
       <StatusBar style={statusBarStyle} />
-      {status === 'needsSetup' ? (
-        <SetupScreen />
-      ) : (
-        <>
-          <ArtworkAccentBridge />
-          <RootNavigator />
-          <PlayerOverlay />
-        </>
-      )}
+      {/* The first frame of the app proper fades up from the launch ground
+          it was waiting on. Keyed by which side of sign-in it is, so
+          connecting — or signing out — is the same soft turn. */}
+      <Appear key={status} rise={0} style={styles.fill}>
+        {status === 'needsSetup' ? (
+          <SetupScreen />
+        ) : (
+          <>
+            <ArtworkAccentBridge />
+            <RootNavigator />
+            <PlayerOverlay />
+          </>
+        )}
+      </Appear>
       <ToastHost />
     </View>
   );

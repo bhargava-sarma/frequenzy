@@ -33,8 +33,8 @@ export interface Settings {
   gridPaper: boolean;
   playerFace: PlayerFace;
   /**
-   * Stops the record and the tape turning, and has sheets and the player
-   * appear in place instead of sliding.
+   * Stills everything that moves: the record, the tape and the level bars
+   * hold, and every slide, spring and fade becomes a cut.
    */
   reduceMotion: boolean;
   haptics: boolean;

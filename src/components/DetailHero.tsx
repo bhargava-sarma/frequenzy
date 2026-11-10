@@ -50,6 +50,7 @@ export const DetailHero = memo(function DetailHero({
   art,
 }: DetailHeroProps) {
   const styles = useThemedStyles(makeStyles);
+  const { reduceMotion } = useThemeControls();
   const navHeight = useNavBarHeight();
   const { width } = useWindowDimensions();
   const [expanded, setExpanded] = useState(false);
@@ -58,7 +59,19 @@ export const DetailHero = memo(function DetailHero({
   return (
     <View style={[styles.root, { paddingTop: navHeight + space[2] }]}>
       <View style={styles.art}>
-        {art ?? <Artwork uri={artworkUri} size={artSize} round={round} rim />}
+        {/* The one cover on the page, and it arrives after the page does:
+            faded in, it settles onto the placeholder rather than replacing
+            it in a frame. Thumbnails in lists don't — a fade on every row
+            that scrolls back into view reads as flicker. */}
+        {art ?? (
+          <Artwork
+            uri={artworkUri}
+            size={artSize}
+            round={round}
+            rim
+            transitionMs={reduceMotion ? 0 : 220}
+          />
+        )}
       </View>
 
       <Label tone="secondary" bold style={styles.eyebrow}>
