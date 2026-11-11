@@ -1,8 +1,10 @@
-import { memo } from 'react';
+import { memo, useEffect } from 'react';
 import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
 import { Display, DotText } from './Display';
 import { Label } from './Label';
+import { useMotion } from '../theme/motion';
 import { radius, space, type } from '../theme/tokens';
 import { useTheme } from '../theme/ThemeProvider';
 import { haptics } from '../utils/haptics';
@@ -48,6 +50,12 @@ export const StatTile = memo(function StatTile({
 /**
  * Vertical level bars — a histogram as a row of meters. The tallest bar
  * lights in the accent; the rest sit in the display's dim ink.
+ *
+ * The bars rise from the baseline when the chart appears and again whenever
+ * its figures change, the way a meter comes up to a new level: switching
+ * the window from a week to a year is then visibly a new reading, not the
+ * same picture redrawn. The whole row is one scaled view, anchored at its
+ * foot, so two dozen bars cost one animation.
  */
 export const BarChart = memo(function BarChart({
   values,
@@ -63,12 +71,27 @@ export const BarChart = memo(function BarChart({
   highlight?: number;
 }) {
   const color = useTheme();
+  const { reduce, timings } = useMotion();
   const max = Math.max(1, ...values);
   const lit = highlight ?? values.indexOf(Math.max(...values));
 
+  const rise = useSharedValue(reduce ? 1 : 0);
+  const reading = values.join(',');
+  useEffect(() => {
+    if (reduce) {
+      rise.value = 1;
+      return;
+    }
+    rise.value = 0.15;
+    rise.value = withTiming(1, { ...timings.appear, duration: 420 });
+    // Replays for a new set of figures.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reading, reduce, rise]);
+  const riseStyle = useAnimatedStyle(() => ({ transform: [{ scaleY: rise.value }] }));
+
   return (
     <View>
-      <View style={[styles.bars, { height }]}>
+      <Animated.View style={[styles.bars, { height }, riseStyle]}>
         {values.map((value, index) => {
           const level = value / max;
           return (
@@ -87,7 +110,7 @@ export const BarChart = memo(function BarChart({
             </View>
           );
         })}
-      </View>
+      </Animated.View>
       {labels && (
         <View style={styles.labels}>
           {values.map((_, index) => (
@@ -152,7 +175,7 @@ const styles = StyleSheet.create({
   tile: { flex: 1, paddingHorizontal: space[3], paddingVertical: space[3] - 2, minHeight: 74 },
   valueRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 4, marginTop: 4 },
   unit: { marginBottom: 6 },
-  bars: { flexDirection: 'row', alignItems: 'flex-end', gap: 3 },
+  bars: { flexDirection: 'row', alignItems: 'flex-end', gap: 3, transformOrigin: 'bottom' },
   barSlot: { flex: 1, alignItems: 'center', justifyContent: 'flex-end' },
   bar: { width: '100%', borderRadius: 2 },
   labels: { flexDirection: 'row', gap: 3, marginTop: 6 },

@@ -1,6 +1,7 @@
+import { ApiError } from '../api/errors';
 import { shuffleList, usePlayerStore } from '../store/usePlayerStore';
 import { useServerStore } from '../store/useServerStore';
-import type { Child } from '../types/subsonic';
+import { SubsonicErrorCode, type Child } from '../types/subsonic';
 
 /**
  * Queues that are generated rather than chosen: radio from a seed, random
@@ -31,6 +32,37 @@ function distinct(songs: Child[], exclude: Set<string> = new Set()): Child[] {
 
 /** Thrown when every source came back empty; callers show it as-is. */
 export class EmptyMixError extends Error {}
+
+/**
+ * The full record for a track known only in outline.
+ *
+ * History entries and chart rows keep an id, a name and a cover — enough to
+ * list, not enough to play well: queued as they are, the player has no
+ * format to show, no length for the queue's arithmetic and nothing to
+ * verify a stream against. One small request fills that in. A record that
+ * already carries its format is returned as it is.
+ */
+export async function completeSong(song: Child): Promise<Child> {
+  if (song.suffix != null || song.size != null || song.contentType != null) return song;
+  try {
+    const full = (await client().getSong(song.id)).song;
+    return full?.id ? full : song;
+  } catch (error) {
+    // The server answered and has no such track: it was removed or its id
+    // changed in a rescan. Better said plainly than left to fail as a
+    // stream error a moment later.
+    if (error instanceof ApiError && error.code === SubsonicErrorCode.NotFound) {
+      throw new Error('This track is no longer in the library');
+    }
+    // Anything else — offline, most likely — and the outline has to do.
+    return song;
+  }
+}
+
+/** Plays one track now, from whatever outline of it the caller holds. */
+export async function playOutline(song: Child): Promise<void> {
+  await usePlayerStore.getState().playTrackNow(await completeSong(song));
+}
 
 const RADIO_SIZE = 60;
 

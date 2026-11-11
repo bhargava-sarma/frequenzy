@@ -1,13 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import appConfig from '../../app.json';
+import { ApiError } from '../api/errors';
 import { GridPaper } from '../components/GridPaper';
 import { IconButton } from '../components/IconButton';
-import { IconCheck, IconChevronLeft, IconLogout, IconRefresh } from '../components/icons';
+import { IconCheck, IconChevronLeft, IconLogout, IconRefresh, IconTrash } from '../components/icons';
 import { Keycap, KeyRow } from '../components/Keycap';
 import { Label } from '../components/Label';
 import { Led } from '../components/Led';
@@ -27,7 +28,7 @@ import { pickInk } from '../theme/color';
 import { ACCENT_PRESET_ORDER, accentPresets, hairline, layout, radius, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemeControls, useThemedStyles } from '../theme/ThemeProvider';
-import type { ScanStatus } from '../types/subsonic';
+import { SubsonicErrorCode, type ScanStatus } from '../types/subsonic';
 import { haptics } from '../utils/haptics';
 import { formatRelative } from '../utils/time';
 
@@ -82,6 +83,7 @@ export function SettingsScreen() {
 
   const config = useServerStore((state) => state.config);
   const connection = useServerStore((state) => state.connection);
+  const connecting = useServerStore((state) => state.connecting);
   const info = useServerStore((state) => state.info);
   const client = useServerStore((state) => state.client);
   const library = useServerStore((state) => state.library);
@@ -90,7 +92,7 @@ export function SettingsScreen() {
 
   const [scan, setScan] = useState<ScanStatus | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [confirmSignOut, setConfirmSignOut] = useState(false);
+  const [confirm, setConfirm] = useState<'none' | 'signOut' | 'reset'>('none');
 
   useEffect(() => {
     if (!client) return;
@@ -105,6 +107,46 @@ export function SettingsScreen() {
       cancelled = true;
     };
   }, [client]);
+
+  /**
+   * While a scan runs, keep asking how it is going. Read once, the row said
+   * "scanning…" for as long as the screen stayed open, whether the scan took
+   * a second or had long since finished.
+   */
+  const scanning = scan?.scanning === true;
+  useEffect(() => {
+    if (!client || !scanning) return;
+    let cancelled = false;
+    const timer = setInterval(() => {
+      client
+        .getScanStatus()
+        .then((response) => {
+          if (!cancelled) setScan(response.scanStatus);
+        })
+        .catch(() => {});
+    }, 2500);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [client, scanning]);
+
+  // A finished scan means the library changed. The cached lists describe
+  // the one from before, so they are dropped rather than left to age out
+  // over a day while new music fails to appear.
+  const wasScanning = useRef(false);
+  useEffect(() => {
+    if (wasScanning.current && !scanning) {
+      void library?.clear().catch(() => {});
+      toast.show('Library scan finished', {
+        icon: 'check',
+        detail: scan?.count != null ? `${scan.count.toLocaleString()} tracks` : undefined,
+      });
+    }
+    wasScanning.current = scanning;
+    // Fires on the scan ending; the count is read at that moment.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scanning]);
 
   async function run(key: string, work: () => Promise<unknown>, done: string) {
     setBusy(key);
@@ -127,15 +169,24 @@ export function SettingsScreen() {
       setScan(response.scanStatus);
       toast.show('Library scan started', { icon: 'info' });
     } catch (error) {
+      // By the server's own code, not by looking for "50" in the wording —
+      // which also matched an HTTP 500 or a 150ms timeout.
+      const denied = error instanceof ApiError && error.code === SubsonicErrorCode.NotAuthorized;
       toast.error("Couldn't start a scan", {
-        detail: /not authorized|50/i.test(errorMessage(error)) ? 'Scanning needs an admin account.' : errorMessage(error),
+        detail: denied ? 'Scanning needs an admin account.' : errorMessage(error),
       });
     } finally {
       setBusy(null);
     }
   }
 
-  const ledColor = connection?.kind === 'local' ? color.ledGreen : connection?.kind === 'remote' ? color.ledAmber : color.ledRed;
+  const linking = !connection && connecting;
+  const ledColor =
+    connection?.kind === 'local'
+      ? color.ledGreen
+      : connection?.kind === 'remote' || linking
+        ? color.ledAmber
+        : color.ledRed;
 
   return (
     <>
@@ -201,7 +252,7 @@ export function SettingsScreen() {
             <Row label="Grid paper" hint="A faint dot grid behind every screen.">
               <Toggle value={settings.gridPaper} onChange={(on) => set('gridPaper', on)} accessibilityLabel="Grid paper" />
             </Row>
-            <Row label="Reduce motion" hint="Stops the record and the tape turning, and has sheets and the player appear without sliding." last>
+            <Row label="Reduce motion" hint="Stills the record, the tape and the level bars, and turns every slide and fade into a cut." last>
               <Toggle value={settings.reduceMotion} onChange={(on) => set('reduceMotion', on)} accessibilityLabel="Reduce motion" />
             </Row>
           </Panel>
@@ -259,12 +310,20 @@ export function SettingsScreen() {
           {/* ── Server ── */}
           <Panel label="05 — Server" style={styles.panel}>
             <View style={styles.status}>
-              <Led color={ledColor} size={9} />
+              <Led color={ledColor} size={9} busy={connecting} />
               <View style={styles.statusText}>
                 <Text style={[type.headline, { color: color.label }]}>
-                  {connection ? (connection.kind === 'local' ? 'Home network' : 'Remote address') : 'Not connected'}
+                  {connection
+                    ? connection.kind === 'local'
+                      ? 'Home network'
+                      : 'Remote address'
+                    : linking
+                      ? 'Connecting…'
+                      : 'Not connected'}
                 </Text>
-                <Label tone="secondary">{hostOf(connection?.url) ?? 'No address answering'}</Label>
+                <Label tone="secondary">
+                  {hostOf(connection?.url) ?? (linking ? 'Trying your addresses' : 'No address answering')}
+                </Label>
               </View>
             </View>
             <Info label="Server" value={info?.type ? `${info.type} ${shortVersion(info.version) ?? ''}`.trim() : '—'} />
@@ -311,16 +370,8 @@ export function SettingsScreen() {
             <Info label="Streams" value="format=raw · maxBitRate=0" />
             <Info label="Lyrics" value="Server tags, then LRCLIB" last />
             <KeyRow style={styles.keys}>
-              <Keycap
-                label="Reset settings"
-                size="sm"
-                flex
-                onPress={() => {
-                  settings.reset();
-                  toast.show('Settings reset', { icon: 'check' });
-                }}
-              />
-              <Keycap label="Sign out" icon={IconLogout} size="sm" variant="dark" flex onPress={() => setConfirmSignOut(true)} />
+              <Keycap label="Reset settings" size="sm" flex onPress={() => setConfirm('reset')} />
+              <Keycap label="Sign out" icon={IconLogout} size="sm" variant="dark" flex onPress={() => setConfirm('signOut')} />
             </KeyRow>
           </Panel>
 
@@ -335,21 +386,43 @@ export function SettingsScreen() {
         </ScrollView>
 
         <Sheet
-          visible={confirmSignOut}
-          onClose={() => setConfirmSignOut(false)}
+          visible={confirm === 'signOut'}
+          onClose={() => setConfirm('none')}
           title="Sign out?"
-          subtitle="The queue and cached library for this server are cleared."
+          subtitle="The queue, history and cached library for this server are cleared."
         >
           <SheetRow
             label="Sign out"
             icon={IconLogout}
             tone="destructive"
             onPress={() => {
-              setConfirmSignOut(false);
-              void signOut();
+              setConfirm('none');
+              toast.guard(signOut(), "Couldn't sign out");
             }}
           />
-          <SheetRow label="Stay signed in" last onPress={() => setConfirmSignOut(false)} />
+          <SheetRow label="Stay signed in" last onPress={() => setConfirm('none')} />
+        </Sheet>
+
+        {/* Asked first: one press used to put every preference back to
+            default with no way back. */}
+        <Sheet
+          visible={confirm === 'reset'}
+          onClose={() => setConfirm('none')}
+          title="Reset settings?"
+          subtitle="Theme, playback and lyric preferences go back to their defaults. Per-track lyric timings are kept."
+        >
+          <SheetRow
+            label="Reset settings"
+            icon={IconTrash}
+            tone="destructive"
+            onPress={() => {
+              setConfirm('none');
+              settings.reset();
+              haptics.success();
+              toast.show('Settings reset', { icon: 'check' });
+            }}
+          />
+          <SheetRow label="Keep them" last onPress={() => setConfirm('none')} />
         </Sheet>
       </View>
     </>

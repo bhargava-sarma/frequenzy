@@ -33,6 +33,10 @@ export function ArtworkAccentBridge() {
       setColors(null);
       return;
     }
+    // Wait for a proven address. The client will build a URL against the
+    // last known one, which is right for images that are already cached but
+    // not for a fetch that has to reach the server now.
+    if (!connected) return;
 
     const url = client.buildCoverArtUrl(coverArt, 64);
     if (!url) return;

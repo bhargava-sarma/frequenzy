@@ -92,6 +92,9 @@ export const TrackRow = memo(function TrackRow({
               icon: <IconX size={20} color="#FFFFFF" strokeWidth={2} />,
               label: 'Remove',
               tone: 'danger',
+              // Leaves the list, so the row is carried off rather than
+              // sliding home and vanishing a beat later.
+              removes: true,
               onAction: () => onRemove?.(song),
             }
           : {

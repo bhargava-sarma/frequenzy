@@ -1,10 +1,11 @@
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { Image } from 'expo-image';
 
 import { IconDisc, IconUser } from './icons';
 import { radius as radii, withAlpha } from '../theme/tokens';
 import { useTheme } from '../theme/ThemeProvider';
+import { artworkCacheKey } from '../utils/artworkKey';
 
 /**
  * Cover art in a frame.
@@ -18,7 +19,9 @@ import { useTheme } from '../theme/ThemeProvider';
  *
  * expo-image rather than RN's Image for its memory and disk cache: a library
  * list scrolls past hundreds of covers, and re-decoding them on every
- * remount shows up as blank tiles when scrolling back.
+ * remount shows up as blank tiles when scrolling back. Covers are cached
+ * under the picture's id rather than its URL, so they survive a restart and
+ * a change of network — and still draw when the server is out of reach.
  */
 export interface ArtworkProps {
   uri?: string | null;
@@ -55,6 +58,10 @@ export const Artwork = memo(function Artwork({
   const lifted = shadow ?? size >= 160;
   const frame = { width: size, height: size, borderRadius: corner };
   const Glyph = round ? IconUser : IconDisc;
+  const cacheKey = artworkCacheKey(uri);
+  // Memoised on the two strings: a fresh source object each render would
+  // have the image view re-resolve its source on every parent re-render.
+  const source = useMemo(() => (uri ? { uri, cacheKey } : null), [uri, cacheKey]);
 
   return (
     <View
@@ -86,13 +93,17 @@ export const Artwork = memo(function Artwork({
           strokeWidth={1.5}
         />
       )}
-      {uri ? (
+      {source ? (
         <Image
-          source={{ uri }}
+          source={source}
           style={[frame, styles.image]}
           contentFit="cover"
           cachePolicy="memory-disk"
-          recyclingKey={uri}
+          // No recyclingKey. It exists for lists that hand one view from row
+          // to row, which these lists don't; all it did here was blank the
+          // frame whenever the picture changed in place — the player's cover
+          // dropping to an empty slab between every two tracks. Without it
+          // the old cover stays up until the new one is ready to take over.
           transition={transitionMs}
           blurRadius={blurRadius}
         />

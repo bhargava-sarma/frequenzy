@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { IconCircleCheck } from './icons';
 import { Keycap } from './Keycap';
@@ -152,7 +152,7 @@ export function TrackInfoSheet({ visible, onClose, songId, initial }: TrackInfoS
       subtitle={song ? formatPlate(song.suffix, song.bitDepth, song.samplingRate) ?? undefined : undefined}
       artworkUri={song ? (artworkUrl(song.coverArt, 120) ?? null) : null}
     >
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.content} bounces={false}>
+      <View style={styles.content}>
         {!song && !error && (
           <View style={styles.loading}>
             <SteppingLights />
@@ -218,14 +218,13 @@ export function TrackInfoSheet({ visible, onClose, songId, initial }: TrackInfoS
             </View>
           </>
         )}
-      </ScrollView>
+      </View>
     </Sheet>
   );
 }
 
 const makeStyles = (color: Palette) =>
   StyleSheet.create({
-    scroll: { flexGrow: 0 },
     content: { paddingHorizontal: layout.panelPadding + space[1], paddingBottom: space[2] },
     loading: { paddingVertical: space[7], alignItems: 'center' },
     error: { ...type.footnote, color: color.destructive, paddingVertical: space[4] },

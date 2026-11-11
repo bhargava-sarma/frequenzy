@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { RefreshControl, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -7,7 +7,7 @@ import { useActiveMediaItem, useIsPlaying } from '@rntp/player';
 
 import { AlbumActionsSheet } from '../components/AlbumActionsSheet';
 import { AlbumTile } from '../components/AlbumTile';
-import { useCollapsingHeader } from '../components/CollapsingHeader';
+import { useCollapsingHeader, useNavBarHeight } from '../components/CollapsingHeader';
 import { DetailHero, HeroBackdrop } from '../components/DetailHero';
 import { IconButton } from '../components/IconButton';
 import {
@@ -26,6 +26,7 @@ import { TrackActionsSheet } from '../components/TrackActionsSheet';
 import { TrackRow } from '../components/TrackRow';
 import { useArtwork } from '../hooks/useArtwork';
 import { useLibraryData } from '../hooks/useLibraryData';
+import { usePullRefresh } from '../hooks/usePullRefresh';
 import type { AnyStackParamList } from '../navigation/types';
 import { EmptyMixError, startArtistRadio } from '../player/mixes';
 import { extrasOf } from '../player/trackMapping';
@@ -66,6 +67,7 @@ export function ArtistScreen() {
   const { artistId, artistName } = route.params;
   const artworkUrl = useArtwork();
   const { width } = useWindowDimensions();
+  const navHeight = useNavBarHeight();
   const { scrollY, onScroll, progress } = useCollapsingHeader();
 
   const library = useServerStore((state) => state.library);
@@ -83,6 +85,7 @@ export function ArtistScreen() {
     [artistId],
   );
   const info = useLibraryData((repo) => repo.getArtistInfo(artistId).catch(() => ({})), [artistId]);
+  const pull = usePullRefresh(loading, refresh);
 
   const artist = data?.artist;
   const name = artist?.name ?? artistName ?? 'Artist';
@@ -138,7 +141,11 @@ export function ArtistScreen() {
         return;
       }
       const songs = await gatherSongs();
-      if (songs.length === 0) return;
+      if (songs.length === 0) {
+        // Said, rather than a key that spins and then does nothing.
+        toast.show('No tracks to play', { icon: 'info', detail: name });
+        return;
+      }
       const source = { kind: 'artist' as const, label: name };
       if (mode === 'shuffle') await shufflePlay(songs, source);
       else await playNow(songs, 0, source);
@@ -151,12 +158,16 @@ export function ArtistScreen() {
   }
 
   const playTop = useCallback(
-    (index: number) => void playNow(topSongs, index, { kind: 'artist', label: `${name} — top tracks` }),
+    (index: number) =>
+      toast.guard(playNow(topSongs, index, { kind: 'artist', label: `${name} — top tracks` })),
     [playNow, topSongs, name],
   );
   const queueTop = useCallback(
     (song: Child) =>
-      void addToQueue([song]).then(() => toast.show('Added to queue', { icon: 'queue', detail: song.title })),
+      toast.guard(
+        addToQueue([song]).then(() => toast.show('Added to queue', { icon: 'queue', detail: song.title })),
+        "Couldn't queue",
+      ),
     [addToQueue],
   );
 
@@ -274,6 +285,7 @@ export function ArtistScreen() {
           active={starred}
           size={38}
           iconSize={19}
+          popOn={starred}
           onPress={() => void setStarred({ id: artistId, kind: 'artist', title: name }, !starred)}
         />
       }
@@ -304,6 +316,7 @@ export function ArtistScreen() {
         contentContainerStyle={styles.list}
         initialNumToRender={6}
         windowSize={9}
+        refreshControl={<RefreshControl {...pull} progressViewOffset={navHeight} />}
       />
 
       <TrackActionsSheet

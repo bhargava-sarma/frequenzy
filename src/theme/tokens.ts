@@ -452,24 +452,29 @@ export const stroke = 1;
 // ---------------------------------------------------------------------------
 
 /**
- * Motion is kept to what explains something: a sheet arriving from the edge
- * it can be dragged back to, the player rising out of the dock, a switch
- * changing sides. Everything is a short eased timing — no springs, so
- * nothing overshoots, bounces or settles — and leaving is quicker than
- * arriving.
+ * Motion has a job everywhere it appears: it answers a touch, shows where
+ * something came from, or carries the eye across a change. Durations are
+ * short — nothing here is watched, only felt — and leaving is quicker than
+ * arriving. Springs are reserved for things a finger moves or a selection
+ * that travels; see theme/motion.ts for the curves.
  */
 export const motion = {
-  /** Switches, selection changes. */
-  durationFast: 120,
+  /** A key or tile going down under the finger. */
+  durationPress: 70,
+  /** Switches, selection changes, small things settling. */
+  durationFast: 140,
+  /** Content arriving: a list fading in once it has loaded. */
+  durationAppear: 260,
   /** Sheets, the player and its panels arriving. */
-  durationBase: 220,
+  durationBase: 320,
   /** The same surfaces leaving. */
-  durationExit: 160,
+  durationExit: 210,
   /** The background following a new cover. */
-  durationCrossfade: 400,
-  /** Screen pushes, where the navigator takes a duration. */
-  durationScreen: 160,
+  durationCrossfade: 420,
+  /** Decelerating: fast off the mark, easing into place. */
   easing: [0.2, 0.8, 0.2, 1] as const,
+  /** For surfaces that travel: a touch of ease-in so they don't lurch. */
+  easingEmphasized: [0.2, 0, 0, 1] as const,
 } as const;
 
 // ---------------------------------------------------------------------------

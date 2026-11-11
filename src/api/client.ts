@@ -85,10 +85,18 @@ export interface SubsonicClientOptions {
   connectionTtlMs?: number;
   /** Injected for tests; defaults to the platform fetch. */
   fetchImpl?: typeof fetch;
-  /** Fires whenever the active connection changes. Feeds the debug screen. */
-  onConnectionChange?: (state: ConnectionState | null) => void;
+  /**
+   * Fires whenever the active connection changes. A null state comes with the
+   * reason: `invalidated` means a re-probe is about to follow and the last
+   * address may well still be good, `unreachable` means the probe finished
+   * and nothing answered. The UI treats the two very differently — one is a
+   * moment of checking, the other is being offline.
+   */
+  onConnectionChange?: (state: ConnectionState | null, cause?: ConnectionLoss) => void;
   log?: (message: string) => void;
 }
+
+export type ConnectionLoss = 'invalidated' | 'unreachable';
 
 /**
  * Subsonic API client for a single Navidrome server reachable at one or two
@@ -105,10 +113,20 @@ export class SubsonicClient {
   private readonly requestTimeoutMs: number;
   private readonly connectionTtlMs: number;
   private readonly fetchImpl: typeof fetch;
-  private readonly onConnectionChange?: (state: ConnectionState | null) => void;
+  private readonly onConnectionChange?: (state: ConnectionState | null, cause?: ConnectionLoss) => void;
   private readonly log: (message: string) => void;
 
   private connection: ConnectionState | null = null;
+  /**
+   * The address that answered last, kept through invalidation and failed
+   * probes. Only cover art URLs are built from it: artwork is cached on the
+   * device under a key that ignores the address, so a URL at the last known
+   * base still resolves from cache while a re-probe is in flight or the
+   * server is out of reach — where a null would blank every cover on screen.
+   * Seeded with the first configured address for the same reason on a cold
+   * start. Streams and API calls never use it; they wait for a real probe.
+   */
+  private lastBaseUrl: string | null = null;
   /** Dedupes concurrent probes so a cold start doesn't ping N times. */
   private probeInFlight: Promise<ConnectionState> | null = null;
 
@@ -136,6 +154,13 @@ export class SubsonicClient {
     this.fetchImpl = options.fetchImpl ?? ((input, init) => globalThis.fetch(input, init));
     this.onConnectionChange = options.onConnectionChange;
     this.log = options.log ?? (() => {});
+
+    try {
+      this.lastBaseUrl = resolveCandidates(this.config)[0]?.url ?? null;
+    } catch {
+      // A malformed config is reported by the first probe, not here.
+      this.lastBaseUrl = null;
+    }
   }
 
   private auth(): AuthParams {
@@ -166,6 +191,7 @@ export class SubsonicClient {
    */
   adoptConnection(state: ConnectionState): void {
     this.connection = { ...state };
+    this.lastBaseUrl = state.url;
     this.onConnectionChange?.(this.connection);
     this.log(`Adopted verified ${state.kind} connection`);
   }
@@ -179,8 +205,13 @@ export class SubsonicClient {
     if (this.connection) {
       this.log(`Connection invalidated (was ${this.connection.kind})`);
       this.connection = null;
-      this.onConnectionChange?.(null);
+      this.onConnectionChange?.(null, 'invalidated');
     }
+  }
+
+  /** The base cover art URLs are built against. See `lastBaseUrl`. */
+  getArtworkBaseUrl(): string | null {
+    return this.connection?.url ?? this.lastBaseUrl;
   }
 
   /** Returns a live connection, probing if we don't have a fresh one. */
@@ -228,6 +259,7 @@ export class SubsonicClient {
       lastOkAt: now,
     };
     this.connection = state;
+    this.lastBaseUrl = state.url;
     this.onConnectionChange?.(state);
     this.log(`Connected via ${outcome.candidate.kind} in ${outcome.ms}ms`);
     return state;
@@ -235,7 +267,7 @@ export class SubsonicClient {
 
   private failProbe(error: unknown): never {
     this.connection = null;
-    this.onConnectionChange?.(null);
+    this.onConnectionChange?.(null, 'unreachable');
     throw error;
   }
 
@@ -312,8 +344,13 @@ export class SubsonicClient {
 
       return state;
     } catch (aggregate) {
-      const failures: ProbeOutcome[] =
-        aggregate instanceof AggregateError ? aggregate.errors : [];
+      // Read structurally rather than with `instanceof AggregateError`: the
+      // global is missing on some JS engines, where Promise.any is a polyfill
+      // that rejects with a plain Error carrying `errors` — and naming an
+      // undefined global here would replace "unreachable" with a
+      // ReferenceError.
+      const errors = (aggregate as { errors?: unknown } | null)?.errors;
+      const failures: ProbeOutcome[] = Array.isArray(errors) ? (errors as ProbeOutcome[]) : [];
 
       // An auth rejection means the server answered and refused us. Report
       // that rather than "unreachable" — the address was never the problem.
@@ -774,14 +811,14 @@ export class SubsonicClient {
   /**
    * Synchronous cover art URL for list rendering.
    *
-   * Lists render row by row and cannot await per thumbnail, so this uses the
-   * already-established connection and returns null when there isn't one.
-   * That's safe in practice: a screen only has rows to draw because a request
-   * already succeeded, which means a connection exists.
+   * Lists render row by row and cannot await per thumbnail, so this builds
+   * against the live connection, or failing that the address that answered
+   * last. Null only when the config itself is unusable.
    */
   buildCoverArtUrl(coverArtId: string, size?: number): string | null {
-    if (!this.connection) return null;
-    return this.buildUrl(this.connection.url, 'getCoverArt', { id: coverArtId, size });
+    const base = this.getArtworkBaseUrl();
+    if (!base) return null;
+    return this.buildUrl(base, 'getCoverArt', { id: coverArtId, size });
   }
 
   /**

@@ -39,6 +39,9 @@ const SUBMIT_AFTER_SECONDS = 4 * 60;
 /** How often to check progress. Far finer than scrobbling needs. */
 const POLL_INTERVAL_MS = 5000;
 
+/** How far into a track of this length a play starts to count. */
+const submitThreshold = (duration: number) => Math.min(duration * SUBMIT_RATIO, SUBMIT_AFTER_SECONDS);
+
 interface PlayState {
   mediaId: string;
   /** Epoch ms the track started, sent as the play's timestamp. */
@@ -82,6 +85,24 @@ export function startScrobbler(getClient: () => SubsonicClient | null): () => vo
   function announce() {
     if (!current || current.announced) return;
     current.announced = true;
+
+    // The play starts when the audio does. A queue restored paused can sit
+    // for hours before anyone presses play, and stamped from the restore
+    // the play would be reported as having happened back then.
+    current.startedAt = Date.now();
+
+    // Resuming past the scrobble point means this play was counted before
+    // the app closed — or was reached by seeking, which isn't listening.
+    // Either way, submitting it now would count it twice or count it falsely.
+    try {
+      const { position, duration } = TrackPlayer.getProgress();
+      if (duration >= MIN_DURATION_SECONDS && position >= submitThreshold(duration)) {
+        current.submitted = true;
+      }
+    } catch {
+      // No progress to read yet; the poll decides.
+    }
+
     const client = getClient();
     if (client && getSettings().scrobble) {
       report(client.scrobble(current.mediaId, { submission: false }));
@@ -120,8 +141,7 @@ export function startScrobbler(getClient: () => SubsonicClient | null): () => vo
     const { position, duration } = TrackPlayer.getProgress();
     if (!duration || duration < MIN_DURATION_SECONDS) return;
 
-    const threshold = Math.min(duration * SUBMIT_RATIO, SUBMIT_AFTER_SECONDS);
-    if (position < threshold) return;
+    if (position < submitThreshold(duration)) return;
 
     const client = getClient();
     if (!client) return;

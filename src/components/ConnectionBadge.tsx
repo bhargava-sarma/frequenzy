@@ -12,6 +12,11 @@ import { haptics } from '../utils/haptics';
  * Which address the app is talking to, as a status light: green on the LAN,
  * amber over the remote address, red when nothing answers. Pressing it
  * re-probes, which is the fix for most of the reasons it would be red.
+ *
+ * Red is kept for a probe that has finished and found nothing. While one is
+ * still running with no address yet — every cold start, briefly — the light
+ * breathes amber and reads LINKING: "not known yet" shown as "offline" was a
+ * fault reported on every launch that never existed.
  */
 export const ConnectionBadge = memo(function ConnectionBadge({
   tone = 'default',
@@ -20,11 +25,14 @@ export const ConnectionBadge = memo(function ConnectionBadge({
 }) {
   const color = useTheme();
   const connection = useServerStore((state) => state.connection);
+  const connecting = useServerStore((state) => state.connecting);
   const refresh = useServerStore((state) => state.refreshConnection);
 
   const kind = connection?.kind;
-  const led = kind === 'local' ? color.ledGreen : kind === 'remote' ? color.ledAmber : color.ledRed;
-  const label = kind === 'local' ? 'LAN' : kind === 'remote' ? 'REMOTE' : 'OFFLINE';
+  const linking = !kind && connecting;
+  const led =
+    kind === 'local' ? color.ledGreen : kind === 'remote' || linking ? color.ledAmber : color.ledRed;
+  const label = kind === 'local' ? 'LAN' : kind === 'remote' ? 'REMOTE' : linking ? 'LINKING' : 'OFFLINE';
 
   return (
     <Pressable
@@ -44,7 +52,7 @@ export const ConnectionBadge = memo(function ConnectionBadge({
         pressed && styles.pressed,
       ]}
     >
-      <Led color={led} size={6} />
+      <Led color={led} size={6} busy={connecting} />
       <View>
         <Label tone={tone === 'onArtwork' ? 'onArtwork' : 'secondary'} size={9.5} bold>
           {label}

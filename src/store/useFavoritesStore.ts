@@ -61,8 +61,15 @@ export const useFavoritesStore = create<FavoritesStore>((set, get) => ({
       if (target.kind === 'album') void library?.invalidateAlbum(target.id);
       if (target.kind === 'song') void usePlaylistStore.getState().load();
 
-      const noun = target.kind === 'song' ? '' : target.kind === 'album' ? ' album' : ' artist';
-      toast.show(starred ? `Liked${noun}` : `Removed from liked${noun}s`, {
+      // Spelled out per kind. Built from one template, unliking a track read
+      // "Removed from likeds": the song's noun was empty and the plural
+      // landed on "liked".
+      const message = {
+        song: starred ? 'Liked' : 'Removed from liked songs',
+        album: starred ? 'Liked album' : 'Removed from liked albums',
+        artist: starred ? 'Liked artist' : 'Removed from liked artists',
+      }[target.kind];
+      toast.show(message, {
         icon: starred ? 'heart' : 'heartOff',
         detail: target.title,
       });

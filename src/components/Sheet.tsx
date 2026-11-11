@@ -3,6 +3,7 @@ import {
   KeyboardAvoidingView,
   Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -11,10 +12,12 @@ import {
 } from 'react-native';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
+  Extrapolation,
   interpolate,
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
+  withSpring,
   withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,7 +25,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Artwork } from './Artwork';
 import type { IconComponent } from './icons';
 import { Label } from './Label';
-import { useTimings } from '../theme/motion';
+import { useMotion } from '../theme/motion';
 import { hairline, layout, radius, space, stroke, type, withAlpha } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
@@ -35,8 +38,13 @@ import { haptics } from '../utils/haptics';
  * in, and leaves the same way — kept mounted until its exit has played,
  * since a native modal unmounted mid-animation simply vanishes. The header
  * is a drag handle: pull it down past a threshold, or flick, and the sheet
- * goes; short of that it returns. Long content scrolls inside without
- * fighting the drag, because only the header listens.
+ * goes; short of that it springs back, and the scrim lightens under the
+ * pull to say where it is headed.
+ *
+ * The body scrolls. A sheet is capped below the full height of the screen,
+ * and on a short phone a long menu doesn't fit under that cap; clipped, its
+ * last rows were simply unreachable. Content that fits never moves. The
+ * scroll doesn't fight the drag, because only the header listens for that.
  */
 export interface SheetProps {
   visible: boolean;
@@ -104,24 +112,47 @@ export function Sheet({
   const styles = useThemedStyles(makeStyles);
   const insets = useSafeAreaInsets();
   const { height: screenHeight } = useWindowDimensions();
-  const { enter, exit, fast } = useTimings();
+  const { timings, springs } = useMotion();
+
+  /**
+   * What the sheet shows is frozen the moment it is asked to close.
+   *
+   * Callers describe a sheet from state they clear on close — a target row,
+   * a prompt's mode — so the same render that says "close" also empties the
+   * title and the rows. Drawn live, the sheet spent its whole exit as a
+   * blank sliver, or with "Rename playlist" turned into "New playlist" on
+   * the way down. It leaves showing what it was showing.
+   */
+  const live = { title, subtitle, artworkUri, artworkRound, header, children };
+  const lastShown = useRef(live);
+  if (visible) lastShown.current = live;
+  const shown = lastShown.current;
 
   // Starts unmounted even when visible: opening goes through claim().
   const [mounted, setMounted] = useState(false);
-  const [sheetHeight, setSheetHeight] = useState(0);
+  /** 0 below the screen edge, 1 in place. */
   const progress = useSharedValue(0);
   const dragY = useSharedValue(0);
+  /**
+   * How far the sheet travels: its own height and a little over. A shared
+   * value, written straight from layout, so the distance is exact on the
+   * frame the rise begins and stays right when the content changes height
+   * while the sheet is up — a track's details arriving, a warning replacing
+   * a list.
+   */
+  const travel = useSharedValue(screenHeight);
   /**
    * The rise waits for the sheet's first layout, so it travels exactly its
    * own height. Started earlier, the distance would change mid-flight when
    * the measurement landed, and the sheet would visibly jump.
    */
   const pendingOpen = useRef(false);
+  const laidOut = useRef(false);
   const [id] = useState(() => nextSheetId++);
 
   const finishClose = useCallback(() => {
+    laidOut.current = false;
     setMounted(false);
-    setSheetHeight(0);
     release(id);
     onClosed?.();
   }, [onClosed, id]);
@@ -131,7 +162,7 @@ export function Sheet({
       claim(id, () => {
         dragY.value = 0;
         setMounted(true);
-        if (sheetHeight > 0) progress.value = withTiming(1, enter);
+        if (laidOut.current) progress.value = withTiming(1, timings.enter);
         else pendingOpen.current = true;
       });
     } else if (!mounted) {
@@ -139,7 +170,7 @@ export function Sheet({
       waiting.delete(id);
     } else {
       pendingOpen.current = false;
-      progress.value = withTiming(0, exit, (finished) => {
+      progress.value = withTiming(0, timings.exit, (finished) => {
         if (finished) runOnJS(finishClose)();
       });
     }
@@ -151,36 +182,41 @@ export function Sheet({
   // slot forever.
   useEffect(() => () => release(id), [id]);
 
-  const travel = sheetHeight > 0 ? sheetHeight + 40 : screenHeight;
-
   const pan = Gesture.Pan()
     .activeOffsetY(6)
     .onUpdate((event) => {
       // Downward only, with a little give upward so it doesn't feel nailed.
       dragY.value = event.translationY > 0 ? event.translationY : event.translationY * 0.15;
     })
-    .onEnd((event) => {
-      if (dragY.value > DISMISS_DISTANCE || event.velocityY > DISMISS_VELOCITY) {
+    .onEnd((event, success) => {
+      // `success` is false when the system took the gesture back; that is
+      // not a decision to dismiss.
+      if (success && (dragY.value > DISMISS_DISTANCE || event.velocityY > DISMISS_VELOCITY)) {
         runOnJS(onClose)();
         return;
       }
-      dragY.value = withTiming(0, fast);
+      dragY.value = withSpring(0, springs.settle);
     });
 
   const sheetStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: interpolate(progress.value, [0, 1], [travel, 0]) + dragY.value }],
+    transform: [{ translateY: (1 - progress.value) * travel.value + dragY.value }],
   }));
-  const scrimStyle = useAnimatedStyle(() => ({ opacity: progress.value }));
+  const scrimStyle = useAnimatedStyle(() => ({
+    opacity:
+      progress.value *
+      interpolate(dragY.value, [0, Math.max(1, travel.value)], [1, 0.35], Extrapolation.CLAMP),
+  }));
 
   const onLayout = useCallback(
     (event: LayoutChangeEvent) => {
-      setSheetHeight(Math.round(event.nativeEvent.layout.height));
+      travel.value = Math.round(event.nativeEvent.layout.height) + 40;
+      laidOut.current = true;
       if (pendingOpen.current) {
         pendingOpen.current = false;
-        progress.value = withTiming(1, enter);
+        progress.value = withTiming(1, timings.enter);
       }
     },
-    [progress, enter],
+    [progress, travel, timings],
   );
 
   return (
@@ -212,19 +248,19 @@ export function Sheet({
               <GestureDetector gesture={pan}>
                 <View style={styles.handleArea}>
                   <View style={styles.grabber} />
-                  {header ??
-                    (title != null && (
+                  {shown.header ??
+                    (shown.title != null && (
                       <View style={styles.header}>
-                        {artworkUri !== undefined && (
-                          <Artwork uri={artworkUri} size={48} round={artworkRound} />
+                        {shown.artworkUri !== undefined && (
+                          <Artwork uri={shown.artworkUri} size={48} round={shown.artworkRound} />
                         )}
                         <View style={styles.headerText}>
                           <Text style={styles.title} numberOfLines={2}>
-                            {title}
+                            {shown.title}
                           </Text>
-                          {subtitle ? (
+                          {shown.subtitle ? (
                             <Text style={styles.subtitle} numberOfLines={1}>
-                              {subtitle}
+                              {shown.subtitle}
                             </Text>
                           ) : null}
                         </View>
@@ -233,9 +269,16 @@ export function Sheet({
                 </View>
               </GestureDetector>
 
-              <View style={[styles.content, { paddingBottom: Math.max(insets.bottom, space[3]) + space[2] }]}>
-                {children}
-              </View>
+              <ScrollView
+                style={styles.content}
+                contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, space[3]) + space[2] }}
+                bounces={false}
+                // A sheet with a text field has its keys right under it; the
+                // first tap must press the key, not just lower the keyboard.
+                keyboardShouldPersistTaps="handled"
+              >
+                {shown.children}
+              </ScrollView>
             </Animated.View>
           </View>
         </KeyboardAvoidingView>
@@ -251,7 +294,7 @@ export interface SheetRowProps {
   onPress: () => void;
   tone?: 'default' | 'accent' | 'destructive';
   disabled?: boolean;
-  /** Keeps the sheet open — e.g. a row that toggles. */
+  /** The final row of its group: drawn without the hairline beneath it. */
   last?: boolean;
   /** Trailing element instead of the detail text. */
   accessory?: ReactNode;
@@ -355,7 +398,9 @@ const makeStyles = (color: Palette) =>
     headerText: { flex: 1 },
     title: { ...type.title3, color: color.label },
     subtitle: { ...type.subhead, color: color.labelSecondary, marginTop: 2 },
-    content: { flexShrink: 1 },
+    // Sized by what it holds, and allowed to shrink under the sheet's cap —
+    // which is what turns too much content into a scroll rather than a clip.
+    content: { flexGrow: 0, flexShrink: 1 },
     row: {
       flexDirection: 'row',
       alignItems: 'center',

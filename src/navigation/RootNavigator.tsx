@@ -18,7 +18,7 @@ import { ShowcaseScreen } from '../screens/ShowcaseScreen';
 import { StatsScreen } from '../screens/StatsScreen';
 import { getSettings } from '../store/useSettingsStore';
 import { motion, type Palette } from '../theme/tokens';
-import { useTheme } from '../theme/ThemeProvider';
+import { useTheme, useThemeControls } from '../theme/ThemeProvider';
 import { navigationRef } from './ref';
 import type {
   HomeStackParamList,
@@ -33,8 +33,14 @@ import type {
  *
  * Every stack hides the native header — screens draw their own — and every
  * tab carries the same detail screens, so following a link stays in the tab
- * it started from. A push is a short crossfade and a tab switch is a cut:
- * the content is the point, not the trip between screens.
+ * it started from.
+ *
+ * Transitions say what kind of move was made. Going deeper slides the new
+ * screen in from the right over the one it came from, so back has an
+ * obvious direction; Settings rises, because it sits over the app rather
+ * than inside a tab; and tabs crossfade quickly, since they are places side
+ * by side, not a path. All three are native, short, and reduced to a cut by
+ * Reduce motion.
  */
 
 const RootStack = createNativeStackNavigator<RootStackParamList>();
@@ -43,11 +49,18 @@ const HomeStack = createNativeStackNavigator<HomeStackParamList>();
 const SearchStack = createNativeStackNavigator<SearchStackParamList>();
 const LibraryStack = createNativeStackNavigator<LibraryStackParamList>();
 
-const screenOptions = {
-  headerShown: false,
-  animation: 'fade' as const,
-  animationDuration: motion.durationScreen,
-} as const;
+/** Drilling in: a quick slide from the right, the screen beneath easing aside. */
+const pushOptions = { headerShown: false, animation: 'ios_from_right' as const } as const;
+/** Surfaces above the tabs: a short rise and fade. */
+const riseOptions = { headerShown: false, animation: 'fade_from_bottom' as const } as const;
+const stillOptions = { headerShown: false, animation: 'none' as const } as const;
+
+/** Which transition a stack uses, given the Reduce motion setting. */
+function useStackOptions(kind: 'push' | 'rise') {
+  const { reduceMotion } = useThemeControls();
+  if (reduceMotion) return stillOptions;
+  return kind === 'push' ? pushOptions : riseOptions;
+}
 
 /** The ground colour behind screens, so pushes never flash white. */
 function buildNavigationTheme(color: Palette): Theme {
@@ -66,6 +79,7 @@ function buildNavigationTheme(color: Palette): Theme {
 }
 
 function HomeNavigator() {
+  const screenOptions = useStackOptions('push');
   return (
     <HomeStack.Navigator screenOptions={screenOptions}>
       <HomeStack.Screen name="HomeFeed" component={HomeScreen} />
@@ -80,6 +94,7 @@ function HomeNavigator() {
 }
 
 function SearchNavigator() {
+  const screenOptions = useStackOptions('push');
   return (
     <SearchStack.Navigator screenOptions={screenOptions}>
       <SearchStack.Screen name="SearchHome" component={SearchScreen} />
@@ -94,6 +109,7 @@ function SearchNavigator() {
 }
 
 function LibraryNavigator() {
+  const screenOptions = useStackOptions('push');
   return (
     <LibraryStack.Navigator screenOptions={screenOptions}>
       <LibraryStack.Screen name="LibraryHome" component={LibraryScreen} />
@@ -107,15 +123,19 @@ function LibraryNavigator() {
   );
 }
 
-/** Tabs cut: switching tabs is switching places, not going somewhere. */
-const tabScreenOptions = {
+/** Tabs crossfade: switching tabs is switching places, not going somewhere. */
+const tabFadeOptions = {
   headerShown: false,
-  animation: 'none' as const,
+  animation: 'fade' as const,
+  transitionSpec: { animation: 'timing' as const, config: { duration: motion.durationFast } },
 };
+const tabCutOptions = { headerShown: false, animation: 'none' as const };
 
 function TabNavigator() {
   // Read once: the start tab is where the app opens, not a live binding.
   const initialRouteName = useMemo(() => getSettings().startTab, []);
+  const { reduceMotion } = useThemeControls();
+  const tabScreenOptions = reduceMotion ? tabCutOptions : tabFadeOptions;
 
   return (
     <Tabs.Navigator
@@ -133,6 +153,7 @@ function TabNavigator() {
 export function RootNavigator() {
   const color = useTheme();
   const theme = useMemo(() => buildNavigationTheme(color), [color]);
+  const screenOptions = useStackOptions('rise');
 
   return (
     <NavigationContainer theme={theme} ref={navigationRef}>

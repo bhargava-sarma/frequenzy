@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { RefreshControl, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -7,7 +7,7 @@ import { useActiveMediaItem, useIsPlaying } from '@rntp/player';
 
 import { AlbumActionsSheet } from '../components/AlbumActionsSheet';
 import { AlbumTile } from '../components/AlbumTile';
-import { useCollapsingHeader } from '../components/CollapsingHeader';
+import { useCollapsingHeader, useNavBarHeight } from '../components/CollapsingHeader';
 import { DetailHero } from '../components/DetailHero';
 import { IconArrowsShuffle, IconDice5 } from '../components/icons';
 import { Keycap, KeyRow } from '../components/Keycap';
@@ -21,6 +21,7 @@ import { TrackActionsSheet } from '../components/TrackActionsSheet';
 import { TrackRow } from '../components/TrackRow';
 import { useArtwork } from '../hooks/useArtwork';
 import { useLibraryData } from '../hooks/useLibraryData';
+import { usePullRefresh } from '../hooks/usePullRefresh';
 import type { AnyStackParamList } from '../navigation/types';
 import { EmptyMixError, playGenre, playMix } from '../player/mixes';
 import { extrasOf } from '../player/trackMapping';
@@ -64,6 +65,7 @@ export function GenreScreen() {
   const { genre, hue: tappedHue } = route.params;
   const artworkUrl = useArtwork();
   const { width } = useWindowDimensions();
+  const navHeight = useNavBarHeight();
   const { onScroll, progress } = useCollapsingHeader();
 
   const client = useServerStore((state) => state.client);
@@ -74,6 +76,7 @@ export function GenreScreen() {
   const activeId = extrasOf(activeItem)?.subsonicId;
 
   const albums = useLibraryData((repo, forceRefresh) => repo.getAlbumsByGenre(genre, { forceRefresh }), [genre]);
+  const pull = usePullRefresh(albums.loading, albums.refresh);
   const [songs, setSongs] = useState<Child[]>([]);
   const [busy, setBusy] = useState<'shuffle' | 'mix' | null>(null);
   const [trackTarget, setTrackTarget] = useState<Child | null>(null);
@@ -117,12 +120,15 @@ export function GenreScreen() {
   }
 
   const playSample = useCallback(
-    (index: number) => void playNow(songs, index, { kind: 'genre', label: genre }),
+    (index: number) => toast.guard(playNow(songs, index, { kind: 'genre', label: genre })),
     [playNow, songs, genre],
   );
   const queue = useCallback(
     (song: Child) =>
-      void addToQueue([song]).then(() => toast.show('Added to queue', { icon: 'queue', detail: song.title })),
+      toast.guard(
+        addToQueue([song]).then(() => toast.show('Added to queue', { icon: 'queue', detail: song.title })),
+        "Couldn't queue",
+      ),
     [addToQueue],
   );
 
@@ -234,6 +240,7 @@ export function GenreScreen() {
         contentContainerStyle={styles.list}
         initialNumToRender={6}
         windowSize={9}
+        refreshControl={<RefreshControl {...pull} progressViewOffset={navHeight} />}
       />
       <TrackActionsSheet visible={trackTarget != null} onClose={() => setTrackTarget(null)} song={trackTarget} />
       <AlbumActionsSheet visible={albumTarget != null} onClose={() => setAlbumTarget(null)} album={albumTarget} />

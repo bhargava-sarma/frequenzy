@@ -1,9 +1,16 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
+import Animated, {
+  Easing,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import Svg, { Rect } from 'react-native-svg';
 
+import { useMotion } from '../theme/motion';
 import { type, withAlpha } from '../theme/tokens';
 import { useTheme } from '../theme/ThemeProvider';
 import { haptics } from '../utils/haptics';
@@ -13,14 +20,16 @@ import { formatDuration } from '../utils/time';
  * Playback position as a ruler, the way a tape machine's counter strip reads.
  *
  * Ticks run the width; the ones already played light up in the accent and a
- * playhead marks the spot. The playhead steps with the player's once-a-second
- * reports, the way a counter does — at this width a step is a point or two,
- * so smoothing it would be a 60fps animation nobody could see. The lit ticks
- * are revealed by translating a clip rather than resizing anything.
+ * playhead marks the spot. The player reports its position once a second,
+ * and the playhead glides from one report to the next rather than stepping,
+ * so it reads as running rather than as being updated. The lit ticks are
+ * revealed by translating a clip rather than resizing anything, so the
+ * glide is three transforms on the UI thread.
  *
- * Scrubbing follows the finger and clicks at each tenth of the track. The
- * seeked position is held until the player confirms it, so the playhead
- * never jumps back to the old time for a beat after you let go.
+ * Scrubbing follows the finger and clicks at each tenth of the track; a tap
+ * anywhere on the ruler seeks there. The seeked position is held until the
+ * player confirms it, so the playhead never jumps back to the old time for
+ * a beat after you let go.
  */
 export interface ScrubBarProps {
   position: number;
@@ -37,6 +46,10 @@ const MAJOR = 15;
 const MAJOR_EVERY = 8;
 /** How long a seek is trusted over the player's reports. */
 const SEEK_HOLD_MS = 1500;
+/** A report further than this from the playhead is a seek or a new track: jump, don't glide. */
+const GLIDE_LIMIT_SECONDS = 2.5;
+/** Gesture states, as numbers a worklet can compare against. */
+const STATE_FAILED = 1;
 
 export const ScrubBar = memo(function ScrubBar({
   position,
@@ -45,6 +58,7 @@ export const ScrubBar = memo(function ScrubBar({
   tone = 'default',
 }: ScrubBarProps) {
   const color = useTheme();
+  const { reduce } = useMotion();
   const onArt = tone === 'onArtwork';
   const dim = onArt ? withAlpha(color.onArtwork, 0.28) : color.border;
   const lit = color.accent;
@@ -57,16 +71,27 @@ export const ScrubBar = memo(function ScrubBar({
   const total = duration > 0 ? duration : 0;
   const progress = useSharedValue(total > 0 ? Math.min(1, position / total) : 0);
   const dragging = useSharedValue(false);
+  /** Whether the current touch ended as a drag, as opposed to never becoming one. */
+  const ended = useSharedValue(false);
   const lastDecile = useSharedValue(-1);
   const held = useRef<{ ratio: number; until: number } | null>(null);
+  /** Where the player last said it was, to return to when a touch is abandoned. */
+  const reported = useRef(total > 0 ? Math.min(1, position / total) : 0);
+  // Kept in a ref so a parent passing a fresh function each render doesn't
+  // rebuild the gesture under a finger that is mid-drag.
+  const seek = useRef(onSeek);
+  seek.current = onSeek;
 
   // Follow the player, unless a drag or a fresh seek says otherwise.
   useEffect(() => {
-    if (dragging.value || total <= 0) {
-      if (total <= 0) progress.value = 0;
+    if (total <= 0) {
+      reported.current = 0;
+      if (!dragging.value) progress.value = 0;
       return;
     }
     const ratio = Math.min(1, Math.max(0, position / total));
+    reported.current = ratio;
+    if (dragging.value) return;
 
     const hold = held.current;
     if (hold) {
@@ -75,18 +100,28 @@ export const ScrubBar = memo(function ScrubBar({
       held.current = null;
     }
 
-    progress.value = ratio;
-  }, [position, total, progress, dragging]);
+    // Glide to each report over the second until the next one. A report far
+    // from the playhead is a jump — a seek, a new track — and is taken at once.
+    const jumped = Math.abs(ratio - progress.value) * total > GLIDE_LIMIT_SECONDS;
+    progress.value =
+      reduce || jumped ? ratio : withTiming(ratio, { duration: 1000, easing: Easing.linear });
+  }, [position, total, progress, dragging, reduce]);
 
   const commit = useCallback(
     (ratio: number) => {
       setScrubSeconds(null);
       if (total <= 0) return;
       held.current = { ratio, until: Date.now() + SEEK_HOLD_MS };
-      onSeek(ratio * total);
+      seek.current(ratio * total);
     },
-    [onSeek, total],
+    [total],
   );
+
+  /** A touch that was taken away rather than released: put everything back. */
+  const abandon = useCallback(() => {
+    setScrubSeconds(null);
+    progress.value = reported.current;
+  }, [progress]);
 
   const showScrub = useCallback((ratio: number) => setScrubSeconds(ratio * total), [total]);
   // A plain function reference for runOnJS; the haptics object itself
@@ -101,6 +136,7 @@ export const ScrubBar = memo(function ScrubBar({
         .hitSlop({ top: 14, bottom: 14 })
         .onBegin((event) => {
           dragging.value = true;
+          ended.value = false;
           const ratio = Math.min(1, Math.max(0, event.x / width));
           progress.value = ratio;
           lastDecile.value = Math.floor(ratio * 10);
@@ -116,13 +152,23 @@ export const ScrubBar = memo(function ScrubBar({
           }
           runOnJS(showScrub)(ratio);
         })
-        .onEnd(() => {
-          runOnJS(commit)(progress.value);
+        .onEnd((_event, success) => {
+          ended.value = true;
+          if (success) runOnJS(commit)(progress.value);
+          else runOnJS(abandon)();
         })
-        .onFinalize(() => {
+        .onFinalize((event) => {
+          // A touch that never moved never became a drag, so onEnd didn't
+          // run for it — and the time it had been showing since touch-down
+          // stayed on the readout for good. Lifted in place, it is a tap:
+          // seek there. Taken away by something else, put things back.
+          if (!ended.value) {
+            if (event.state === STATE_FAILED) runOnJS(commit)(progress.value);
+            else runOnJS(abandon)();
+          }
           dragging.value = false;
         }),
-    [total, width, dragging, progress, lastDecile, showScrub, commit, tick],
+    [total, width, dragging, ended, progress, lastDecile, showScrub, commit, abandon, tick],
   );
 
   const ticks = useMemo(() => {

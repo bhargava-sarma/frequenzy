@@ -1,7 +1,14 @@
-import { memo } from 'react';
+import { memo, useEffect } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, {
+  Easing,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 import TrackPlayer, { useActiveMediaItem, useIsPlaying, useProgress } from '@rntp/player';
 
 import { Artwork } from './Artwork';
@@ -9,7 +16,7 @@ import { IconButton } from './IconButton';
 import { IconPlayerPauseFilled, IconPlayerPlayFilled, IconPlayerSkipForwardFilled } from './icons';
 import { useArtwork } from '../hooks/useArtwork';
 import { extrasOf } from '../player/trackMapping';
-import { useTimings } from '../theme/motion';
+import { useMotion } from '../theme/motion';
 import { space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
@@ -22,16 +29,17 @@ import { haptics } from '../utils/haptics';
  * Renders nothing with an empty queue, so the dock is just the tabs until
  * there is something to control. Tap to open the player, or swipe the row
  * sideways to skip, the way you'd thumb a cassette deck's transport without
- * looking. A hairline along the bottom reads position; it steps with the
- * player's once-a-second reports, which at this width is under two points a
- * second — smoothing it would be animation nobody could see.
+ * looking. A hairline along the bottom reads position; the player reports
+ * once a second, and the line glides between reports rather than ticking.
  */
 const SKIP_DISTANCE = 70;
+/** A report further than this from the last one is a seek or a new track: jump, don't glide. */
+const GLIDE_LIMIT_SECONDS = 2.5;
 
 export const MiniPlayer = memo(function MiniPlayer() {
   const color = useTheme();
   const styles = useThemedStyles(makeStyles);
-  const { fast } = useTimings();
+  const { reduce, timings, springs } = useMotion();
   const openPlayer = usePlayerUiStore((state) => state.openPlayer);
   const activeItem = useActiveMediaItem();
   const isPlaying = useIsPlaying();
@@ -39,9 +47,24 @@ export const MiniPlayer = memo(function MiniPlayer() {
   const artworkUrl = useArtwork();
 
   const offset = useSharedValue(0);
+  const fill = useSharedValue(0);
+  const appear = useSharedValue(0);
 
   const total = duration || activeItem?.duration || 0;
   const ratio = total > 0 ? Math.min(1, Math.max(0, position / total)) : 0;
+
+  useEffect(() => {
+    const jumped = total <= 0 || Math.abs(ratio - fill.value) * total > GLIDE_LIMIT_SECONDS;
+    if (reduce || jumped) fill.value = ratio;
+    else fill.value = withTiming(ratio, { duration: 1000, easing: Easing.linear });
+  }, [ratio, total, reduce, fill]);
+
+  // The row fades up when there is first something to show.
+  const showing = activeItem != null;
+  useEffect(() => {
+    appear.value = showing ? withTiming(1, timings.appear) : 0;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showing, appear]);
 
   const skip = (direction: 1 | -1) => {
     haptics.press();
@@ -55,14 +78,20 @@ export const MiniPlayer = memo(function MiniPlayer() {
     .onUpdate((event) => {
       offset.value = event.translationX * 0.6;
     })
-    .onEnd((event) => {
-      if (Math.abs(event.translationX) > SKIP_DISTANCE || Math.abs(event.velocityX) > 900) {
+    .onEnd((event, success) => {
+      // A drag the system took back — an edge gesture, an incoming call —
+      // is not a decision to skip.
+      if (success && (Math.abs(event.translationX) > SKIP_DISTANCE || Math.abs(event.velocityX) > 900)) {
         runOnJS(skip)(event.translationX < 0 ? 1 : -1);
       }
-      offset.value = withTiming(0, fast);
+      offset.value = withSpring(0, springs.settle);
     });
 
-  const rowStyle = useAnimatedStyle(() => ({ transform: [{ translateX: offset.value }] }));
+  const rowStyle = useAnimatedStyle(() => ({
+    opacity: appear.value,
+    transform: [{ translateX: offset.value }, { translateY: (1 - appear.value) * 6 }],
+  }));
+  const fillStyle = useAnimatedStyle(() => ({ transform: [{ scaleX: fill.value }] }));
 
   if (!activeItem) return null;
 
@@ -76,7 +105,7 @@ export const MiniPlayer = memo(function MiniPlayer() {
       <GestureDetector gesture={pan}>
         <Animated.View style={rowStyle}>
           <Pressable
-            style={styles.body}
+            style={({ pressed }) => [styles.body, pressed && styles.pressed]}
             onPress={() => {
               haptics.tick();
               openPlayer();
@@ -100,6 +129,7 @@ export const MiniPlayer = memo(function MiniPlayer() {
               variant="accent"
               size={40}
               iconSize={18}
+              popOn={isPlaying}
               onPress={() => (isPlaying ? TrackPlayer.pause() : TrackPlayer.play())}
             />
             <IconButton
@@ -116,7 +146,7 @@ export const MiniPlayer = memo(function MiniPlayer() {
       </GestureDetector>
 
       <View style={styles.track}>
-        <View style={[styles.fill, { width: `${ratio * 100}%`, backgroundColor: color.accent }]} />
+        <Animated.View style={[styles.fill, { backgroundColor: color.accent }, fillStyle]} />
       </View>
     </View>
   );
@@ -133,6 +163,7 @@ const makeStyles = (color: Palette) =>
       paddingTop: space[2],
       paddingBottom: space[2] - 2,
     },
+    pressed: { opacity: 0.8 },
     text: { flex: 1, marginLeft: space[1], marginRight: space[1] },
     title: { ...type.callout, fontFamily: type.headline.fontFamily, color: color.label },
     artist: { ...type.caption, color: color.labelSecondary, marginTop: 1 },
@@ -143,5 +174,7 @@ const makeStyles = (color: Palette) =>
       backgroundColor: color.separator,
       overflow: 'hidden',
     },
-    fill: { height: '100%' },
+    // Full width, revealed by scaling from the left edge: a transform, so the
+    // line moves without laying anything out.
+    fill: { height: '100%', width: '100%', transformOrigin: 'left' },
   });

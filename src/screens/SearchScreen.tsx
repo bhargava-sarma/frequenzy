@@ -16,6 +16,7 @@ import { useActiveMediaItem, useIsPlaying } from '@rntp/player';
 
 import { AlbumActionsSheet } from '../components/AlbumActionsSheet';
 import { AlbumTile } from '../components/AlbumTile';
+import { Appear } from '../components/Appear';
 import { Artwork } from '../components/Artwork';
 import { Chip, ChipRow } from '../components/Chip';
 import { IconCalendar, IconSearch, IconX } from '../components/icons';
@@ -73,8 +74,12 @@ const SCOPES: { value: Scope; label: string }[] = [
 
 const FETCH_COUNT = 60;
 const DEBOUNCE_MS = 280;
+/** A query left standing on its results this long counts as one that was meant. */
+const SETTLED_MS = 1800;
 
 interface Results {
+  /** The query these answer, which is not always the one in the field. */
+  query: string;
   artists: ArtistSummary[];
   albums: AlbumSummary[];
   songs: Child[];
@@ -104,6 +109,8 @@ export function SearchScreen() {
   const [recent, setRecent] = useState<string[]>([]);
   const [trackTarget, setTrackTarget] = useState<Child | null>(null);
   const [albumTarget, setAlbumTarget] = useState<AlbumSummary | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const [mixing, setMixing] = useState<number | null>(null);
 
   const genres = useLibraryData((library, forceRefresh) => library.getGenres({ forceRefresh }), []);
 
@@ -129,13 +136,12 @@ export function SearchScreen() {
         .then((response) => {
           if (cancelled) return;
           setResults({
+            query: trimmed,
             artists: response.searchResult3.artist ?? [],
             albums: response.searchResult3.album ?? [],
             songs: response.searchResult3.song ?? [],
           });
           setError(null);
-          // Recorded on a result, so history holds queries that went somewhere.
-          void recordSearch(trimmed).then(setRecent);
         })
         .catch((cause: unknown) => {
           if (!cancelled) setError(errorMessage(cause));
@@ -149,13 +155,34 @@ export function SearchScreen() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [query, client]);
+  }, [query, client, attempt]);
 
   const hasQuery = query.trim().length > 0;
   const songs = results?.songs ?? [];
   const albums = results?.albums ?? [];
   const artists = results?.artists ?? [];
   const total = songs.length + albums.length + artists.length;
+
+  /**
+   * Remembers the query as one worth returning to.
+   *
+   * Called when a search has gone somewhere — a result opened or played, the
+   * keyboard's search key, or the query simply left standing on its results.
+   * Recording every response instead kept each pause mid-word, so typing
+   * "radiohead" slowly filed "rad" and "radio" alongside it.
+   */
+  const remember = useCallback(() => {
+    const trimmed = query.trim();
+    if (trimmed.length < 2) return;
+    void recordSearch(trimmed).then(setRecent);
+  }, [query]);
+
+  const settledQuery = results && total > 0 && results.query === query.trim() ? results.query : null;
+  useEffect(() => {
+    if (!settledQuery) return;
+    const timer = setTimeout(() => void recordSearch(settledQuery).then(setRecent), SETTLED_MS);
+    return () => clearTimeout(timer);
+  }, [settledQuery]);
 
   /** The match most likely meant: an exact name, else the first of each kind. */
   const top = useMemo(() => {
@@ -176,27 +203,36 @@ export function SearchScreen() {
   const handlePlay = useCallback(
     (index: number) => {
       const song = songs[index];
+      if (!song) return;
+      remember();
       // One track, without discarding whatever is already queued.
-      if (song) void playTrackNow(song).catch((e) => toast.error("Couldn't play", { detail: errorMessage(e) }));
+      toast.guard(playTrackNow(song));
     },
-    [songs, playTrackNow],
+    [songs, playTrackNow, remember],
   );
   const handleQueue = useCallback(
     (song: Child) => {
-      void addToQueue([song])
-        .then(() => toast.show('Added to queue', { icon: 'queue', detail: song.title }))
-        .catch((e) => toast.error("Couldn't queue", { detail: errorMessage(e) }));
+      remember();
+      toast.guard(
+        addToQueue([song]).then(() => toast.show('Added to queue', { icon: 'queue', detail: song.title })),
+        "Couldn't queue",
+      );
     },
-    [addToQueue],
+    [addToQueue, remember],
   );
   const openArtist = useCallback(
-    (artist: ArtistSummary) =>
-      navigation.navigate('Artist', { artistId: artist.id, artistName: artist.name }),
-    [navigation],
+    (artist: ArtistSummary) => {
+      remember();
+      navigation.navigate('Artist', { artistId: artist.id, artistName: artist.name });
+    },
+    [navigation, remember],
   );
   const openAlbum = useCallback(
-    (album: AlbumSummary) => navigation.navigate('Album', { albumId: album.id, albumName: album.name }),
-    [navigation],
+    (album: AlbumSummary) => {
+      remember();
+      navigation.navigate('Album', { albumId: album.id, albumName: album.name });
+    },
+    [navigation, remember],
   );
 
   const renderSong = useCallback<ListRenderItem<Child>>(
@@ -234,6 +270,7 @@ export function SearchScreen() {
         value={query}
         onChangeText={setQuery}
         placeholder="Artists, albums, tracks"
+        onSubmitEditing={remember}
       />
       {hasQuery && (
         <ChipRow style={styles.scopes}>
@@ -295,15 +332,23 @@ export function SearchScreen() {
             key={decade}
             label={decadeLabel(decade)}
             icon={IconCalendar}
+            selected={mixing === decade}
             onPress={() => {
+              // One at a time: a second press while the first is still
+              // building would start two mixes, the later replacing the
+              // earlier a moment after it began.
+              if (mixing != null) return;
               const label = `The ${decadeLabel(decade)}`;
-              void playMix({ label, fromYear: decade, toYear: decade + 9 })
-                .then((count) => toast.show(`Playing ${label}`, { icon: 'radio', detail: pluralize(count, 'track') }))
-                .catch((e) =>
-                  e instanceof EmptyMixError
-                    ? toast.show(e.message, { icon: 'info' })
-                    : toast.error("Couldn't start the mix", { detail: errorMessage(e) }),
-                );
+              setMixing(decade);
+              toast.guard(
+                playMix({ label, fromYear: decade, toYear: decade + 9 })
+                  .then((count) =>
+                    toast.show(`Playing ${label}`, { icon: 'radio', detail: pluralize(count, 'track') }),
+                  )
+                  .finally(() => setMixing(null)),
+                "Couldn't start the mix",
+                EmptyMixError,
+              );
             }}
           />
         ))}
@@ -356,7 +401,7 @@ export function SearchScreen() {
   // --- Results -------------------------------------------------------------
 
   const empty = error ? (
-    <ErrorState message={error} />
+    <ErrorState message={error} onRetry={() => setAttempt((n) => n + 1)} />
   ) : loading && !results ? (
     <LoadingState label="Searching" />
   ) : (
@@ -455,12 +500,20 @@ export function SearchScreen() {
                   onPress={() => {
                     if (top.kind === 'artist') openArtist(top.artist);
                     else if (top.kind === 'album') openAlbum(top.album);
-                    else void playTrackNow(top.song);
+                    else {
+                      remember();
+                      toast.guard(playTrackNow(top.song));
+                    }
                   }}
-                  onLongPress={() => {
-                    if (top.kind === 'album') setAlbumTarget(top.album);
-                    if (top.kind === 'song') setTrackTarget(top.song);
-                  }}
+                  // An artist has no menu to open, so no long-press at all —
+                  // rather than a buzz that leads to nothing.
+                  onLongPress={
+                    top.kind === 'album'
+                      ? () => setAlbumTarget(top.album)
+                      : top.kind === 'song'
+                        ? () => setTrackTarget(top.song)
+                        : undefined
+                  }
                 />
               </>
             )}
@@ -543,7 +596,12 @@ export function SearchScreen() {
   return (
     <TabScaffold>
       {header}
-      <View style={styles.body}>{body}</View>
+      {/* Keyed on what kind of thing is showing, so browse giving way to
+          results, or one scope to another, fades up rather than swaps. Not
+          keyed on the query: results changing as you type should not blink. */}
+      <Appear key={hasQuery ? scope : 'browse'} rise={6} style={styles.body}>
+        {body}
+      </Appear>
       <TrackActionsSheet visible={trackTarget != null} onClose={() => setTrackTarget(null)} song={trackTarget} />
       <AlbumActionsSheet visible={albumTarget != null} onClose={() => setAlbumTarget(null)} album={albumTarget} />
     </TabScaffold>
@@ -564,7 +622,7 @@ function TopResult({
   top: Top;
   artworkUrl: (id?: string | null, size?: number) => string | undefined;
   onPress: () => void;
-  onLongPress: () => void;
+  onLongPress?: () => void;
 }) {
   const color = useTheme();
   const styles = useThemedStyles(makeStyles);
@@ -589,10 +647,14 @@ function TopResult({
         haptics.tick();
         onPress();
       }}
-      onLongPress={() => {
-        haptics.heavy();
-        onLongPress();
-      }}
+      onLongPress={
+        onLongPress
+          ? () => {
+              haptics.heavy();
+              onLongPress();
+            }
+          : undefined
+      }
       style={({ pressed }) => [styles.top, pressed && { opacity: 0.8 }]}
     >
       <Artwork uri={artworkUrl(cover, 300)} size={84} round={top.kind === 'artist'} shadow={false} />

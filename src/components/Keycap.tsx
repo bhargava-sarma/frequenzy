@@ -1,4 +1,4 @@
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useEffect } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -8,9 +8,11 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
+import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 
 import type { IconComponent } from './icons';
 import { mix } from '../theme/color';
+import { usePressProgress } from '../theme/motion';
 import { icon as iconTokens, radius, space, type, withAlpha } from '../theme/tokens';
 import { useTheme, useThemeControls } from '../theme/ThemeProvider';
 import { haptics } from '../utils/haptics';
@@ -19,10 +21,11 @@ import { haptics } from '../utils/haptics';
  * A key, in the hardware sense.
  *
  * Two layers: a darker lip and a face resting on it, two points proud. While
- * held, the face sits down on the lip — drawn there, not animated there — so
- * the key reads as pressed the instant it is touched and comes back up the
- * instant it is let go. With the haptic tick that is the whole of the
- * feedback: no ripple, no flash, no spring.
+ * held, the face travels down onto the lip — in under a tenth of a second,
+ * so it is down before the finger has settled — and springs back up when
+ * let go. The travel runs on the UI thread and never re-renders the key.
+ * With the haptic tick that is the whole of the feedback: no ripple, no
+ * flash.
  *
  * Variants map to the keycap colours of the hardware this borrows from:
  * the one orange key (primary), white keys (secondary), grey keys (dark),
@@ -126,6 +129,22 @@ export const Keycap = memo(function Keycap({
     ink = mix(ink, face, 0.55);
   }
 
+  const { pressed, down, up } = usePressProgress();
+
+  // A key that goes busy or disabled under the finger gets no release
+  // event to come back up on; without this it would stay down.
+  useEffect(() => {
+    if (inert) up();
+  }, [inert, up]);
+
+  // Held: a lipped key sits down on its lip; a ghost key, having no lip to
+  // sit on, dims.
+  const travel = useAnimatedStyle(() =>
+    hasLip
+      ? { transform: [{ translateY: pressed.value * TRAVEL }] }
+      : { opacity: 1 - pressed.value * 0.4 },
+  );
+
   const handlePress = useCallback(() => {
     haptics.press();
     onPress?.();
@@ -166,6 +185,8 @@ export const Keycap = memo(function Keycap({
       accessibilityState={{ disabled: inert, busy, selected: active }}
       disabled={inert}
       onPress={handlePress}
+      onPressIn={down}
+      onPressOut={up}
       onLongPress={onLongPress ? handleLongPress : undefined}
       hitSlop={size === 'sm' ? space[2] : space[1]}
       style={[
@@ -179,35 +200,27 @@ export const Keycap = memo(function Keycap({
         style,
       ]}
     >
-      {({ pressed }) => (
-        <>
-          {hasLip && (
-            <View
-              style={[
-                StyleSheet.absoluteFill,
-                { top: TRAVEL, borderRadius: corner, backgroundColor: lip },
-              ]}
-            />
-          )}
-          <View
-            style={[
-              styles.face,
-              {
-                marginBottom: hasLip ? TRAVEL : 0,
-                borderRadius: corner,
-                backgroundColor: face,
-                borderColor: edge,
-                borderWidth: 1,
-              },
-              variant === 'ghost' && styles.ghostFace,
-              // Held: a lipped key sits down on its lip; a ghost key dims.
-              pressed && (hasLip ? { transform: [{ translateY: TRAVEL }] } : styles.ghostPressed),
-            ]}
-          >
-            <View style={[styles.content, square && styles.contentSquare]}>{content}</View>
-          </View>
-        </>
+      {hasLip && (
+        <View
+          style={[StyleSheet.absoluteFill, { top: TRAVEL, borderRadius: corner, backgroundColor: lip }]}
+        />
       )}
+      <Animated.View
+        style={[
+          styles.face,
+          {
+            marginBottom: hasLip ? TRAVEL : 0,
+            borderRadius: corner,
+            backgroundColor: face,
+            borderColor: edge,
+            borderWidth: 1,
+          },
+          variant === 'ghost' && styles.ghostFace,
+          travel,
+        ]}
+      >
+        <View style={[styles.content, square && styles.contentSquare]}>{content}</View>
+      </Animated.View>
     </Pressable>
   );
 });
@@ -234,7 +247,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   ghostFace: { borderStyle: 'solid' },
-  ghostPressed: { opacity: 0.6 },
   content: {
     flex: 1,
     flexDirection: 'row',

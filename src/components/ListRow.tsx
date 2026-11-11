@@ -4,7 +4,6 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Artwork } from './Artwork';
 import { IconDotsVertical, IconHeartFilled } from './icons';
 import { PlayingBars } from './PlayingBars';
-import { Touchable } from './Touchable';
 import { hairline, layout, space, type, withAlpha } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
@@ -73,9 +72,11 @@ export const ListRow = memo(function ListRow({
   const styles = useThemedStyles(makeStyles);
 
   return (
-    <Touchable
+    <Pressable
       accessibilityRole="button"
       accessibilityLabel={subtitle ? `${title}, ${subtitle}` : title}
+      accessibilityState={{ selected: active }}
+      disabled={!onPress && !onLongPress}
       onPress={onPress}
       onLongPress={
         onLongPress
@@ -85,10 +86,11 @@ export const ListRow = memo(function ListRow({
             }
           : undefined
       }
-      // A full-width row highlights rather than dims: dimming the whole row
-      // reads as it being disabled.
-      style={[styles.root, dimmed && styles.dimmed]}
-      pressedStyle={styles.rowPressed}
+      // A full-width row highlights rather than shrinking or dimming: either
+      // reads, across a whole row, as it being broken or disabled. Plain
+      // state, too — a long list holds hundreds of these, and a highlight
+      // needs no animated value per row.
+      style={({ pressed }) => [styles.root, dimmed && styles.dimmed, pressed && styles.rowPressed]}
     >
       {rank != null && (
         <Text style={[styles.rank, rank <= 3 && styles.rankTop]} numberOfLines={1}>
@@ -159,7 +161,7 @@ export const ListRow = memo(function ListRow({
           </Pressable>
         )}
       </View>
-    </Touchable>
+    </Pressable>
   );
 });
 

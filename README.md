@@ -245,16 +245,34 @@ black). The player, lyrics and queue are always dark, whatever the theme.
 Type is Space Grotesk for words, Space Mono for labels and figures, and Doto for
 the dot-matrix display.
 
-**Motion is kept to what explains something.** Sheets and the player slide up
-from the edge you drag them back to, a switch crosses its well, a push between
-screens is a short fade, and the background follows a new cover with a quick
-fade. Everything is a short eased timing — no springs, so nothing bounces or
-settles — and leaving is quicker than arriving. Nothing staggers in, scales
-under your finger, scrolls a ticker or drifts on its own; the only things that
-move unprompted are a loading light and, if you choose those faces, the record
-and the tape. Presses are a change of state rather than a movement: keys sit
-down, rows highlight. Reduce Motion stops the record and tape and makes every
-transition instant.
+**Motion has a job everywhere it appears.** It answers a touch, shows where
+something came from, or says the music is running — and it is short enough to
+be felt rather than watched.
+
+- *Answering a touch.* Keys travel down onto their lip in under a tenth of a
+  second and spring back; tiles and round buttons give a few percent under the
+  finger; a like, shuffle or repeat pops as it changes. Rows highlight instead
+  — a full-width row that shrank would read as broken.
+- *Showing where things come from.* Sheets and the player rise from the edge
+  you drag them back to, and only once they have been laid out, so every frame
+  of the slide has the finished surface in it. Going deeper slides the new
+  screen in from the right; tabs crossfade; the raised key under a segmented
+  control or the dock slides to its new place rather than blinking there.
+  Content fades up when it has loaded, and the loader itself waits a moment
+  before showing, so a read that comes straight from the cache never flashes.
+- *Saying the music is running.* The level bars beside the playing row rise
+  and fall, the playhead glides between the player's once-a-second reports,
+  the current lyric line takes the light from the one before it, and — on
+  those faces — the record turns and the tape winds. Swipe the cover to skip
+  and it leaves the way it was pushed while the next one comes in behind it.
+
+All of it is transforms and opacity on the UI thread, so none of it waits on
+JavaScript and none of it lays anything out; a long list carries one running
+animation, not one per row. Springs are used only for things a finger moved or
+a selection that travels, and only the like is loose enough to bounce. Nothing
+drifts or loops for decoration. **Reduce motion** stills the lot: transitions
+become cuts, the bars and the record hold, and the app's own setting applies
+whether or not the system's does.
 
 ---
 

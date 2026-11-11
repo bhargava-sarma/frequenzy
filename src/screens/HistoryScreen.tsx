@@ -18,9 +18,9 @@ import { TrackActionsSheet } from '../components/TrackActionsSheet';
 import { clearPlayHistory, getRecentPlays, onPlayHistoryChanged, type PlayEntry } from '../data/playHistory';
 import { useArtwork } from '../hooks/useArtwork';
 import type { AnyStackParamList } from '../navigation/types';
+import { playOutline } from '../player/mixes';
 import { extrasOf } from '../player/trackMapping';
-import { usePlayerStore } from '../store/usePlayerStore';
-import { errorMessage, toast } from '../store/useToastStore';
+import { toast } from '../store/useToastStore';
 import { layout, space, type } from '../theme/tokens';
 import { useTheme } from '../theme/ThemeProvider';
 import type { Child } from '../types/subsonic';
@@ -57,7 +57,6 @@ export function HistoryScreen() {
   const artworkUrl = useArtwork();
   const navHeight = useNavBarHeight();
   const { onScroll, progress } = useCollapsingHeader(30, 80);
-  const playTrackNow = usePlayerStore((state) => state.playTrackNow);
   const activeItem = useActiveMediaItem();
   const isPlaying = useIsPlaying();
   const activeId = extrasOf(activeItem)?.subsonicId;
@@ -99,11 +98,9 @@ export function HistoryScreen() {
     return out;
   }, [entries]);
 
-  const play = useCallback(
-    (entry: PlayEntry) =>
-      void playTrackNow(toSong(entry)).catch((e) => toast.error("Couldn't play", { detail: errorMessage(e) })),
-    [playTrackNow],
-  );
+  // The log keeps an outline of each track; the rest is fetched as it plays,
+  // so the player has a format to show and the queue a length to count.
+  const play = useCallback((entry: PlayEntry) => toast.guard(playOutline(toSong(entry))), []);
 
   const header = (
     <View style={[styles.header, { paddingTop: navHeight + space[3] }]}>
@@ -182,7 +179,10 @@ export function HistoryScreen() {
           tone="destructive"
           onPress={() => {
             setConfirm(false);
-            void clearPlayHistory().then(() => toast.show('History cleared', { icon: 'check' }));
+            toast.guard(
+              clearPlayHistory().then(() => toast.show('History cleared', { icon: 'check' })),
+              "Couldn't clear history",
+            );
           }}
         />
         <SheetRow label="Keep it" last onPress={() => setConfirm(false)} />

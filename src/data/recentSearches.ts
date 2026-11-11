@@ -30,17 +30,23 @@ export async function getRecentSearches(): Promise<string[]> {
 /**
  * Records a query, most recent first.
  *
- * Case-insensitively deduped, so refining a search doesn't leave three near
- * identical rows behind.
+ * Deduped case-insensitively, and an earlier entry the new query merely
+ * extends is dropped: "rad", "radio", "radiohead" is one search typed
+ * slowly, not three, and keeping each stop along the way fills the list
+ * with fragments.
  */
 export async function recordSearch(query: string): Promise<string[]> {
   const trimmed = query.trim();
   if (trimmed.length < 2) return getRecentSearches();
 
+  const needle = trimmed.toLowerCase();
   const existing = await getRecentSearches();
   const next = [
     trimmed,
-    ...existing.filter((entry) => entry.toLowerCase() !== trimmed.toLowerCase()),
+    ...existing.filter((entry) => {
+      const other = entry.toLowerCase();
+      return other !== needle && !needle.startsWith(other);
+    }),
   ].slice(0, MAX_ENTRIES);
 
   try {

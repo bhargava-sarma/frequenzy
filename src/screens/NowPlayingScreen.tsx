@@ -1,17 +1,26 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Pressable,
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
   type LayoutChangeEvent,
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, {
+  interpolate,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import TrackPlayer, { useActiveMediaItem, useIsPlaying, useProgress } from '@rntp/player';
 
 import { AmbientBackground } from '../components/AmbientBackground';
+import { Appear } from '../components/Appear';
 import { DotText, Display } from '../components/Display';
 import { ArtworkFace } from '../components/faces/ArtworkFace';
 import { TapeFace } from '../components/faces/TapeFace';
@@ -50,10 +59,11 @@ import { sleepLabel, useSleepTimer } from '../hooks/useSleepTimer';
 import { navigateToAlbum, navigateToArtist } from '../navigation/ref';
 import { extrasOf, formatPlate, isLossless, songFromMediaItem } from '../player/trackMapping';
 import { useFavoritesStore, useStarred } from '../store/useFavoritesStore';
-import { usePlayerStore } from '../store/usePlayerStore';
+import { usePlayerStore, type SourceKind } from '../store/usePlayerStore';
 import { usePlayerUiStore } from '../store/usePlayerUiStore';
 import { useSettingsStore, type PlayerFace } from '../store/useSettingsStore';
-import { useTimings } from '../theme/motion';
+import { toast } from '../store/useToastStore';
+import { useMotion } from '../theme/motion';
 import { layout, radius, space, stroke, type, withAlpha } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
@@ -64,7 +74,8 @@ import { haptics } from '../utils/haptics';
  *
  * The face is the record — its cover, a spinning disc, or a cassette whose
  * tape winds across as the song plays — and it answers to the hand: drag it
- * sideways to change track, double-tap it to like. Below, the black display
+ * sideways to change track and it leaves the way it was pushed while the
+ * next comes in behind it; double-tap it to like. Below, the black display
  * reads out what's playing the way a device does: position in the queue,
  * the format plate, the title. The ruler under it is the position, and the
  * keys under that are the transport.
@@ -78,12 +89,29 @@ const FACE_ICON = { artwork: IconPhoto, vinyl: IconVinyl, tape: IconDeviceAudioT
 const FACE_LABEL = { artwork: 'Art', vinyl: 'Vinyl', tape: 'Tape' } as const;
 
 const SKIP_DISTANCE = 90;
+/** If a skip brings no new track within this, the face stops waiting for one. */
+const ARRIVAL_TIMEOUT_MS = 700;
+
+/** How the header names where the queue came from. */
+const SOURCE_EYEBROW: Record<SourceKind, string> = {
+  album: 'Playing from album',
+  playlist: 'Playing from playlist',
+  liked: 'Playing from your likes',
+  artist: 'Playing from artist',
+  genre: 'Playing from genre',
+  radio: 'Playing radio',
+  mix: 'Playing mix',
+  search: 'Playing from search',
+  history: 'Playing from history',
+  restored: 'Picking up from',
+};
 
 export function NowPlayingScreen() {
   const color = useTheme();
   const styles = useThemedStyles(makeStyles);
   const insets = useSafeAreaInsets();
-  const { fast } = useTimings();
+  const { width: windowWidth } = useWindowDimensions();
+  const { reduce, timings, springs } = useMotion();
 
   const closePlayer = usePlayerUiStore((state) => state.closePlayer);
   const openQueue = usePlayerUiStore((state) => state.openQueue);
@@ -105,7 +133,9 @@ export function NowPlayingScreen() {
   const setStarred = useFavoritesStore((state) => state.setStarred);
 
   const extras = extrasOf(activeItem);
-  const song = songFromMediaItem(activeItem);
+  // One object per track, not per render: this screen re-renders every
+  // second with the position, and the sheets below key their state on it.
+  const song = useMemo(() => songFromMediaItem(activeItem), [activeItem]);
   const starred = useStarred(extras?.subsonicId, Boolean(extras?.starred));
   const { state: sleep } = useSleepTimer();
 
@@ -118,6 +148,84 @@ export function NowPlayingScreen() {
   // --- Face gestures ---------------------------------------------------------
 
   const offset = useSharedValue(0);
+  const burst = useSharedValue(0);
+  const mediaId = activeItem?.mediaId;
+
+  /**
+   * Whether a skip in each direction will bring a different track. Previous
+   * restarts the current one after a few seconds, and Next does nothing at
+   * the end of a queue that isn't repeating — and a face that slid away for
+   * a track that then never came would leave the player empty. Shared
+   * values, because the gesture decides on the UI thread.
+   */
+  const previousChanges = useSharedValue(false);
+  const nextChanges = useSharedValue(false);
+  useEffect(() => {
+    previousChanges.value = position <= 3 && (queuePosition.index > 0 || repeat === 'all');
+    nextChanges.value =
+      queuePosition.length > 1 &&
+      (queuePosition.index < queuePosition.length - 1 || repeat === 'all');
+  }, [position, queuePosition.index, queuePosition.length, repeat, previousChanges, nextChanges]);
+
+  /**
+   * A swipe-skip in flight. The old face leaves in the direction it was
+   * pushed; the new one comes in from the other side once both things are
+   * true — the old one has gone, and the player has actually changed track.
+   * Waiting for both is what keeps the outgoing cover from sliding back in
+   * as itself and then swapping.
+   */
+  const arrival = useRef<{
+    direction: 1 | -1;
+    left: boolean;
+    changed: boolean;
+    timer: ReturnType<typeof setTimeout>;
+  } | null>(null);
+
+  const settleArrival = useCallback(
+    (timedOut: boolean) => {
+      const pending = arrival.current;
+      if (!pending) return;
+      if (!timedOut && !(pending.left && pending.changed)) return;
+      clearTimeout(pending.timer);
+      arrival.current = null;
+      // Timed out — no new track came — so whatever is there just returns.
+      if (!timedOut) offset.value = pending.direction * windowWidth * 0.55;
+      offset.value = withSpring(0, springs.settle);
+    },
+    [offset, windowWidth, springs],
+  );
+
+  const beginArrival = useCallback(
+    (direction: 1 | -1) => {
+      if (arrival.current) clearTimeout(arrival.current.timer);
+      arrival.current = {
+        direction,
+        left: false,
+        changed: false,
+        timer: setTimeout(() => settleArrival(true), ARRIVAL_TIMEOUT_MS),
+      };
+    },
+    [settleArrival],
+  );
+
+  const faceLeft = useCallback(() => {
+    if (!arrival.current) return;
+    arrival.current.left = true;
+    settleArrival(false);
+  }, [settleArrival]);
+
+  useEffect(() => {
+    if (!arrival.current) return;
+    arrival.current.changed = true;
+    settleArrival(false);
+  }, [mediaId, settleArrival]);
+
+  useEffect(
+    () => () => {
+      if (arrival.current) clearTimeout(arrival.current.timer);
+    },
+    [],
+  );
 
   const skip = useCallback((direction: 1 | -1) => {
     haptics.press();
@@ -127,6 +235,12 @@ export function NowPlayingScreen() {
 
   const like = useCallback(() => {
     if (!extras) return;
+    // The heart rises over the cover either way: on a track already liked it
+    // is the answer to "did that take?", and double-tap never unlikes.
+    if (!reduce) {
+      burst.value = 0;
+      burst.value = withTiming(1, { duration: 700 });
+    }
     if (!starred) {
       void setStarred(
         { id: extras.subsonicId, kind: 'song', albumId: extras.albumId, title: activeItem?.title },
@@ -135,7 +249,10 @@ export function NowPlayingScreen() {
     } else {
       haptics.tick();
     }
-  }, [extras, starred, setStarred, activeItem?.title]);
+  }, [extras, starred, setStarred, activeItem?.title, reduce, burst]);
+
+  const exit = timings.exit;
+  const settle = springs.settle;
 
   const pan = Gesture.Pan()
     .activeOffsetX([-18, 18])
@@ -143,26 +260,53 @@ export function NowPlayingScreen() {
     .onUpdate((event) => {
       offset.value = event.translationX;
     })
-    .onEnd((event) => {
+    .onEnd((event, success) => {
       const fling = Math.abs(event.velocityX) > 900;
-      if (Math.abs(event.translationX) > SKIP_DISTANCE || fling) {
-        runOnJS(skip)(event.translationX < 0 ? 1 : -1);
+      // `success` is false when the system took the gesture back; that is
+      // not a decision to change track.
+      if (success && (Math.abs(event.translationX) > SKIP_DISTANCE || fling)) {
+        const direction = event.translationX < 0 ? 1 : -1;
+        const changes = direction > 0 ? nextChanges.value : previousChanges.value;
+        if (changes) {
+          // Off the side it was pushed toward; the next face follows it in.
+          runOnJS(beginArrival)(direction);
+          runOnJS(skip)(direction);
+          offset.value = withTiming(-direction * windowWidth, exit, (finished) => {
+            if (finished) runOnJS(faceLeft)();
+          });
+          return;
+        }
+        runOnJS(skip)(direction);
       }
-      // Back to centre either way; the new cover simply takes its place.
-      offset.value = withTiming(0, fast);
+      offset.value = withSpring(0, settle);
     });
 
   const doubleTap = Gesture.Tap()
     .numberOfTaps(2)
     .maxDuration(260)
-    .onEnd(() => {
-      runOnJS(like)();
+    .onEnd((_event, success) => {
+      if (success) runOnJS(like)();
     });
 
   const faceGesture = Gesture.Race(pan, doubleTap);
 
-  // The face follows the finger, and only the finger.
-  const faceStyle = useAnimatedStyle(() => ({ transform: [{ translateX: offset.value }] }));
+  // The face follows the finger, tilting a touch as it goes, the way a card
+  // pushed across a table does.
+  const faceStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: offset.value },
+      { rotate: `${interpolate(offset.value, [-windowWidth, 0, windowWidth], [-5, 0, 5])}deg` },
+    ],
+    opacity: interpolate(Math.abs(offset.value), [0, windowWidth * 0.9], [1, 0.35], 'clamp'),
+  }));
+
+  // The like, drawn over the cover: up fast, held, gone.
+  const burstStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(burst.value, [0, 0.12, 0.65, 1], [0, 1, 1, 0]),
+    transform: [{ scale: interpolate(burst.value, [0, 0.22, 0.4, 1], [0.3, 1.18, 1, 1.06]) }],
+  }));
+
+  const seek = useCallback((seconds: number) => TrackPlayer.seekTo(seconds), []);
 
   const onFaceLayout = useCallback((event: LayoutChangeEvent) => {
     const { width: w, height: h } = event.nativeEvent.layout;
@@ -216,7 +360,7 @@ export function NowPlayingScreen() {
         <IconButton icon={IconChevronDown} accessibilityLabel="Close player" onPress={closePlayer} />
         <View style={styles.headerText}>
           <Label tone="onArtwork" style={styles.headerEyebrow}>
-            {source ? `Playing from ${source.kind}` : 'Now playing'}
+            {source ? SOURCE_EYEBROW[source.kind] : 'Now playing'}
           </Label>
           {source ? (
             <Text style={styles.headerTitle} numberOfLines={1}>
@@ -232,19 +376,26 @@ export function NowPlayingScreen() {
         {faceArea.height > 0 && (
           <GestureDetector gesture={faceGesture}>
             <Animated.View style={[styles.face, faceStyle]}>
-              {face === 'vinyl' ? (
-                <VinylFace uri={art} size={faceSize} playing={isPlaying} progress={ratio} />
-              ) : face === 'tape' ? (
-                <TapeFace
-                  size={faceSize}
-                  playing={isPlaying}
-                  progress={ratio}
-                  title={activeItem.title}
-                  subtitle={activeItem.artist}
-                />
-              ) : (
-                <ArtworkFace uri={art} size={faceSize} />
-              )}
+              {/* Keyed on the face, so switching between them is one fading
+                  out of the way of the next rather than a cut. */}
+              <Appear key={face} rise={0} style={styles.face}>
+                {face === 'vinyl' ? (
+                  <VinylFace uri={art} size={faceSize} playing={isPlaying} progress={ratio} />
+                ) : face === 'tape' ? (
+                  <TapeFace
+                    size={faceSize}
+                    playing={isPlaying}
+                    progress={ratio}
+                    title={activeItem.title}
+                    subtitle={activeItem.artist}
+                  />
+                ) : (
+                  <ArtworkFace uri={art} size={faceSize} />
+                )}
+              </Appear>
+              <Animated.View pointerEvents="none" style={[styles.burst, burstStyle]}>
+                <IconHeartFilled size={Math.round(faceSize * 0.3)} color={color.accent} />
+              </Animated.View>
             </Animated.View>
           </GestureDetector>
         )}
@@ -272,7 +423,9 @@ export function NowPlayingScreen() {
           </View>
 
           <View style={styles.titleRow}>
-            <View style={styles.titleText}>
+            {/* Keyed on the track: a new title fades up into the display
+                rather than replacing the old one mid-glance. */}
+            <Appear key={mediaId ?? 'none'} rise={5} style={styles.titleText}>
               <Pressable
                 accessibilityRole="link"
                 accessibilityLabel={`Open album ${extras?.albumTitle ?? ''}`}
@@ -294,7 +447,7 @@ export function NowPlayingScreen() {
                   {activeItem.artist ?? 'Unknown artist'}
                 </Text>
               </Pressable>
-            </View>
+            </Appear>
             <IconButton
               icon={starred ? IconHeartFilled : IconHeart}
               accessibilityLabel={starred ? 'Unlike' : 'Like'}
@@ -302,6 +455,7 @@ export function NowPlayingScreen() {
               color={starred ? color.accent : color.displayInk}
               size={42}
               iconSize={22}
+              popOn={starred}
               onPress={() =>
                 extras &&
                 void setStarred(
@@ -314,12 +468,7 @@ export function NowPlayingScreen() {
         </Display>
 
         <View style={styles.scrub}>
-          <ScrubBar
-            position={position}
-            duration={total}
-            tone="onArtwork"
-            onSeek={(seconds) => TrackPlayer.seekTo(seconds)}
-          />
+          <ScrubBar position={position} duration={total} tone="onArtwork" onSeek={seek} />
         </View>
 
         {/* Transport. */}
@@ -332,7 +481,8 @@ export function NowPlayingScreen() {
             color={shuffled ? color.accent : withAlpha(color.onArtwork, 0.75)}
             size={44}
             iconSize={21}
-            onPress={() => void setShuffled(!shuffled)}
+            popOn={shuffled}
+            onPress={() => toast.guard(setShuffled(!shuffled), "Couldn't change shuffle")}
           />
           <Keycap
             icon={IconPlayerSkipBackFilled}
@@ -369,6 +519,7 @@ export function NowPlayingScreen() {
             color={repeat !== 'off' ? color.accent : withAlpha(color.onArtwork, 0.75)}
             size={44}
             iconSize={21}
+            popOn={repeat}
             onPress={cycleRepeat}
           />
         </View>
@@ -465,6 +616,7 @@ const makeStyles = (color: Palette) =>
     headerTitle: { ...type.callout, fontFamily: type.headline.fontFamily, color: color.onArtwork, marginTop: 2 },
     faceArea: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     face: { alignItems: 'center', justifyContent: 'center' },
+    burst: { position: 'absolute', alignItems: 'center', justifyContent: 'center' },
     controls: { paddingHorizontal: layout.screenPadding },
     display: { paddingHorizontal: space[4], paddingTop: space[3], paddingBottom: space[3] },
     statusLine: { flexDirection: 'row', alignItems: 'center', gap: space[2], marginBottom: space[2] },

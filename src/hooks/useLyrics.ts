@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MediaItem } from '@rntp/player';
 
 import { fetchLyrics, type Lyrics } from '../api/lrclib';
@@ -35,8 +35,18 @@ export function useLyrics(item: MediaItem | null | undefined): LyricsState {
   const [status, setStatus] = useState<LyricsStatus>('idle');
   const [lyrics, setLyrics] = useState<Lyrics | null>(null);
   const [attempt, setAttempt] = useState(0);
+  /**
+   * Set by retry, consumed by the lookup it triggers. The attempt counter
+   * alone can't say "skip the cache": it stays above zero for as long as the
+   * panel is open, so one retry would have every later track bypass the
+   * cache and ask LRCLIB again for words already on the device.
+   */
+  const skipCache = useRef(false);
 
   useEffect(() => {
+    const fresh = skipCache.current;
+    skipCache.current = false;
+
     if (!trackId || !title) {
       setStatus('idle');
       setLyrics(null);
@@ -53,7 +63,7 @@ export function useLyrics(item: MediaItem | null | undefined): LyricsState {
 
       // A manual retry skips the cache: the reason to press it is that the
       // cached answer was unsatisfying.
-      if (attempt === 0) {
+      if (!fresh) {
         const cached = await getCachedLyrics(trackId);
         if (!current) return;
         if (cached !== undefined) {
@@ -111,7 +121,10 @@ export function useLyrics(item: MediaItem | null | undefined): LyricsState {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trackId, title, artist, attempt, client]);
 
-  const retry = useCallback(() => setAttempt((n) => n + 1), []);
+  const retry = useCallback(() => {
+    skipCache.current = true;
+    setAttempt((n) => n + 1);
+  }, []);
 
   return { status, lyrics, retry };
 }

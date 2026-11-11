@@ -12,6 +12,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useActiveMediaItem, useIsPlaying } from '@rntp/player';
 
 import { AlbumActionsSheet } from '../components/AlbumActionsSheet';
+import { Appear } from '../components/Appear';
 import { IconButton } from '../components/IconButton';
 import {
   IconArrowsShuffle,
@@ -43,8 +44,9 @@ import {
 } from '../data/playHistory';
 import { useArtwork } from '../hooks/useArtwork';
 import { useLibraryData } from '../hooks/useLibraryData';
+import { usePullRefresh } from '../hooks/usePullRefresh';
 import { LIKED_PLAYLIST_ID, type HomeStackParamList, type RootStackParamList } from '../navigation/types';
-import { DECADES, EmptyMixError, decadeLabel, playMix, shuffleLibrary } from '../player/mixes';
+import { DECADES, EmptyMixError, decadeLabel, playMix, playOutline, shuffleLibrary } from '../player/mixes';
 import { extrasOf } from '../player/trackMapping';
 import { usePlaylistStore } from '../store/usePlaylistStore';
 import { useServerStore } from '../store/useServerStore';
@@ -149,14 +151,18 @@ export function HomeScreen() {
     }, [loadStats, loadChart]),
   );
 
+  const refreshShelves = shelves.refresh;
+  const refreshRandom = random.refresh;
+  const refreshGenres = genres.refresh;
   const refresh = useCallback(() => {
-    shelves.refresh();
-    random.refresh();
-    genres.refresh();
+    refreshShelves();
+    refreshRandom();
+    refreshGenres();
     void loadPlaylists();
     loadStats();
     loadChart();
-  }, [shelves, random, genres, loadPlaylists, loadStats, loadChart]);
+  }, [refreshShelves, refreshRandom, refreshGenres, loadPlaylists, loadStats, loadChart]);
+  const pull = usePullRefresh(shelves.loading || random.loading || genres.loading, refresh);
 
   const openAlbum = useCallback(
     (album: AlbumSummary) => navigation.navigate('Album', { albumId: album.id, albumName: album.name }),
@@ -213,9 +219,7 @@ export function HomeScreen() {
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl refreshing={shelves.loading && shelves.data != null} onRefresh={refresh} />
-        }
+        refreshControl={<RefreshControl {...pull} />}
       >
         <ScreenHeader
           eyebrow={formatEyebrowDate()}
@@ -333,11 +337,9 @@ export function HomeScreen() {
                   playing={isPlaying}
                   trailingText={`${track.plays}×`}
                   last={index === chart.length - 1}
-                  onPress={() =>
-                    track.albumId
-                      ? navigation.navigate('Album', { albumId: track.albumId })
-                      : setTrackTarget(song)
-                  }
+                  // A track row plays, here as everywhere else; the album is
+                  // a long-press away in its menu.
+                  onPress={() => toast.guard(playOutline(song))}
                   onLongPress={() => setTrackTarget(song)}
                   onMore={() => setTrackTarget(song)}
                 />
@@ -350,7 +352,7 @@ export function HomeScreen() {
         {shelves.error && !shelves.data && <ErrorState message={shelves.error} onRetry={shelves.refresh} />}
 
         {shelves.data && (
-          <>
+          <Appear>
             <Shelf
               index="03"
               title="Recently added"
@@ -379,7 +381,7 @@ export function HomeScreen() {
               onSelect={openAlbum}
               onLongPress={setAlbumTarget}
             />
-          </>
+          </Appear>
         )}
         {random.data && (
           <Shelf
