@@ -1,10 +1,12 @@
-import TrackPlayer, { Event, RepeatMode } from '@rntp/player';
+import TrackPlayer, { Event, RepeatMode, type MediaItem } from '@rntp/player';
 import { create } from 'zustand';
 
+import { localCopy } from '../offline/downloads';
 import { setupPlayer } from '../player/setup';
 import { songFromMediaItem, toMediaItems } from '../player/trackMapping';
 import type { Child } from '../types/subsonic';
 import { useServerStore } from './useServerStore';
+import { toast } from './useToastStore';
 
 /**
  * Queue operations.
@@ -40,6 +42,7 @@ export type SourceKind =
   | 'mix'
   | 'search'
   | 'history'
+  | 'downloads'
   | 'restored';
 
 /** What the queue was started from, for the player's "Playing from" line. */
@@ -108,10 +111,71 @@ interface PlayerStore {
   setSpeed: (speed: number) => void;
 }
 
-async function buildItems(songs: Child[]) {
-  const client = useServerStore.getState().client;
-  if (!client) throw new Error('Not connected to a server');
-  return toMediaItems(client, songs);
+interface Playable {
+  /** The songs that will be queued — all of them, or the downloaded ones. */
+  songs: Child[];
+  items: MediaItem[];
+  /** Where `startIndex` landed in `songs`. */
+  start: number;
+  /** Songs left out because they need the server and it can't be reached. */
+  dropped: number;
+}
+
+/**
+ * Turns songs into queue items.
+ *
+ * Downloaded tracks always play from the device. The rest need a live
+ * address; when none answers, a list with downloaded tracks in it plays
+ * just those instead of failing whole, and a list with none fails as it
+ * always has. Known to be offline already, it doesn't make anyone wait out
+ * another probe to learn that again — it plays what it has and lets the
+ * probe run behind.
+ */
+async function buildPlayable(songs: Child[], startIndex = 0): Promise<Playable> {
+  const { client, connection, connecting } = useServerStore.getState();
+  const local = songs.map((song) => localCopy(song.id));
+  const someLocal = local.some(Boolean);
+  let canStream = local.every(Boolean);
+
+  if (!canStream) {
+    if (!client) {
+      if (!someLocal) throw new Error('Not connected to a server');
+    } else if (!connection && !connecting && someLocal) {
+      void client.ensureConnection().catch(() => {});
+    } else {
+      try {
+        await client.ensureConnection();
+        canStream = true;
+      } catch (error) {
+        if (!someLocal) throw error;
+      }
+    }
+  }
+
+  if (canStream) {
+    return { songs, items: await toMediaItems(client, songs, localCopy), start: startIndex, dropped: 0 };
+  }
+
+  const keptIndices = local.flatMap((copy, index) => (copy ? [index] : []));
+  const kept = keptIndices.map((index) => songs[index]);
+  // The chosen track if it is downloaded, else the next one that is.
+  const start = Math.max(0, keptIndices.findIndex((index) => index >= startIndex));
+  return {
+    songs: kept,
+    items: await toMediaItems(client, kept, localCopy),
+    start,
+    dropped: songs.length - kept.length,
+  };
+}
+
+/** Says what was left out when only the downloaded tracks could be queued. */
+function reportDropped(playable: Playable, verb: 'Playing' | 'Queued') {
+  if (playable.dropped === 0) return;
+  const count = playable.songs.length;
+  toast.show(`Offline · ${verb.toLowerCase()} ${count} downloaded track${count === 1 ? '' : 's'}`, {
+    icon: 'offline',
+    detail: `${playable.dropped} not downloaded`,
+  });
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -220,6 +284,37 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
    */
   let original: Child[] = [];
 
+  /**
+   * Replaces the queue and starts it. Returns the songs actually queued —
+   * fewer than given when offline and only some are downloaded.
+   */
+  async function startQueue(songs: Child[], startIndex: number, source?: QueueSource): Promise<Child[]> {
+    if (songs.length === 0) return [];
+    get().init();
+
+    // Build before touching the queue: if URL construction fails, the
+    // current queue is left intact rather than cleared.
+    const playable = await buildPlayable(songs, startIndex);
+    const { items } = playable;
+    if (items.length === 0) return [];
+    const start = Math.min(Math.max(0, playable.start), items.length - 1);
+
+    await applyQueueChange(
+      () => TrackPlayer.setMediaItems(items, start),
+      () => TrackPlayer.getQueue().length > 0,
+      { refire: true },
+    );
+
+    // Only once the player has it: a rejected change must not leave the
+    // remembered running order describing a queue that never loaded.
+    original = playable.songs;
+    lastActiveIndex = start;
+    set({ priorityCount: 0, shuffled: false, source: source ?? null });
+    TrackPlayer.play();
+    reportDropped(playable, 'Playing');
+    return playable.songs;
+  }
+
   return {
     ready: false,
     error: null,
@@ -253,32 +348,15 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
 
     playNow: async (songs, startIndex = 0, source) => {
       if (songs.length === 0) return;
-      get().init();
-
-      // Build before touching the queue: if URL construction fails, the
-      // current queue is left intact rather than cleared.
-      const items = await buildItems(songs);
-      const start = Math.min(Math.max(0, startIndex), items.length - 1);
-
-      await applyQueueChange(
-        () => TrackPlayer.setMediaItems(items, start),
-        () => TrackPlayer.getQueue().length > 0,
-        { refire: true },
-      );
-
-      // Only once the player has it: a rejected change must not leave the
-      // remembered running order describing a queue that never loaded.
-      original = songs;
-      lastActiveIndex = start;
-      set({ priorityCount: 0, shuffled: false, source: source ?? null });
-      TrackPlayer.play();
+      await startQueue(songs, startIndex, source);
     },
 
     shufflePlay: async (songs, source) => {
-      await get().playNow(shuffleList(songs), 0, source);
-      // playNow recorded the shuffled order; put the original back, since
-      // that is what "shuffle off" has to restore.
-      original = songs;
+      const kept = await startQueue(shuffleList(songs), 0, source);
+      // startQueue recorded the shuffled order; put the original back, since
+      // that is what "shuffle off" has to restore — only what was queued.
+      const queued = new Set(kept.map((song) => song.id));
+      original = songs.filter((song) => queued.has(song.id));
       set({ shuffled: true });
     },
 
@@ -342,7 +420,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
             }
           }
 
-          const items = tail.length > 0 ? await buildItems(tail) : [];
+          const items = tail.length > 0 ? (await buildPlayable(tail)).items : [];
           if (TrackPlayer.getActiveMediaItemIndex() !== activeIndex) continue;
 
           const length = TrackPlayer.getQueue().length;
@@ -374,7 +452,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
         return;
       }
 
-      const items = await buildItems([song]);
+      const { items } = await buildPlayable([song]);
       const before = TrackPlayer.getQueue().length;
       const insertAt = activeIndex + 1;
 
@@ -402,7 +480,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
         return;
       }
 
-      const items = await buildItems(songs);
+      const playable = await buildPlayable(songs);
+      const { items } = playable;
+      if (items.length === 0) return;
       const before = TrackPlayer.getQueue().length;
 
       await applyQueueChange(
@@ -411,6 +491,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
       );
 
       set({ priorityCount: get().priorityCount + items.length });
+      reportDropped(playable, 'Queued');
     },
 
     addToQueue: async (songs) => {
@@ -423,7 +504,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
         return;
       }
 
-      const items = await buildItems(songs);
+      const playable = await buildPlayable(songs);
+      const { items } = playable;
+      if (items.length === 0) return;
       const before = TrackPlayer.getQueue().length;
       // The region may extend past the end if items were removed under it.
       const at = Math.min(insertAt, before);
@@ -434,14 +517,20 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
       );
 
       set({ priorityCount: get().priorityCount + items.length });
+      reportDropped(playable, 'Queued');
     },
 
     loadPaused: async (songs, startIndex, position, source = null) => {
       if (songs.length === 0) return;
       get().init();
 
-      const items = await buildItems(songs);
-      const start = Math.min(Math.max(0, startIndex), items.length - 1);
+      const playable = await buildPlayable(songs, startIndex);
+      const { items } = playable;
+      if (items.length === 0) return;
+      const start = Math.min(Math.max(0, playable.start), items.length - 1);
+      // The place in the track belongs to the track that was playing; if
+      // that one couldn't be queued, the next starts from its top.
+      const sameTrack = playable.songs[start]?.id === songs[Math.min(Math.max(0, startIndex), songs.length - 1)]?.id;
 
       // A last look, as close to the send as possible: something may have
       // started playing while the items were being built.
@@ -451,10 +540,10 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
         () => TrackPlayer.getQueue().length > 0,
         { timeoutMs: 1200 },
       );
-      original = songs;
+      original = playable.songs;
       // Dispatched on the same native queue as the replace, so it lands
       // after the item is loaded rather than racing it.
-      if (position > 1) TrackPlayer.seekTo(position);
+      if (position > 1 && sameTrack) TrackPlayer.seekTo(position);
 
       lastActiveIndex = start;
       set({ priorityCount: 0, shuffled: false, source });

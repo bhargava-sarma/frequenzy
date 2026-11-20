@@ -3,21 +3,22 @@ import { DefaultTheme, NavigationContainer, type Theme } from '@react-navigation
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
+import { withScreenBoundary } from '../components/ErrorBoundary';
 import { TabBar } from '../components/TabBar';
-import { AlbumScreen } from '../screens/AlbumScreen';
-import { ArtistScreen } from '../screens/ArtistScreen';
-import { DiagnosticScreen } from '../screens/DiagnosticScreen';
-import { GenreScreen } from '../screens/GenreScreen';
-import { HistoryScreen } from '../screens/HistoryScreen';
-import { HomeScreen } from '../screens/HomeScreen';
-import { LibraryScreen } from '../screens/LibraryScreen';
-import { PlaylistScreen } from '../screens/PlaylistScreen';
-import { SearchScreen } from '../screens/SearchScreen';
-import { SettingsScreen } from '../screens/SettingsScreen';
-import { ShowcaseScreen } from '../screens/ShowcaseScreen';
-import { StatsScreen } from '../screens/StatsScreen';
+import { AlbumScreen as AlbumScreenBare } from '../screens/AlbumScreen';
+import { ArtistScreen as ArtistScreenBare } from '../screens/ArtistScreen';
+import { DiagnosticScreen as DiagnosticScreenBare } from '../screens/DiagnosticScreen';
+import { GenreScreen as GenreScreenBare } from '../screens/GenreScreen';
+import { HistoryScreen as HistoryScreenBare } from '../screens/HistoryScreen';
+import { HomeScreen as HomeScreenBare } from '../screens/HomeScreen';
+import { LibraryScreen as LibraryScreenBare } from '../screens/LibraryScreen';
+import { PlaylistScreen as PlaylistScreenBare } from '../screens/PlaylistScreen';
+import { SearchScreen as SearchScreenBare } from '../screens/SearchScreen';
+import { SettingsScreen as SettingsScreenBare } from '../screens/SettingsScreen';
+import { ShowcaseScreen as ShowcaseScreenBare } from '../screens/ShowcaseScreen';
+import { StatsScreen as StatsScreenBare } from '../screens/StatsScreen';
 import { getSettings } from '../store/useSettingsStore';
-import { motion, type Palette } from '../theme/tokens';
+import type { Palette } from '../theme/tokens';
 import { useTheme, useThemeControls } from '../theme/ThemeProvider';
 import { navigationRef } from './ref';
 import type {
@@ -35,13 +36,28 @@ import type {
  * tab carries the same detail screens, so following a link stays in the tab
  * it started from.
  *
- * Transitions say what kind of move was made. Going deeper slides the new
- * screen in from the right over the one it came from, so back has an
- * obvious direction; Settings rises, because it sits over the app rather
- * than inside a tab; and tabs crossfade quickly, since they are places side
- * by side, not a path. All three are native, short, and reduced to a cut by
- * Reduce motion.
+ * A push is a short native crossfade and a tab switch is a cut. Slides and a
+ * tab crossfade were tried; on Android the tab fade animates the opacity of
+ * a whole native stack, which draws each layer of the screen separately for
+ * its duration and showed through itself, and neither proved itself on a
+ * device. These two have. Reduce motion makes pushes a cut as well.
+ *
+ * Every screen sits inside its own error boundary, so a screen that fails
+ * shows what went wrong and a way back instead of closing the app.
  */
+
+const HomeScreen = withScreenBoundary(HomeScreenBare, 'Home');
+const SearchScreen = withScreenBoundary(SearchScreenBare, 'Search');
+const LibraryScreen = withScreenBoundary(LibraryScreenBare, 'Library');
+const AlbumScreen = withScreenBoundary(AlbumScreenBare, 'Album');
+const ArtistScreen = withScreenBoundary(ArtistScreenBare, 'Artist');
+const PlaylistScreen = withScreenBoundary(PlaylistScreenBare, 'Playlist');
+const GenreScreen = withScreenBoundary(GenreScreenBare, 'Genre');
+const HistoryScreen = withScreenBoundary(HistoryScreenBare, 'History');
+const StatsScreen = withScreenBoundary(StatsScreenBare, 'Stats');
+const SettingsScreen = withScreenBoundary(SettingsScreenBare, 'Settings');
+const DiagnosticScreen = withScreenBoundary(DiagnosticScreenBare, 'Diagnostics');
+const ShowcaseScreen = withScreenBoundary(ShowcaseScreenBare, 'Showcase');
 
 const RootStack = createNativeStackNavigator<RootStackParamList>();
 const Tabs = createBottomTabNavigator<TabParamList>();
@@ -49,17 +65,18 @@ const HomeStack = createNativeStackNavigator<HomeStackParamList>();
 const SearchStack = createNativeStackNavigator<SearchStackParamList>();
 const LibraryStack = createNativeStackNavigator<LibraryStackParamList>();
 
-/** Drilling in: a quick slide from the right, the screen beneath easing aside. */
-const pushOptions = { headerShown: false, animation: 'ios_from_right' as const } as const;
-/** Surfaces above the tabs: a short rise and fade. */
-const riseOptions = { headerShown: false, animation: 'fade_from_bottom' as const } as const;
+const fadeOptions = {
+  headerShown: false,
+  animation: 'fade' as const,
+  // iOS only; Android's native fade has its own fixed, short duration.
+  animationDuration: 180,
+} as const;
 const stillOptions = { headerShown: false, animation: 'none' as const } as const;
 
-/** Which transition a stack uses, given the Reduce motion setting. */
-function useStackOptions(kind: 'push' | 'rise') {
+/** The stack transition, given the Reduce motion setting. */
+function useStackOptions() {
   const { reduceMotion } = useThemeControls();
-  if (reduceMotion) return stillOptions;
-  return kind === 'push' ? pushOptions : riseOptions;
+  return reduceMotion ? stillOptions : fadeOptions;
 }
 
 /** The ground colour behind screens, so pushes never flash white. */
@@ -79,7 +96,7 @@ function buildNavigationTheme(color: Palette): Theme {
 }
 
 function HomeNavigator() {
-  const screenOptions = useStackOptions('push');
+  const screenOptions = useStackOptions();
   return (
     <HomeStack.Navigator screenOptions={screenOptions}>
       <HomeStack.Screen name="HomeFeed" component={HomeScreen} />
@@ -94,7 +111,7 @@ function HomeNavigator() {
 }
 
 function SearchNavigator() {
-  const screenOptions = useStackOptions('push');
+  const screenOptions = useStackOptions();
   return (
     <SearchStack.Navigator screenOptions={screenOptions}>
       <SearchStack.Screen name="SearchHome" component={SearchScreen} />
@@ -109,7 +126,7 @@ function SearchNavigator() {
 }
 
 function LibraryNavigator() {
-  const screenOptions = useStackOptions('push');
+  const screenOptions = useStackOptions();
   return (
     <LibraryStack.Navigator screenOptions={screenOptions}>
       <LibraryStack.Screen name="LibraryHome" component={LibraryScreen} />
@@ -123,19 +140,12 @@ function LibraryNavigator() {
   );
 }
 
-/** Tabs crossfade: switching tabs is switching places, not going somewhere. */
-const tabFadeOptions = {
-  headerShown: false,
-  animation: 'fade' as const,
-  transitionSpec: { animation: 'timing' as const, config: { duration: motion.durationFast } },
-};
-const tabCutOptions = { headerShown: false, animation: 'none' as const };
+/** Tabs cut: switching tabs is switching places, not going somewhere. */
+const tabScreenOptions = { headerShown: false, animation: 'none' as const };
 
 function TabNavigator() {
   // Read once: the start tab is where the app opens, not a live binding.
   const initialRouteName = useMemo(() => getSettings().startTab, []);
-  const { reduceMotion } = useThemeControls();
-  const tabScreenOptions = reduceMotion ? tabCutOptions : tabFadeOptions;
 
   return (
     <Tabs.Navigator
@@ -153,7 +163,7 @@ function TabNavigator() {
 export function RootNavigator() {
   const color = useTheme();
   const theme = useMemo(() => buildNavigationTheme(color), [color]);
-  const screenOptions = useStackOptions('rise');
+  const screenOptions = useStackOptions();
 
   return (
     <NavigationContainer theme={theme} ref={navigationRef}>

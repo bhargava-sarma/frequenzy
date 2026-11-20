@@ -7,14 +7,17 @@ import { useFonts } from 'expo-font';
 import { Image } from 'expo-image';
 import TrackPlayer from '@rntp/player';
 
-import { Appear } from './src/components/Appear';
 import { ArtworkAccentBridge } from './src/components/ArtworkAccentBridge';
+import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { PlayerOverlay } from './src/components/PlayerOverlay';
 import { ToastHost } from './src/components/ToastHost';
+import { getCrashLog, installGlobalErrorHandler } from './src/data/crashLog';
 import { clearLyricsCache } from './src/data/lyricsCache';
 import { clearPlayHistory } from './src/data/playHistory';
 import { clearRecentSearches } from './src/data/recentSearches';
 import { RootNavigator } from './src/navigation/RootNavigator';
+import { removeAllDownloads, startDownloads } from './src/offline/downloads';
+import { clearPendingScrobbles } from './src/player/pendingScrobbles';
 import { clearSavedQueue, restoreQueue, startQueuePersistence } from './src/player/queuePersistence';
 import { startScrobbler } from './src/player/scrobbler';
 import { startStreamRepair } from './src/player/streamRepair';
@@ -29,20 +32,42 @@ import { toast } from './src/store/useToastStore';
 import { ThemeProvider, useArtworkColorStore, useTheme } from './src/theme/ThemeProvider';
 
 /**
+ * Errors thrown outside React's render — a timer, a press handler, a promise
+ * callback — would otherwise close the app in a release build. They are
+ * logged and reported instead (see crashLog). A burst of the same error is
+ * one notice, not a toast per frame.
+ */
+let lastNotice = 0;
+installGlobalErrorHandler((entry) => {
+  if (Date.now() - lastNotice < 8000) return;
+  lastNotice = Date.now();
+  toast.error('Something went wrong', { detail: entry.message.slice(0, 80) });
+});
+
+/**
  * GestureHandlerRootView wraps everything and sits above SafeAreaProvider:
  * gestures registered outside it silently never fire on Android.
+ *
+ * The outermost boundary is the last line: anything the per-screen and
+ * per-panel boundaries don't contain lands here, where it shows a recovery
+ * panel rather than closing the app.
  */
 export default function App() {
   return (
     <GestureHandlerRootView style={styles.fill}>
       <SafeAreaProvider>
         <ThemeProvider>
-          <AppContent />
+          <ErrorBoundary scope="app">
+            <AppContent />
+          </ErrorBoundary>
         </ThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }
+
+/** The newest crash already mentioned this session. */
+let lastSeenCrash = 0;
 
 /** If stored settings take longer than this to load, render with defaults. */
 const SETTINGS_GRACE_MS = 1500;
@@ -95,15 +120,18 @@ function AppContent() {
     void restoreQueue().catch(() => {});
   }, [status, initPlayer]);
 
-  // Plays are reported for as long as the app lives, not while a screen does.
+  // Plays are reported, and downloads fetched, for as long as the app
+  // lives — not while a screen does.
   useEffect(() => {
     if (status !== 'ready') return;
+    const stopDownloads = startDownloads();
     const stopScrobbler = startScrobbler(() => useServerStore.getState().client);
     const stopPersistence = startQueuePersistence();
     const stopRepair = startStreamRepair((message) =>
       toast.error('Playback stopped', { detail: message }),
     );
     return () => {
+      stopDownloads();
       stopScrobbler();
       stopPersistence();
       stopRepair();
@@ -112,10 +140,11 @@ function AppContent() {
 
   /**
    * Signing out drops everything that belongs to the account: the queue,
-   * and every record keyed on that server's ids. Left behind, the next
-   * account would open onto someone else's playlists, a history whose rows
-   * point at tracks that don't exist there, and hearts lit for the wrong
-   * songs. Each step stands alone, so one failing doesn't stop the rest.
+   * its downloads, and every record keyed on that server's ids. Left
+   * behind, the next account would open onto someone else's playlists, a
+   * history whose rows point at tracks that don't exist there, hearts lit
+   * for the wrong songs — and gigabytes of files nothing could reach. Each
+   * step stands alone, so one failing doesn't stop the rest.
    */
   useEffect(() => {
     setOnSignOut(async () => {
@@ -132,6 +161,8 @@ function AppContent() {
 
       await Promise.allSettled([
         clearSavedQueue(),
+        removeAllDownloads(),
+        clearPendingScrobbles(),
         clearPlayHistory(),
         clearLyricsCache(),
         clearRecentSearches(),
@@ -142,6 +173,24 @@ function AppContent() {
     });
     return () => setOnSignOut(null);
   }, [setOnSignOut]);
+
+  // A crash recorded since the last launch is mentioned once, so it gets
+  // reported rather than forgotten.
+  useEffect(() => {
+    const launchedAt = Date.now();
+    void getCrashLog().then((log) => {
+      const latest = log[0];
+      if (!latest || latest.at > launchedAt) return;
+      if (launchedAt - latest.at > 24 * 60 * 60 * 1000) return;
+      if (latest.at <= lastSeenCrash) return;
+      lastSeenCrash = latest.at;
+      toast.show('Recovered from an error', {
+        icon: 'info',
+        detail: 'Details in Settings → Diagnostics',
+        duration: 4200,
+      });
+    });
+  }, []);
 
   // Re-probe on resume: the phone may have moved between Wi-Fi and cellular.
   useEffect(() => {
@@ -168,21 +217,22 @@ function AppContent() {
   return (
     <View style={[styles.fill, { backgroundColor: color.background }]}>
       <StatusBar style={statusBarStyle} />
-      {/* The first frame of the app proper fades up from the launch ground
-          it was waiting on. Keyed by which side of sign-in it is, so
-          connecting — or signing out — is the same soft turn. */}
-      <Appear key={status} rise={0} style={styles.fill}>
-        {status === 'needsSetup' ? (
+      {status === 'needsSetup' ? (
+        <ErrorBoundary scope="setup">
           <SetupScreen />
-        ) : (
-          <>
+        </ErrorBoundary>
+      ) : (
+        <>
+          <ErrorBoundary scope="artwork-colour" silent>
             <ArtworkAccentBridge />
-            <RootNavigator />
-            <PlayerOverlay />
-          </>
-        )}
-      </Appear>
-      <ToastHost />
+          </ErrorBoundary>
+          <RootNavigator />
+          <PlayerOverlay />
+        </>
+      )}
+      <ErrorBoundary scope="toasts" silent>
+        <ToastHost />
+      </ErrorBoundary>
     </View>
   );
 }

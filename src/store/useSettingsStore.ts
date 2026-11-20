@@ -18,7 +18,7 @@ export type ThemePreference = 'system' | 'light' | 'dark' | 'black';
 export type AccentMode = 'artwork' | 'preset';
 export type PlayerFace = 'artwork' | 'vinyl' | 'tape';
 export type LyricsSize = 'small' | 'medium' | 'large';
-export type LibraryMode = 'playlists' | 'albums' | 'artists' | 'genres';
+export type LibraryMode = 'playlists' | 'albums' | 'artists' | 'genres' | 'downloads';
 export type AlbumSort = 'name' | 'artist' | 'newest' | 'year' | 'recent' | 'frequent' | 'random';
 export type CollectionView = 'grid' | 'list';
 export type StartTab = 'Home' | 'Search' | 'Library';
@@ -42,6 +42,12 @@ export interface Settings {
   scrobble: boolean;
   /** Restore the last queue, paused, when the app starts with nothing playing. */
   resumeQueue: boolean;
+  /**
+   * Download only while the home address answers — a stand-in for "on
+   * Wi-Fi" that needs no extra permission, and the network these files
+   * are cheapest to fetch over.
+   */
+  downloadsHomeOnly: boolean;
   /** Seconds a timed sleep fades out over. */
   sleepFade: number;
   lyricsSize: LyricsSize;
@@ -67,6 +73,7 @@ export const DEFAULT_SETTINGS: Settings = {
   haptics: true,
   scrobble: true,
   resumeQueue: true,
+  downloadsHomeOnly: false,
   sleepFade: 20,
   lyricsSize: 'medium',
   lyricsRomanize: true,

@@ -8,6 +8,7 @@ import { useActiveMediaItem, useIsPlaying } from '@rntp/player';
 import { AlbumActionsSheet } from '../components/AlbumActionsSheet';
 import { useCollapsingHeader, useNavBarHeight } from '../components/CollapsingHeader';
 import { DetailHero, HeroBackdrop } from '../components/DetailHero';
+import { CollectionDownloadKey, CollectionDownloadStatus } from '../components/DownloadControls';
 import { IconButton } from '../components/IconButton';
 import {
   IconArrowsShuffle,
@@ -29,7 +30,9 @@ import { TrackRow } from '../components/TrackRow';
 import { useArtwork } from '../hooks/useArtwork';
 import { useLibraryData } from '../hooks/useLibraryData';
 import { usePullRefresh } from '../hooks/usePullRefresh';
+import type { AlbumDetail } from '../data/libraryRepository';
 import type { AnyStackParamList } from '../navigation/types';
+import { downloadedAlbum } from '../offline/downloads';
 import { formatPlate, extrasOf } from '../player/trackMapping';
 import { useFavoritesStore, useStarred } from '../store/useFavoritesStore';
 import { usePlayerStore } from '../store/usePlayerStore';
@@ -60,8 +63,31 @@ export function AlbumScreen() {
   const isPlaying = useIsPlaying();
   const activeId = extrasOf(activeItem)?.subsonicId;
 
+  /**
+   * Out of reach of the server, an album that is downloaded — whole or in
+   * part — still opens, built from what is on the device. Marked offline so
+   * its partial track list is never mistaken for the album's real one.
+   */
   const { data, loading, error, refresh } = useLibraryData(
-    (library, forceRefresh) => library.getAlbum(albumId, { forceRefresh }),
+    (library, forceRefresh): Promise<AlbumDetail & { offline?: boolean }> =>
+      library.getAlbum(albumId, { forceRefresh }).catch((cause: unknown) => {
+        const saved = downloadedAlbum(albumId);
+        if (!saved) throw cause;
+        const first = saved.songs[0];
+        return {
+          offline: true,
+          album: {
+            id: albumId,
+            name: saved.collection?.name ?? first.album ?? albumName ?? 'Album',
+            artist: saved.collection?.artist ?? first.artist,
+            artistId: first.artistId,
+            coverArt: saved.collection?.coverArt ?? first.coverArt,
+            year: saved.collection?.year ?? first.year,
+            songCount: saved.songs.length,
+          },
+          songs: saved.songs,
+        };
+      }),
     [albumId],
   );
   // Albums are served from a day-long cache; pulling is how a retagged or
@@ -70,6 +96,25 @@ export function AlbumScreen() {
   const album = data?.album;
   const songs = useMemo(() => data?.songs ?? [], [data]);
   const starred = useStarred(albumId, Boolean(album?.starred));
+  const offline = data?.offline === true;
+
+  const downloadInput = useMemo(
+    () =>
+      album
+        ? {
+            kind: 'album' as const,
+            id: albumId,
+            name: album.name,
+            artist: album.artist,
+            year: album.year,
+            coverArt: album.coverArt,
+          }
+        : null,
+    [album, albumId],
+  );
+  // Not synced from here: this page can be drawn from a day-old cache, and
+  // a stale track list would undo newer changes to the download. The
+  // background sync reads albums fresh from the server instead.
 
   const artistId = album?.artistId;
   const more = useLibraryData(
@@ -137,7 +182,9 @@ export function AlbumScreen() {
     <View>
       <DetailHero
         artworkUri={artworkUrl(album?.coverArt, 600)}
-        eyebrow={[album?.isCompilation ? 'Compilation' : 'Album', album?.year].filter(Boolean).join(' · ')}
+        eyebrow={[album?.isCompilation ? 'Compilation' : 'Album', album?.year, offline ? 'Offline' : null]
+          .filter(Boolean)
+          .join(' · ')}
         title={title}
         subtitle={album?.artist}
         onSubtitlePress={
@@ -152,38 +199,42 @@ export function AlbumScreen() {
         }
         actions={
           songs.length > 0 ? (
-            <KeyRow>
-              <Keycap
-                icon={IconPlayerPlayFilled}
-                iconFilled
-                label="Play"
-                variant="primary"
-                flex
-                onPress={() => toast.guard(playNow(songs, 0, source))}
-              />
-              <Keycap
-                icon={IconArrowsShuffle}
-                label="Shuffle"
-                flex
-                onPress={() => toast.guard(shufflePlay(songs, source))}
-              />
-              <Keycap
-                icon={IconListDetails}
-                square
-                accessibilityLabel="Add album to queue"
-                onPress={() =>
-                  toast.guard(
-                    addToQueue(songs).then(() =>
-                      toast.show('Added to queue', {
-                        icon: 'queue',
-                        detail: `${title} · ${pluralize(songs.length, 'track')}`,
-                      }),
-                    ),
-                    "Couldn't queue",
-                  )
-                }
-              />
-            </KeyRow>
+            <View>
+              <KeyRow>
+                <Keycap
+                  icon={IconPlayerPlayFilled}
+                  iconFilled
+                  label="Play"
+                  variant="primary"
+                  flex
+                  onPress={() => toast.guard(playNow(songs, 0, source))}
+                />
+                <Keycap
+                  icon={IconArrowsShuffle}
+                  label="Shuffle"
+                  flex
+                  onPress={() => toast.guard(shufflePlay(songs, source))}
+                />
+                <Keycap
+                  icon={IconListDetails}
+                  square
+                  accessibilityLabel="Add album to queue"
+                  onPress={() =>
+                    toast.guard(
+                      addToQueue(songs).then(() =>
+                        toast.show('Added to queue', {
+                          icon: 'queue',
+                          detail: `${title} · ${pluralize(songs.length, 'track')}`,
+                        }),
+                      ),
+                      "Couldn't queue",
+                    )
+                  }
+                />
+                {!offline && <CollectionDownloadKey input={downloadInput} songs={songs} />}
+              </KeyRow>
+              <CollectionDownloadStatus input={downloadInput} />
+            </View>
           ) : undefined
         }
       />

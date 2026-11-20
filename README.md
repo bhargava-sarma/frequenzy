@@ -23,6 +23,8 @@ Built with Expo and React Native, against the Subsonic API (1.16.1).
 - [The lossless guarantee](#the-lossless-guarantee)
 - [Connectivity: one server, two addresses](#connectivity-one-server-two-addresses)
 - [Lyrics and romanisation](#lyrics-and-romanisation)
+- [Offline downloads](#offline-downloads)
+- [When something breaks](#when-something-breaks)
 - [Design](#design)
 - [Getting started](#getting-started)
 - [Updating the app](#updating-the-app)
@@ -76,6 +78,11 @@ Swipe right on any row to queue it, left to star it. Long-press anything for
 play next, play last, add to playlist, start radio, go to album or artist,
 track info and share.
 
+**Downloads** — Keep an album, a playlist, Liked songs or single tracks on the
+phone, as the original files, and play them with no connection at all. A
+downloaded playlist follows the server as it changes; plays made offline reach
+Navidrome once it can be heard from. See [Offline downloads](#offline-downloads).
+
 **Radio** — From any track (Navidrome's similar songs) or any artist, filled out
 from the library when the server's similarity data is thin.
 
@@ -98,8 +105,10 @@ rather than becoming prose you can't follow. See
 
 **Settings** — Auto, light, dark and OLED themes; accent from the artwork or a
 fixed preset; the player face; how strong the ambient colour wash is; haptics,
-reduce motion, scrobbling, queue restore, the tab to open on; server status
-with a library rescan; and cache and history clearing.
+reduce motion, scrobbling, queue restore, the tab to open on; downloads (space
+used, pause, retry, home network only, remove all); server status with a
+library rescan; cache and history clearing; and the last error, if any, with a
+key to share it.
 
 ---
 
@@ -221,6 +230,61 @@ too large to ship.
 
 ---
 
+## Offline downloads
+
+Downloads go through the same stream URL as playback — `format=raw`,
+`maxBitRate=0` — so a downloaded track is the original file, byte for byte. A
+small error body the server sends in place of audio is recognised and never
+saved as a song, and a file that arrives shorter than the size the server
+reported is resumed rather than kept.
+
+- **What can be kept.** An album, a playlist or Liked songs from the download
+  key on its page or from its menu, and single tracks from any track's menu.
+  A track kept by several of those is stored once; removing one leaves it for
+  the others, and the file goes only when nothing wants it.
+- **How it fetches.** One file at a time, oldest request first. A transfer that
+  breaks off resumes from where it stopped with a range request; a failure is
+  retried with growing gaps, and only marked failed after four tries or an
+  answer like 404. Nothing starts without 500 MB of free space left over, and
+  *Only at home* holds the queue until the home address answers. Downloads
+  continue while the app is open or playing.
+- **Staying current.** Downloads are compared with the server every few hours,
+  and a playlist or Liked songs also whenever it is opened: new tracks are
+  fetched, removed ones are deleted. A playlist deleted on the server keeps
+  its download.
+- **Playing offline.** Downloaded tracks always play from the device, even when
+  the server is reachable. With no connection, playing a list that is partly
+  downloaded plays just the downloaded tracks instead of failing; a queued
+  stream that can't be reached is swapped for its downloaded copy, or skipped
+  to the next track that is downloaded. Covers are saved with the files, so
+  artwork and the accent colour work offline too. Albums and playlists that
+  are downloaded open from the device, and Home offers the downloads when
+  nothing answers.
+- **Plays made offline** are kept, with the time they happened, and sent to
+  Navidrome when it is next reachable.
+
+Files live in the app's private storage and are deleted on sign-out. The
+feature uses the file-system module already compiled into the app, so it
+arrived as an over-the-air update rather than needing a new build.
+
+---
+
+## When something breaks
+
+Every screen, the player, the queue, the lyrics and the mini player sit inside
+their own error boundary. An error while drawing one of them replaces that
+surface with a panel — what went wrong, *Try again*, and a way back — instead
+of closing the app; playback carries on underneath. Errors thrown outside
+drawing (a timer, a press handler) are caught by a global handler in release
+builds and shown as a notice rather than a crash.
+
+Each one is written to a small log on the device. *Settings → Diagnostics*
+shows the latest with a key to share the full report, stack included, and the
+app mentions once on the next launch that it recovered from one. Nothing
+leaves the device unless that key is pressed.
+
+---
+
 ## Design
 
 The design language is called **FQ-1**: the app drawn as a piece of portable
@@ -254,16 +318,21 @@ be felt rather than watched.
   finger; a like, shuffle or repeat pops as it changes. Rows highlight instead
   — a full-width row that shrank would read as broken.
 - *Showing where things come from.* Sheets and the player rise from the edge
-  you drag them back to, and only once they have been laid out, so every frame
-  of the slide has the finished surface in it. Going deeper slides the new
-  screen in from the right; tabs crossfade; the raised key under a segmented
-  control or the dock slides to its new place rather than blinking there.
-  Content fades up when it has loaded, and the loader itself waits a moment
-  before showing, so a read that comes straight from the cache never flashes.
+  you drag them back to, starting once they have been laid out so every frame
+  of the slide has the finished surface in it — and starting anyway a moment
+  later if that never comes, so nothing can sit invisible below the screen.
+  Going deeper is a short crossfade; changing tabs is a cut, since fading two
+  whole stacks into each other is the most expensive thing a screen can draw.
+  The raised key under a segmented control or the dock slides to its new place
+  rather than blinking there. Small blocks — a loader, an empty or error
+  panel — fade up as they arrive, and the loader waits a moment before showing,
+  so a read that comes straight from the cache never flashes. Screens and
+  lists themselves are never faded: on Android that redraws everything inside
+  through an offscreen layer.
 - *Saying the music is running.* The level bars beside the playing row rise
   and fall, the playhead glides between the player's once-a-second reports,
-  the current lyric line takes the light from the one before it, and — on
-  those faces — the record turns and the tape winds. Swipe the cover to skip
+  the lyrics scroll the current line into place, and — on those faces — the
+  record turns and the tape winds. Swipe the cover to skip
   and it leaves the way it was pushed while the next one comes in behind it.
 
 All of it is transforms and opacity on the UI thread, so none of it waits on
@@ -388,15 +457,17 @@ so it will not touch your play counts.
 src/
   api/          Subsonic client, auth, URL failover, typed errors
   components/   Design-system primitives and shared UI
-  data/         Library repository, caching, play history
+  data/         Library repository, caching, play history, crash log
   hooks/        Artwork URLs, lyrics, sleep timer, library fetching
   navigation/   Stacks, tabs, route types
-  player/       Setup, track mapping, scrobbler, mixes and radio,
-                queue persistence, stream repair
+  offline/      Downloads: the queue and worker, the on-device index,
+                and the native file-system bridge
+  player/       Setup, track mapping, scrobbler and its offline queue,
+                mixes and radio, queue persistence, stream repair
   screens/      One file per surface
   storage/      Keystore credentials, AsyncStorage cache
   store/        Zustand stores (player, playlists, server, settings,
-                favourites, toasts, UI)
+                favourites, downloads, toasts, UI)
   theme/        Tokens, provider, artwork colour extraction
   utils/        Formatting, haptics, romanisation
 scripts/        Node verification scripts

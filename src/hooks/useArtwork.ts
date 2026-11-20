@@ -1,5 +1,7 @@
 import { useCallback } from 'react';
 
+import { dirs } from '../offline/nativeFs';
+import { useDownloadStore } from '../store/useDownloadStore';
 import { useServerStore } from '../store/useServerStore';
 
 /**
@@ -17,16 +19,23 @@ import { useServerStore } from '../store/useServerStore';
  * its placeholder. The address only changes when the phone really has moved
  * between the LAN and the remote route, and even then the image cache finds
  * the same picture under its address-free key (see artworkCacheKey).
+ *
+ * A cover saved with a download is used in preference to the server's, at
+ * every size: it draws with no connection at all and costs no request.
  */
 export function useArtwork() {
   const client = useServerStore((state) => state.client);
   const base = useServerStore((state) => state.artworkBase);
+  const saved = useDownloadStore((state) => state.covers);
 
   return useCallback(
     (coverArtId: string | undefined | null, size = 128): string | undefined => {
-      if (!coverArtId || !client || !base) return undefined;
+      if (!coverArtId) return undefined;
+      const local = saved[coverArtId];
+      if (local) return `${dirs.covers()}${local}.jpg`;
+      if (!client || !base) return undefined;
       return client.buildCoverArtUrl(coverArtId, size) ?? undefined;
     },
-    [client, base],
+    [client, base, saved],
   );
 }

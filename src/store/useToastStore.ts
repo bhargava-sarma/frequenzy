@@ -23,7 +23,9 @@ export type ToastIcon =
   | 'moon'
   | 'radio'
   | 'error'
-  | 'info';
+  | 'info'
+  | 'download'
+  | 'offline';
 
 export interface ToastAction {
   label: string;

@@ -13,13 +13,16 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { AlbumActionsSheet } from '../components/AlbumActionsSheet';
 import { AlbumTile } from '../components/AlbumTile';
 import { AlphabetRail, indexLetter } from '../components/AlphabetRail';
-import { Appear } from '../components/Appear';
 import { Chip, ChipRow } from '../components/Chip';
+import { startCollectionDownload, stopCollectionDownload } from '../components/DownloadControls';
+import { DownloadsView } from '../components/DownloadsView';
 import { IconButton } from '../components/IconButton';
 import {
   IconAlbum,
   IconArrowsShuffle,
   IconCategory,
+  IconCircleArrowDown,
+  IconDownload,
   IconLayoutGrid,
   IconLayoutList,
   IconPencil,
@@ -42,7 +45,9 @@ import { useLibraryData } from '../hooks/useLibraryData';
 import { trackItemLayout } from '../hooks/usePagedList';
 import { usePullRefresh } from '../hooks/usePullRefresh';
 import { LIKED_PLAYLIST_ID, type LibraryStackParamList } from '../navigation/types';
+import { collectionKey } from '../offline/types';
 import { EmptyMixError, playLiked } from '../player/mixes';
+import { useDownloadStore, useDownloadedCount } from '../store/useDownloadStore';
 import { usePlayerStore, shuffleList } from '../store/usePlayerStore';
 import { usePlaylistStore } from '../store/usePlaylistStore';
 import { useServerStore } from '../store/useServerStore';
@@ -75,6 +80,7 @@ const MODES: { value: LibraryMode; label: string; icon: typeof IconAlbum }[] = [
   { value: 'albums', label: 'Albums', icon: IconAlbum },
   { value: 'artists', label: 'Artists', icon: IconUser },
   { value: 'genres', label: 'Genres', icon: IconCategory },
+  { value: 'downloads', label: 'Downloads', icon: IconCircleArrowDown },
 ];
 
 const SORTS: { value: AlbumSort; label: string }[] = [
@@ -139,6 +145,8 @@ export function LibraryScreen() {
     albums: mode === 'albums',
     artists: mode === 'artists',
     genres: mode === 'genres',
+    // On the device already: nothing to fetch.
+    downloads: true,
   });
 
   const albums = useLibraryData(
@@ -164,6 +172,13 @@ export function LibraryScreen() {
   const client = useServerStore((state) => state.client);
   const playNow = usePlayerStore((state) => state.playNow);
   const shufflePlay = usePlayerStore((state) => state.shufflePlay);
+  const downloadedCount = useDownloadedCount();
+  const playlistKept = useDownloadStore((state) =>
+    playlistTarget
+      ? collectionKey(playlistTarget.id === LIKED_PLAYLIST_ID ? 'liked' : 'playlist', playlistTarget.id) in
+        state.collections
+      : false,
+  );
 
   useEffect(() => {
     if (requested.playlists) void loadPlaylists();
@@ -227,6 +242,32 @@ export function LibraryScreen() {
     [navigation],
   );
 
+  async function playlistSongs(playlist: Playlist) {
+    if (!client) return [];
+    if (playlist.id === LIKED_PLAYLIST_ID) return (await client.getStarred2()).starred2.song ?? [];
+    return (await client.getPlaylist(playlist.id)).playlist.entry ?? [];
+  }
+
+  async function downloadPlaylist(playlist: Playlist) {
+    setPlaylistTarget(null);
+    const liked = playlist.id === LIKED_PLAYLIST_ID;
+    const input = {
+      kind: liked ? ('liked' as const) : ('playlist' as const),
+      id: playlist.id,
+      name: playlist.name,
+      coverArt: playlist.coverArt,
+    };
+    if (playlistKept) {
+      stopCollectionDownload(input);
+      return;
+    }
+    try {
+      startCollectionDownload(input, await playlistSongs(playlist));
+    } catch (error) {
+      toast.error("Couldn't download", { detail: errorMessage(error) });
+    }
+  }
+
   async function playPlaylist(playlist: Playlist, shuffled: boolean) {
     setPlaylistTarget(null);
     try {
@@ -281,8 +322,19 @@ export function LibraryScreen() {
         ? (artists.data?.length ?? 0)
         : mode === 'genres'
           ? (genres.data?.length ?? 0)
-          : playlists.length;
-  const unit = mode === 'albums' ? 'album' : mode === 'artists' ? 'artist' : mode === 'genres' ? 'genre' : 'playlist';
+          : mode === 'downloads'
+            ? downloadedCount
+            : playlists.length;
+  const unit =
+    mode === 'albums'
+      ? 'album'
+      : mode === 'artists'
+        ? 'artist'
+        : mode === 'genres'
+          ? 'genre'
+          : mode === 'downloads'
+            ? 'download'
+            : 'playlist';
 
   const status =
     mode === 'albums' ? albums : mode === 'artists' ? artists : mode === 'genres' ? genres : null;
@@ -335,7 +387,7 @@ export function LibraryScreen() {
       <SearchField
         value={filter}
         onChangeText={setFilter}
-        placeholder={`Filter ${unit}s`}
+        placeholder={mode === 'downloads' ? 'Filter downloads' : `Filter ${unit}s`}
       />
       {mode === 'albums' && (
         <ChipRow style={styles.sorts}>
@@ -358,7 +410,9 @@ export function LibraryScreen() {
   const refreshControl = <RefreshControl {...pull} />;
 
   let body: React.ReactNode;
-  if (mode === 'albums' && view === 'grid') {
+  if (mode === 'downloads') {
+    body = <DownloadsView filter={deferredFilter} />;
+  } else if (mode === 'albums' && view === 'grid') {
     body = (
       <FlatList
         key="albums-grid"
@@ -384,7 +438,6 @@ export function LibraryScreen() {
         initialNumToRender={8}
         maxToRenderPerBatch={8}
         windowSize={7}
-        removeClippedSubviews
         refreshControl={refreshControl}
       />
     );
@@ -413,7 +466,6 @@ export function LibraryScreen() {
         keyboardDismissMode="on-drag"
         initialNumToRender={14}
         windowSize={9}
-        removeClippedSubviews
         refreshControl={refreshControl}
       />
     );
@@ -444,8 +496,7 @@ export function LibraryScreen() {
           keyboardDismissMode="on-drag"
           initialNumToRender={14}
           windowSize={9}
-          removeClippedSubviews
-          refreshControl={refreshControl}
+            refreshControl={refreshControl}
           onScrollToIndexFailed={() => {}}
         />
         {!deferredFilter && <AlphabetRail letters={letters} onSelect={jumpTo} top={space[2]} bottom={DOCK_CLEARANCE - 24} />}
@@ -521,12 +572,10 @@ export function LibraryScreen() {
   return (
     <TabScaffold>
       {header}
-      {/* Keyed on mode and view, so a switch starts the new list at its top
-          — and fades it up, so the change of mode reads as one list making
-          way for another rather than the rows being swapped under you. */}
-      <Appear key={`${mode}:${view}`} rise={6} style={styles.fill}>
+      {/* Keyed on mode and view, so a switch starts the new list at its top. */}
+      <View key={`${mode}:${view}`} style={styles.fill}>
         {body}
-      </Appear>
+      </View>
 
       <AlbumActionsSheet visible={albumTarget != null} onClose={() => setAlbumTarget(null)} album={albumTarget} />
 
@@ -540,7 +589,13 @@ export function LibraryScreen() {
         {playlistTarget && (
           <>
             <SheetRow label="Play" icon={IconPlayerPlayFilled} onPress={() => void playPlaylist(playlistTarget, false)} />
-            <SheetRow label="Shuffle" icon={IconArrowsShuffle} onPress={() => void playPlaylist(playlistTarget, true)} last={!editable} />
+            <SheetRow label="Shuffle" icon={IconArrowsShuffle} onPress={() => void playPlaylist(playlistTarget, true)} />
+            <SheetRow
+              label={playlistKept ? 'Remove download' : 'Download'}
+              icon={playlistKept ? IconTrash : IconDownload}
+              last={!editable}
+              onPress={() => void downloadPlaylist(playlistTarget)}
+            />
             {editable && <SheetRow label="Rename" icon={IconPencil} onPress={() => setPrompt('rename')} />}
             {editable && (
               <SheetRow

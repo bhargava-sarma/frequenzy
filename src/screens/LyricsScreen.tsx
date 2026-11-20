@@ -1,11 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import Animated, {
-  interpolateColor,
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import TrackPlayer, { useActiveMediaItem, useProgress } from '@rntp/player';
 
@@ -31,7 +25,6 @@ import { useLyrics } from '../hooks/useLyrics';
 import { extrasOf } from '../player/trackMapping';
 import { usePlayerUiStore } from '../store/usePlayerUiStore';
 import { useSettingsStore, type LyricsSize } from '../store/useSettingsStore';
-import { useMotion } from '../theme/motion';
 import { layout, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
@@ -41,9 +34,8 @@ import { romanizeLine } from '../utils/romanize';
  * Lyrics, following the voice.
  *
  * From the server's own tags when it has them, LRCLIB otherwise. The current
- * line is the only thing in the accent and at full strength: the light
- * passes from one line to the next over a quarter of a second, the new line
- * swelling a touch as it takes it, while the scroll keeps it in view. Lines
+ * line is the only thing in the accent and at full strength; it changes in
+ * place, and the scroll that keeps it in view is the motion. Lines
  * are tappable and seek. Scroll by hand and following pauses — reading
  * ahead is impossible if every tick drags the view back — with a key to
  * resume.
@@ -56,8 +48,6 @@ import { romanizeLine } from '../utils/romanize';
 const TICK_SECONDS = 0.25;
 const MANUAL_SCROLL_GRACE_MS = 6000;
 const INACTIVE_OPACITY = 0.36;
-/** How much the line being sung grows. Small enough that a full-width line stays inside the gutter. */
-const ACTIVE_SWELL = 0.025;
 /** One press of Earlier or Later. */
 const LYRIC_NUDGE_SECONDS = 0.25;
 
@@ -366,23 +356,15 @@ const LyricRow = memo(function LyricRow({
   onLayout: (index: number, y: number) => void;
   onSeek: (seconds: number) => void;
 }) {
-  const { timings } = useMotion();
-  // 0 unlit, 1 the line being sung. Mounts already in its state.
-  const lit = useSharedValue(active ? 1 : 0);
-  useEffect(() => {
-    lit.value = withTiming(active ? 1 : 0, timings.appear);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, lit]);
-
-  const rest = past ? INACTIVE_OPACITY * 0.8 : INACTIVE_OPACITY;
-  const textStyle = useAnimatedStyle(() => ({
-    color: interpolateColor(lit.value, [0, 1], [idleColor, activeColor]),
-    opacity: rest + (1 - rest) * lit.value,
-    transform: [{ scale: 1 + lit.value * ACTIVE_SWELL }],
-  }));
-  const romanStyle = useAnimatedStyle(() => ({
-    opacity: INACTIVE_OPACITY * 0.8 + (0.8 - INACTIVE_OPACITY * 0.8) * lit.value,
-  }));
+  // Plain styles, switched as the line changes. These used to animate per
+  // line, which put two animated styles on every line of the song: a few
+  // hundred of them mounted at once when the panel opened, and a commit per
+  // frame for each colour change. The light now moves in one step, in place.
+  const textStyle = {
+    color: active ? activeColor : idleColor,
+    opacity: active ? 1 : past ? INACTIVE_OPACITY * 0.8 : INACTIVE_OPACITY,
+  };
+  const romanStyle = { opacity: active ? 0.8 : INACTIVE_OPACITY * 0.8 };
 
   return (
     <Pressable
@@ -393,11 +375,11 @@ const LyricRow = memo(function LyricRow({
       accessibilityState={{ selected: active }}
       style={({ pressed }) => [lineStyles.press, pressed && lineStyles.pressed]}
     >
-      <Animated.Text style={[lineStyles.line, { fontSize, lineHeight }, textStyle]}>{text}</Animated.Text>
+      <Text style={[lineStyles.line, { fontSize, lineHeight }, textStyle]}>{text}</Text>
       {roman && (
-        <Animated.Text style={[lineStyles.roman, romanStyle]} numberOfLines={2}>
+        <Text style={[lineStyles.roman, romanStyle]} numberOfLines={2}>
           {roman}
-        </Animated.Text>
+        </Text>
       )}
     </Pressable>
   );
@@ -411,9 +393,7 @@ const lineStyles = StyleSheet.create({
     borderRadius: 12,
   },
   pressed: { backgroundColor: 'rgba(255,255,255,0.07)' },
-  // Swells from its leading edge, so the start of the line — where the eye
-  // is — holds still.
-  line: { fontFamily: type.title1.fontFamily, letterSpacing: -0.6, transformOrigin: 'left' },
+  line: { fontFamily: type.title1.fontFamily, letterSpacing: -0.6 },
   roman: { ...type.subhead, fontSize: 13.5, lineHeight: 19, color: '#FFFFFF', marginTop: space[1] },
 });
 

@@ -22,6 +22,8 @@ import {
   IconPlaylistAdd,
   IconRadio,
   IconCornerDownRight,
+  IconCloudOff,
+  IconCircleArrowDown,
   type IconComponent,
 } from './icons';
 import { useMotion } from '../theme/motion';
@@ -57,6 +59,8 @@ const ICONS: Record<ToastIcon, IconComponent> = {
   radio: IconRadio,
   error: IconAlertTriangle,
   info: IconInfoCircle,
+  download: IconCircleArrowDown,
+  offline: IconCloudOff,
 };
 
 export function ToastHost() {

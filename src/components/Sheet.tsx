@@ -163,7 +163,16 @@ export function Sheet({
         dragY.value = 0;
         setMounted(true);
         if (laidOut.current) progress.value = withTiming(1, timings.enter);
-        else pendingOpen.current = true;
+        else {
+          pendingOpen.current = true;
+          // Rises anyway if the layout event is late, rather than leaving an
+          // invisible modal over the screen that swallows every touch.
+          setTimeout(() => {
+            if (!pendingOpen.current) return;
+            pendingOpen.current = false;
+            progress.value = withTiming(1, timings.enter);
+          }, 200);
+        }
       });
     } else if (!mounted) {
       // Asked to close while still waiting for its turn.
