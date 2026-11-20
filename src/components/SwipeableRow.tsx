@@ -1,7 +1,8 @@
-import { useCallback, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
+  cancelAnimation,
   interpolate,
   runOnJS,
   useAnimatedStyle,
@@ -51,6 +52,12 @@ export interface SwipeableRowProps {
   /** Revealed by swiping left. */
   leftSwipe?: SwipeAction;
   height?: number;
+  /**
+   * What this row currently shows. When a list reuses the row for something
+   * else — a removed track's slot taken by the next copy of it — the row is
+   * put back at rest rather than inheriting a swipe in progress.
+   */
+  identity?: string | number;
 }
 
 const COMMIT_RATIO = 0.28;
@@ -63,12 +70,22 @@ export function SwipeableRow({
   rightSwipe,
   leftSwipe,
   height = layout.rowHeight,
+  identity,
 }: SwipeableRowProps) {
   const { width } = useWindowDimensions();
   const color = useTheme();
   const { timings, springs } = useMotion();
   const translateX = useSharedValue(0);
   const armed = useSharedValue(0);
+
+  const shown = useRef(identity);
+  useEffect(() => {
+    if (shown.current === identity) return;
+    shown.current = identity;
+    cancelAnimation(translateX);
+    translateX.value = 0;
+    armed.value = 0;
+  }, [identity, translateX, armed]);
 
   const commitDistance = width * COMMIT_RATIO;
   const maxTravel = width * MAX_TRAVEL_RATIO;

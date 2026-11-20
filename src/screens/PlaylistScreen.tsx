@@ -8,6 +8,7 @@ import { useActiveMediaItem, useIsPlaying } from '@rntp/player';
 import { AddToPlaylistSheet } from '../components/AddToPlaylistSheet';
 import { useCollapsingHeader, useNavBarHeight } from '../components/CollapsingHeader';
 import { DetailHero, HeroBackdrop } from '../components/DetailHero';
+import { CollectionDownloadKey, CollectionDownloadStatus } from '../components/DownloadControls';
 import { IconButton } from '../components/IconButton';
 import {
   IconArrowsShuffle,
@@ -34,7 +35,10 @@ import { TrackRow } from '../components/TrackRow';
 import { useArtwork } from '../hooks/useArtwork';
 import { usePullRefresh } from '../hooks/usePullRefresh';
 import { LIKED_PLAYLIST_ID, type AnyStackParamList } from '../navigation/types';
+import { collectionSongs, noteCollection } from '../offline/downloads';
+import { collectionKey } from '../offline/types';
 import { extrasOf } from '../player/trackMapping';
+import { useDownloadStore } from '../store/useDownloadStore';
 import { useFavoritesStore } from '../store/useFavoritesStore';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { usePlaylistStore } from '../store/usePlaylistStore';
@@ -86,6 +90,10 @@ export function PlaylistScreen() {
   const [songs, setSongs] = useState<Child[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /** Showing the downloaded copy because the server couldn't be reached. */
+  const [offline, setOffline] = useState(false);
+  const downloadKey = collectionKey(isLiked ? 'liked' : 'playlist', playlistId);
+  const savedName = useDownloadStore((state) => state.collections[downloadKey]?.name);
   const [reloadToken, setReloadToken] = useState(0);
   const refresh = useCallback(() => setReloadToken((token) => token + 1), []);
   const pull = usePullRefresh(loading, refresh);
@@ -120,9 +128,39 @@ export function PlaylistScreen() {
         setPlaylist(result.playlist);
         setSongs(result.songs);
         setError(null);
+        setOffline(false);
+        // Read fresh from the server, so a download of this playlist can
+        // safely follow it: tracks added since are fetched, removed ones go.
+        noteCollection(
+          {
+            kind: isLiked ? 'liked' : 'playlist',
+            id: playlistId,
+            name: result.playlist.name,
+            coverArt: result.playlist.coverArt,
+          },
+          result.songs,
+        );
       })
       .catch((cause: unknown) => {
-        if (!cancelled) setError(errorMessage(cause));
+        if (cancelled) return;
+        // Out of reach: a downloaded playlist still opens, from the device.
+        const key = collectionKey(isLiked ? 'liked' : 'playlist', playlistId);
+        const saved = collectionSongs(key);
+        const collection = useDownloadStore.getState().collections[key];
+        if (saved && collection) {
+          setPlaylist({
+            id: playlistId,
+            name: collection.name,
+            coverArt: collection.coverArt,
+            songCount: saved.length,
+            duration: saved.reduce((sum, song) => sum + (song.duration ?? 0), 0),
+          });
+          setSongs(saved);
+          setError(null);
+          setOffline(true);
+          return;
+        }
+        setError(errorMessage(cause));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -161,7 +199,19 @@ export function PlaylistScreen() {
   }, [songs]);
   const positionOf = useCallback((song: Child) => positions.get(song) ?? -1, [positions]);
 
-  const title = playlist?.name ?? playlistName ?? 'Playlist';
+  const title = playlist?.name ?? playlistName ?? savedName ?? 'Playlist';
+  const downloadInput = useMemo(
+    () =>
+      playlist
+        ? {
+            kind: isLiked ? ('liked' as const) : ('playlist' as const),
+            id: playlistId,
+            name: isLiked ? 'Liked songs' : playlist.name,
+            coverArt: playlist.coverArt,
+          }
+        : null,
+    [playlist, playlistId, isLiked],
+  );
   const source = { kind: isLiked ? ('liked' as const) : ('playlist' as const), label: title };
   const total = playlist?.duration ?? songs.reduce((sum, song) => sum + (song.duration ?? 0), 0);
 
@@ -250,11 +300,13 @@ export function PlaylistScreen() {
         // Public or private only once it is known: assumed private until
         // loaded, a public playlist opened with the wrong word on it.
         eyebrow={
-          isLiked
-            ? 'Collection · Hearted'
-            : playlist
-              ? `Playlist · ${playlist.public ? 'Public' : 'Private'}`
-              : 'Playlist'
+          offline
+            ? `${isLiked ? 'Collection' : 'Playlist'} · Offline`
+            : isLiked
+              ? 'Collection · Hearted'
+              : playlist
+                ? `Playlist · ${playlist.public ? 'Public' : 'Private'}`
+                : 'Playlist'
         }
         title={title}
         subtitle={!isLiked && playlist?.owner ? `by ${playlist.owner}` : undefined}
@@ -269,38 +321,42 @@ export function PlaylistScreen() {
         }
         actions={
           songs.length > 0 ? (
-            <KeyRow>
-              <Keycap
-                icon={IconPlayerPlayFilled}
-                iconFilled
-                label="Play"
-                variant="primary"
-                flex
-                onPress={() => toast.guard(playNow(songs, 0, source))}
-              />
-              <Keycap
-                icon={IconArrowsShuffle}
-                label="Shuffle"
-                flex
-                onPress={() => toast.guard(shufflePlay(songs, source))}
-              />
-              <Keycap
-                icon={IconListDetails}
-                square
-                accessibilityLabel="Add all to queue"
-                onPress={() =>
-                  toast.guard(
-                    addToQueue(songs).then(() =>
-                      toast.show('Added to queue', {
-                        icon: 'queue',
-                        detail: `${title} · ${pluralize(songs.length, 'track')}`,
-                      }),
-                    ),
-                    "Couldn't queue",
-                  )
-                }
-              />
-            </KeyRow>
+            <View>
+              <KeyRow>
+                <Keycap
+                  icon={IconPlayerPlayFilled}
+                  iconFilled
+                  label="Play"
+                  variant="primary"
+                  flex
+                  onPress={() => toast.guard(playNow(songs, 0, source))}
+                />
+                <Keycap
+                  icon={IconArrowsShuffle}
+                  label="Shuffle"
+                  flex
+                  onPress={() => toast.guard(shufflePlay(songs, source))}
+                />
+                <Keycap
+                  icon={IconListDetails}
+                  square
+                  accessibilityLabel="Add all to queue"
+                  onPress={() =>
+                    toast.guard(
+                      addToQueue(songs).then(() =>
+                        toast.show('Added to queue', {
+                          icon: 'queue',
+                          detail: `${title} · ${pluralize(songs.length, 'track')}`,
+                        }),
+                      ),
+                      "Couldn't queue",
+                    )
+                  }
+                />
+                {!offline && <CollectionDownloadKey input={downloadInput} songs={songs} />}
+              </KeyRow>
+              <CollectionDownloadStatus input={downloadInput} />
+            </View>
           ) : undefined
         }
       />
@@ -325,7 +381,8 @@ export function PlaylistScreen() {
             accessibilityLabel="Playlist options"
             size={38}
             iconSize={20}
-            disabled={!playlist}
+            // Every option edits the playlist on the server.
+            disabled={!playlist || offline}
             onPress={() => setMenu('menu')}
           />
         )
@@ -373,7 +430,6 @@ export function PlaylistScreen() {
         contentContainerStyle={styles.list}
         initialNumToRender={14}
         windowSize={9}
-        removeClippedSubviews
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         refreshControl={<RefreshControl {...pull} progressViewOffset={navHeight} />}

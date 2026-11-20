@@ -13,6 +13,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { StatusBar } from 'expo-status-bar';
 
+import { ErrorBoundary } from './ErrorBoundary';
 import { PanelDragContext } from './PanelHandle';
 import { NowPlayingScreen } from '../screens/NowPlayingScreen';
 import { LyricsScreen } from '../screens/LyricsScreen';
@@ -39,6 +40,8 @@ import { ImmersiveScope } from '../theme/ThemeProvider';
 
 const DISMISS_DISTANCE = 140;
 const DISMISS_VELOCITY = 900;
+/** How long a rising surface waits for its layout before it rises anyway. */
+const LAYOUT_FALLBACK_MS = 160;
 
 /**
  * A surface that rises from the bottom edge and leaves by it.
@@ -62,6 +65,17 @@ function useRisingSurface(open: boolean, onDismiss: () => void) {
   const wantOpen = useRef(open);
   wantOpen.current = open;
 
+  /**
+   * The rise normally starts from the surface's first layout. If that event
+   * is late or never comes, the surface would sit mounted below the screen —
+   * a player that doesn't open. So the rise starts anyway after a moment.
+   */
+  const startRise = useCallback(() => {
+    if (laidOut.current) return;
+    laidOut.current = true;
+    if (wantOpen.current) offset.value = withTiming(0, timings.enter);
+  }, [offset, timings]);
+
   const unmount = useCallback(() => {
     // Reopened while it was leaving: it is on its way back up, not gone.
     if (wantOpen.current) return;
@@ -73,12 +87,14 @@ function useRisingSurface(open: boolean, onDismiss: () => void) {
     if (open) {
       dragY.value = 0;
       // Still mounted from a close that hadn't finished: turn it around.
-      if (laidOut.current) offset.value = withTiming(0, timings.enter);
-      else {
-        offset.value = height;
-        setMounted(true);
+      if (laidOut.current) {
+        offset.value = withTiming(0, timings.enter);
+        return;
       }
-      return;
+      offset.value = height;
+      setMounted(true);
+      const fallback = setTimeout(startRise, LAYOUT_FALLBACK_MS);
+      return () => clearTimeout(fallback);
     }
     // Leaves from wherever a drag left it, so a dismissal never jumps back up.
     offset.value = withTiming(height, timings.exit, (finished) => {
@@ -88,11 +104,7 @@ function useRisingSurface(open: boolean, onDismiss: () => void) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, height, offset, dragY]);
 
-  const onLayout = useCallback(() => {
-    if (laidOut.current) return;
-    laidOut.current = true;
-    if (wantOpen.current) offset.value = withTiming(0, timings.enter);
-  }, [offset, timings]);
+  const onLayout = startRise;
 
   const pan = Gesture.Pan()
     .activeOffsetY(24)
@@ -155,14 +167,20 @@ export function PlayerOverlay() {
               into closing the player. */}
           <GestureDetector gesture={surface.pan}>
             <View style={StyleSheet.absoluteFill}>
-              <NowPlayingScreen />
+              <ErrorBoundary scope="player" exit={{ label: 'Close player', onPress: closePlayer }}>
+                <NowPlayingScreen />
+              </ErrorBoundary>
             </View>
           </GestureDetector>
           <SlidePanel open={queueOpen} onClose={closeQueue} testID="panel-queue">
-            <QueueScreen />
+            <ErrorBoundary scope="queue" exit={{ label: 'Close queue', onPress: closeQueue }}>
+              <QueueScreen />
+            </ErrorBoundary>
           </SlidePanel>
           <SlidePanel open={lyricsOpen} onClose={closeLyrics} testID="panel-lyrics">
-            <LyricsScreen />
+            <ErrorBoundary scope="lyrics" exit={{ label: 'Close lyrics', onPress: closeLyrics }}>
+              <LyricsScreen />
+            </ErrorBoundary>
           </SlidePanel>
         </Animated.View>
       </View>

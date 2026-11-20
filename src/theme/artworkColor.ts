@@ -1,5 +1,7 @@
 import { decode } from 'jpeg-js';
 
+import { readBytes } from '../offline/nativeFs';
+
 import { clamp, contrast, hslToHex, pickInk, rgbToHsl, type Hsl } from './color';
 import type { ArtworkPalette, ThemeMode } from './tokens';
 
@@ -319,14 +321,23 @@ async function analysisFor(url: string, cacheKey: string): Promise<Analysis | nu
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), THUMBNAIL_TIMEOUT_MS);
     try {
-      const response = await fetch(url, { signal: controller.signal });
-      // Not cached: a network failure is worth retrying on the next play.
-      if (!response.ok) return null;
+      let bytes: Uint8Array;
+      if (url.startsWith('file:')) {
+        // A thumbnail saved with a download: read from the device, so the
+        // colours follow the music offline too.
+        const local = readBytes(url);
+        if (!local) return null;
+        bytes = local;
+      } else {
+        const response = await fetch(url, { signal: controller.signal });
+        // Not cached: a network failure is worth retrying on the next play.
+        if (!response.ok) return null;
+        bytes = new Uint8Array(await response.arrayBuffer());
+      }
 
-      const buffer = await response.arrayBuffer();
       // useTArray keeps the output as a Uint8Array rather than a Buffer shim,
       // which React Native does not provide.
-      const image = decode(new Uint8Array(buffer), { useTArray: true });
+      const image = decode(bytes, { useTArray: true });
       const result = analyse(image.data, image.width, image.height);
       remember(analysisCache, cacheKey, result);
       return result;

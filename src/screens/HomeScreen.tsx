@@ -12,7 +12,6 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useActiveMediaItem, useIsPlaying } from '@rntp/player';
 
 import { AlbumActionsSheet } from '../components/AlbumActionsSheet';
-import { Appear } from '../components/Appear';
 import { IconButton } from '../components/IconButton';
 import {
   IconArrowsShuffle,
@@ -23,6 +22,7 @@ import {
 } from '../components/icons';
 import { Label } from '../components/Label';
 import { ListRow } from '../components/ListRow';
+import { OfflinePanel } from '../components/OfflinePanel';
 import { Panel } from '../components/Panel';
 import { StatTile } from '../components/Readouts';
 import { TabScaffold } from '../components/Scaffold';
@@ -235,6 +235,8 @@ export function HomeScreen() {
           }
         />
 
+        <OfflinePanel />
+
         <View style={styles.stats}>
           <StatTile label="Today" value={String(today)} unit={today === 1 ? 'PLAY' : 'PLAYS'} />
           <StatTile label="7 days" value={listenValue} unit={listenUnit} />
@@ -352,7 +354,7 @@ export function HomeScreen() {
         {shelves.error && !shelves.data && <ErrorState message={shelves.error} onRetry={shelves.refresh} />}
 
         {shelves.data && (
-          <Appear>
+          <>
             <Shelf
               index="03"
               title="Recently added"
@@ -381,7 +383,7 @@ export function HomeScreen() {
               onSelect={openAlbum}
               onLongPress={setAlbumTarget}
             />
-          </Appear>
+          </>
         )}
         {random.data && (
           <Shelf

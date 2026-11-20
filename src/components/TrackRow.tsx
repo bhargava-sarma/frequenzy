@@ -4,6 +4,7 @@ import { IconHeart, IconHeartBroken, IconListDetails, IconX } from './icons';
 import { ListRow } from './ListRow';
 import { SwipeableRow } from './SwipeableRow';
 import { useArtwork } from '../hooks/useArtwork';
+import { useTrackDownload } from '../store/useDownloadStore';
 import { useFavoritesStore, useStarred } from '../store/useFavoritesStore';
 import { useTheme } from '../theme/ThemeProvider';
 import type { Child } from '../types/subsonic';
@@ -60,6 +61,7 @@ export const TrackRow = memo(function TrackRow({
   const color = useTheme();
   const artworkUrl = useArtwork();
   const starred = useStarred(song.id, Boolean(song.starred));
+  const download = useTrackDownload(song.id);
   const setStarred = useFavoritesStore((state) => state.setStarred);
 
   const toggleLike = useCallback(() => {
@@ -80,6 +82,7 @@ export const TrackRow = memo(function TrackRow({
 
   return (
     <SwipeableRow
+      identity={`${index}:${song.id}`}
       rightSwipe={{
         icon: <IconListDetails size={20} color={color.accentInk} strokeWidth={2} />,
         label: 'Queue',
@@ -118,6 +121,7 @@ export const TrackRow = memo(function TrackRow({
         active={active}
         playing={playing}
         starred={starred}
+        download={download}
         trailingText={song.duration ? formatDuration(song.duration) : undefined}
         last={last}
         onPress={() => onPlay(index)}

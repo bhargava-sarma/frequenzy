@@ -34,6 +34,7 @@ import { SwipeableRow } from '../components/SwipeableRow';
 import { useArtwork } from '../hooks/useArtwork';
 import { navigateToAlbum, navigateToArtist } from '../navigation/ref';
 import { extrasOf } from '../player/trackMapping';
+import { useTrackDownload } from '../store/useDownloadStore';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { usePlayerUiStore } from '../store/usePlayerUiStore';
 import { usePlaylistStore } from '../store/usePlaylistStore';
@@ -520,12 +521,15 @@ const QueueRow = memo(function QueueRow({
 }: QueueRowProps) {
   const color = useTheme();
   const artworkUrl = useArtwork();
+  // Downloaded or not, as far as the queue can tell: what will play offline.
+  const download = useTrackDownload(item.mediaId);
   const row = (
     <ListRow
       title={item.title ?? 'Unknown title'}
       subtitle={item.artist}
       // A thumbnail-sized request, not the player's 512px cover.
       artworkUri={artworkUrl(extrasOf(item)?.coverArt)}
+      download={download === 'done' ? 'done' : null}
       trailingText={item.duration ? formatDuration(item.duration) : undefined}
       dimmed={dimmed}
       last={last}
@@ -537,6 +541,7 @@ const QueueRow = memo(function QueueRow({
 
   return (
     <SwipeableRow
+      identity={`${index}:${item.mediaId ?? ''}`}
       rightSwipe={
         upcoming
           ? {

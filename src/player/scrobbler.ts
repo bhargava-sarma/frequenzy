@@ -2,7 +2,9 @@ import TrackPlayer, { Event } from '@rntp/player';
 
 import type { SubsonicClient } from '../api/client';
 import { recordPlay } from '../data/playHistory';
+import { useServerStore } from '../store/useServerStore';
 import { getSettings } from '../store/useSettingsStore';
+import { addPendingScrobble, flushPendingScrobbles, isWorthRetrying } from './pendingScrobbles';
 import { extrasOf } from './trackMapping';
 
 /**
@@ -146,11 +148,15 @@ export function startScrobbler(getClient: () => SubsonicClient | null): () => vo
     const client = getClient();
     if (!client) return;
 
-    // Set before awaiting: a failed submission is not retried, and leaving the
-    // flag clear would re-fire on every tick for the rest of the track.
+    // Set before awaiting: leaving the flag clear would re-fire on every
+    // tick for the rest of the track. A submission that can't reach the
+    // server — playing downloads offline — is kept and sent later instead.
     current.submitted = true;
     if (getSettings().scrobble) {
-      report(client.scrobble(mediaId, { submission: true, time: current.startedAt }));
+      const play = { id: mediaId, time: current.startedAt };
+      client.scrobble(play.id, { submission: true, time: play.time }).catch((error: unknown) => {
+        if (isWorthRetrying(error)) void addPendingScrobble(play);
+      });
     }
 
     // Logged locally either way: it is this device's own history, and the
@@ -171,8 +177,19 @@ export function startScrobbler(getClient: () => SubsonicClient | null): () => vo
     );
   }, POLL_INTERVAL_MS);
 
+  // Plays held back while out of reach go as soon as an address answers.
+  const flush = () => {
+    const client = getClient();
+    if (client && getSettings().scrobble) void flushPendingScrobbles(client);
+  };
+  flush();
+  const unsubscribeServer = useServerStore.subscribe((state, previous) => {
+    if (state.connection && !previous.connection) flush();
+  });
+
   return () => {
     transition.remove();
     clearInterval(timer);
+    unsubscribeServer();
   };
 }

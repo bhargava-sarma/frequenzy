@@ -55,15 +55,21 @@ export function usePagedList<T>(items: T[], firstPage = FIRST_PAGE): PagedList<T
  * FlatList tuning for row lists in this app.
  *
  * The defaults assume cheap rows. These are not — each is a gesture detector
- * with animated children — so the window is kept tight and offscreen rows are
- * detached rather than merely hidden.
+ * with animated children — so the window is kept tight.
+ *
+ * `removeClippedSubviews` is deliberately absent, here and on every list in
+ * the app. On Android it detaches offscreen rows from the native view tree,
+ * and React Native's own clipping code throws "Invalid clipping state" when
+ * rows are added or removed while some are detached — swiping a row away,
+ * a list refreshing under a scroll. That is a hard native crash, not a JS
+ * error anything can catch. Virtualisation already bounds how many rows
+ * exist; clipping only saved drawing them.
  */
 export const HEAVY_LIST_PROPS = {
   initialNumToRender: 12,
   maxToRenderPerBatch: 8,
   updateCellsBatchingPeriod: 50,
   windowSize: 7,
-  removeClippedSubviews: true,
 } as const;
 
 /**

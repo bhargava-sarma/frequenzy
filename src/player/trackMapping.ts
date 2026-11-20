@@ -9,7 +9,9 @@ import type { Child } from '../types/subsonic';
  * The URL is the whole point of this file. It comes from client.getStreamUrl,
  * which forces `format=raw&maxBitRate=0` — building a stream URL by hand
  * anywhere else is how silent transcoding creeps back in, so nothing outside
- * the client is allowed to construct one.
+ * the client is allowed to construct one. A downloaded track is the one
+ * exception: it plays from its file on the device, which was fetched through
+ * that same raw stream URL (see offline/downloads).
  */
 
 /**
@@ -41,13 +43,8 @@ export interface SubsonicExtras extends Record<string, unknown> {
   starred: boolean;
 }
 
-async function toMediaItem(client: SubsonicClient, song: Child): Promise<MediaItem> {
-  const [url, artworkUrl] = await Promise.all([
-    client.getStreamUrl(song.id),
-    song.coverArt ? client.getCoverArtUrl(song.coverArt, 512) : Promise.resolve(undefined),
-  ]);
-
-  const extras: SubsonicExtras = {
+function extrasFor(song: Child): SubsonicExtras {
+  return {
     subsonicId: song.id,
     albumId: song.albumId,
     albumTitle: song.album,
@@ -65,6 +62,13 @@ async function toMediaItem(client: SubsonicClient, song: Child): Promise<MediaIt
     genre: song.genre,
     starred: Boolean(song.starred),
   };
+}
+
+async function toMediaItem(client: SubsonicClient, song: Child): Promise<MediaItem> {
+  const [url, artworkUrl] = await Promise.all([
+    client.getStreamUrl(song.id),
+    song.coverArt ? client.getCoverArtUrl(song.coverArt, 512) : Promise.resolve(undefined),
+  ]);
 
   return {
     // Stable id independent of the URL, which carries auth params and the
@@ -79,13 +83,62 @@ async function toMediaItem(client: SubsonicClient, song: Child): Promise<MediaIt
     // Stream URLs end in `.view`, not `.flac`, so the path says nothing about
     // the format. Navidrome reports the true type when serving raw.
     mimeType: song.contentType,
-    extras,
+    extras: extrasFor(song),
   };
 }
 
-/** Maps a list of songs. URLs are built in parallel. */
-export async function toMediaItems(client: SubsonicClient, songs: Child[]): Promise<MediaItem[]> {
-  return Promise.all(songs.map((song) => toMediaItem(client, song)));
+/** A downloaded file on this device, and its saved cover if there is one. */
+export interface LocalTrackCopy {
+  uri: string;
+  coverUri?: string;
+}
+
+/** Finds the downloaded copy of a track, or null. */
+export type LocalLookup = (id: string) => LocalTrackCopy | null;
+
+/**
+ * A track played from the device. Needs no connection at all: the file and
+ * the cover are both local, so it plays on a plane. Without a saved cover
+ * the server's is used when there is an address to build it against.
+ */
+function toLocalMediaItem(client: SubsonicClient | null, song: Child, copy: LocalTrackCopy): MediaItem {
+  const remoteArt = song.coverArt && client ? client.buildCoverArtUrl(song.coverArt, 512) : null;
+  return {
+    mediaId: song.id,
+    url: copy.uri,
+    artworkUrl: copy.coverUri ?? remoteArt ?? undefined,
+    title: song.title,
+    artist: song.artist,
+    albumTitle: song.album,
+    duration: song.duration,
+    mimeType: song.contentType,
+    extras: extrasFor(song),
+  };
+}
+
+/**
+ * Maps a list of songs. Downloaded tracks play from the device; the rest
+ * stream, with their URLs built in parallel. A client is needed only for
+ * the ones that stream.
+ */
+export async function toMediaItems(
+  client: SubsonicClient | null,
+  songs: Child[],
+  local?: LocalLookup,
+): Promise<MediaItem[]> {
+  return Promise.all(
+    songs.map((song) => {
+      const copy = local?.(song.id);
+      if (copy) return toLocalMediaItem(client, song, copy);
+      if (!client) throw new Error('Not connected to a server');
+      return toMediaItem(client, song);
+    }),
+  );
+}
+
+/** Whether a queued item plays from the device rather than the server. */
+export function isLocalItem(item: MediaItem | null | undefined): boolean {
+  return typeof item?.url === 'string' && item.url.startsWith('file:');
 }
 
 /** Reads Subsonic metadata back off a queued item. */

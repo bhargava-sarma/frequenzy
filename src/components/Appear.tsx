@@ -13,9 +13,11 @@ import { useMotion } from '../theme/motion';
  * flash; given a quarter of a second and a few points of rise, it reads as
  * having arrived.
  *
- * One of these wraps a section, never a row: a screen gets a handful of
- * animated views, not one per item, and nothing staggers. Change its `key`
- * to play it again for new content. Under Reduce motion it is simply there.
+ * Kept to small, self-contained blocks — a loading light, an empty state, an
+ * error panel. Never a screen or a list: fading a container that holds a
+ * whole list or navigator made Android redraw the lot through an offscreen
+ * layer and, with clipped lists, could leave rows blank. Change its `key` to
+ * play it again for new content. Under Reduce motion it is simply there.
  */
 export interface AppearProps {
   children: ReactNode;
@@ -44,5 +46,13 @@ export function Appear({ children, delay = 0, rise = 8, style }: AppearProps) {
       : { opacity: progress.value, transform: [{ translateY: (1 - progress.value) * rise }] },
   );
 
-  return <Animated.View style={[style, animated]}>{children}</Animated.View>;
+  // Composited as one layer while it fades. Android otherwise applies the
+  // opacity to each child separately, so overlapping children — a key's lip
+  // under its face — show through one another for the length of the fade.
+  // At full opacity no layer is used, so this costs nothing at rest.
+  return (
+    <Animated.View needsOffscreenAlphaCompositing style={[style, animated]}>
+      {children}
+    </Animated.View>
+  );
 }

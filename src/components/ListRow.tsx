@@ -2,10 +2,12 @@ import { memo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Artwork } from './Artwork';
+import { TrackDownloadMark } from './DownloadControls';
 import { IconDotsVertical, IconHeartFilled } from './icons';
 import { PlayingBars } from './PlayingBars';
 import { hairline, layout, space, type, withAlpha } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
+import type { TrackDownloadStatus } from '../store/useDownloadStore';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import { haptics } from '../utils/haptics';
 
@@ -36,6 +38,8 @@ export interface ListRowProps {
   /** Mono figure on the right: a duration, a count. */
   trailingText?: string;
   starred?: boolean;
+  /** Whether the track is downloaded, or on its way. */
+  download?: TrackDownloadStatus;
   /** Dims the row — e.g. tracks already played in the queue. */
   dimmed?: boolean;
   onPress?: () => void;
@@ -60,6 +64,7 @@ export const ListRow = memo(function ListRow({
   playing = false,
   trailingText,
   starred = false,
+  download = null,
   dimmed = false,
   onPress,
   onLongPress,
@@ -139,6 +144,7 @@ export const ListRow = memo(function ListRow({
           ) : null}
         </View>
 
+        <TrackDownloadMark status={download} />
         {starred && <IconHeartFilled size={13} color={color.accent} />}
         {trailingText ? (
           <Text style={styles.trailing} numberOfLines={1}>

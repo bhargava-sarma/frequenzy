@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,7 +8,16 @@ import appConfig from '../../app.json';
 import { ApiError } from '../api/errors';
 import { GridPaper } from '../components/GridPaper';
 import { IconButton } from '../components/IconButton';
-import { IconCheck, IconChevronLeft, IconLogout, IconRefresh, IconTrash } from '../components/icons';
+import {
+  IconCheck,
+  IconChevronLeft,
+  IconLogout,
+  IconPlayerPause,
+  IconPlayerPlay,
+  IconRefresh,
+  IconShare2,
+  IconTrash,
+} from '../components/icons';
 import { Keycap, KeyRow } from '../components/Keycap';
 import { Label } from '../components/Label';
 import { Led } from '../components/Led';
@@ -17,10 +26,14 @@ import { Segmented } from '../components/Segmented';
 import { Sheet, SheetRow } from '../components/Sheet';
 import { Slider } from '../components/Slider';
 import { Toggle } from '../components/Toggle';
+import { clearCrashLog, formatCrash, getCrashLog, onCrashLogChanged, type CrashEntry } from '../data/crashLog';
 import { clearLyricsCache } from '../data/lyricsCache';
 import { clearPlayHistory } from '../data/playHistory';
 import { clearRecentSearches } from '../data/recentSearches';
 import type { RootStackParamList } from '../navigation/types';
+import { removeAllDownloads, retryFailed, setPaused, totalsOf } from '../offline/downloads';
+import { freeSpace } from '../offline/nativeFs';
+import { useDownloadStore } from '../store/useDownloadStore';
 import { useServerStore } from '../store/useServerStore';
 import { useSettingsStore, type Settings } from '../store/useSettingsStore';
 import { errorMessage, toast } from '../store/useToastStore';
@@ -30,7 +43,7 @@ import type { Palette } from '../theme/tokens';
 import { useTheme, useThemeControls, useThemedStyles } from '../theme/ThemeProvider';
 import { SubsonicErrorCode, type ScanStatus } from '../types/subsonic';
 import { haptics } from '../utils/haptics';
-import { formatRelative } from '../utils/time';
+import { formatBytes, formatRelative, pluralize } from '../utils/time';
 
 /**
  * Settings, laid out as the back panel of the device: grouped modules, each
@@ -92,7 +105,33 @@ export function SettingsScreen() {
 
   const [scan, setScan] = useState<ScanStatus | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState<'none' | 'signOut' | 'reset'>('none');
+  const [confirm, setConfirm] = useState<'none' | 'signOut' | 'reset' | 'downloads'>('none');
+
+  const downloads = useDownloadStore((state) => state.tracks);
+  const downloadsPaused = useDownloadStore((state) => state.paused);
+  const downloadsBlocked = useDownloadStore((state) => state.blocked);
+  const downloadsUnsupported = useDownloadStore((state) => state.unsupported);
+  const totals = useMemo(() => totalsOf(downloads), [downloads]);
+  const free = freeSpace();
+
+  /** The newest recorded error, kept in view as the log changes. */
+  const [lastCrash, setLastCrash] = useState<CrashEntry | null>(null);
+  const [crashCount, setCrashCount] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    const read = () =>
+      void getCrashLog().then((log) => {
+        if (!alive) return;
+        setLastCrash(log[0] ?? null);
+        setCrashCount(log.length);
+      });
+    read();
+    const unsubscribe = onCrashLogChanged(read);
+    return () => {
+      alive = false;
+      unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     if (!client) return;
@@ -307,8 +346,89 @@ export function SettingsScreen() {
             <Segmented options={TABS} value={settings.startTab} onChange={(value) => set('startTab', value)} size="sm" />
           </Panel>
 
+          {/* ── Downloads ── */}
+          <Panel label="05 — Downloads" style={styles.panel}>
+            {downloadsUnsupported ? (
+              <Text style={styles.hint}>{downloadsUnsupported}</Text>
+            ) : (
+              <>
+                <Info
+                  label="On this device"
+                  value={totals.done > 0 ? `${pluralize(totals.done, 'track')} · ${formatBytes(totals.bytes)}` : 'Nothing yet'}
+                />
+                <Info label="Free space" value={free != null ? formatBytes(free) : '—'} />
+                <Info
+                  label="Queue"
+                  value={
+                    totals.queued === 0
+                      ? totals.failed > 0
+                        ? `${totals.failed} failed`
+                        : 'Idle'
+                      : downloadsPaused
+                        ? `Paused · ${totals.queued} waiting`
+                        : downloadsBlocked === 'offline'
+                          ? `No connection · ${totals.queued} waiting`
+                          : downloadsBlocked === 'homeOnly'
+                            ? `Away from home · ${totals.queued} waiting`
+                            : downloadsBlocked === 'storage'
+                              ? `Storage full · ${totals.queued} waiting`
+                              : `Downloading · ${totals.queued} to go`
+                  }
+                  last
+                />
+                <Row
+                  label="Only at home"
+                  hint="Download only while the home address answers. Away, the queue waits instead of using mobile data."
+                  last
+                >
+                  <Toggle
+                    value={settings.downloadsHomeOnly}
+                    onChange={(on) => set('downloadsHomeOnly', on)}
+                    accessibilityLabel="Download only at home"
+                  />
+                </Row>
+                <KeyRow style={styles.keys}>
+                  <Keycap
+                    label={downloadsPaused ? 'Resume' : 'Pause'}
+                    icon={downloadsPaused ? IconPlayerPlay : IconPlayerPause}
+                    size="sm"
+                    flex
+                    active={downloadsPaused}
+                    disabled={!downloadsPaused && totals.queued === 0}
+                    onPress={() => setPaused(!downloadsPaused)}
+                  />
+                  <Keycap
+                    label="Retry failed"
+                    icon={IconRefresh}
+                    size="sm"
+                    flex
+                    disabled={totals.failed === 0}
+                    onPress={() => {
+                      retryFailed();
+                      toast.show('Retrying failed downloads', { icon: 'download' });
+                    }}
+                  />
+                </KeyRow>
+                <View style={styles.dataKeys}>
+                  <Keycap
+                    label="Remove all downloads"
+                    icon={IconTrash}
+                    size="sm"
+                    disabled={totals.done + totals.queued + totals.failed === 0}
+                    busy={busy === 'downloads'}
+                    onPress={() => setConfirm('downloads')}
+                  />
+                </View>
+                <Text style={styles.hint}>
+                  Downloads are the original files, exactly as streamed, and play with no connection. Plays made
+                  offline are sent to Navidrome once it can be reached.
+                </Text>
+              </>
+            )}
+          </Panel>
+
           {/* ── Server ── */}
-          <Panel label="05 — Server" style={styles.panel}>
+          <Panel label="06 — Server" style={styles.panel}>
             <View style={styles.status}>
               <Led color={ledColor} size={9} busy={connecting} />
               <View style={styles.statusText}>
@@ -351,7 +471,7 @@ export function SettingsScreen() {
           </Panel>
 
           {/* ── Data ── */}
-          <Panel label="06 — Data" style={styles.panel}>
+          <Panel label="07 — Data" style={styles.panel}>
             <Text style={styles.hint}>
               Library data and lyrics are cached on this device and refetched when stale. Play history feeds Home and
               Stats; clearing it doesn't touch the play counts already sent to Navidrome.
@@ -364,8 +484,56 @@ export function SettingsScreen() {
             </View>
           </Panel>
 
+          {/* ── Diagnostics ── */}
+          <Panel label="08 — Diagnostics" style={styles.panel}>
+            {lastCrash ? (
+              <>
+                <View style={styles.status}>
+                  <Led color={color.ledRed} size={9} />
+                  <View style={styles.statusText}>
+                    <Text style={[type.headline, { color: color.label }]}>Last error</Text>
+                    <Label tone="secondary">
+                      {`${formatRelative(lastCrash.at)} · ${lastCrash.scope}${crashCount > 1 ? ` · ${crashCount} logged` : ''}`}
+                    </Label>
+                  </View>
+                </View>
+                <Text style={styles.crash} numberOfLines={4} selectable>
+                  {lastCrash.message}
+                </Text>
+                <KeyRow style={styles.keys}>
+                  <Keycap
+                    label="Share report"
+                    icon={IconShare2}
+                    size="sm"
+                    flex
+                    onPress={() => {
+                      void Share.share({ message: formatCrash(lastCrash) }).catch(() => {});
+                    }}
+                  />
+                  <Keycap
+                    label="Clear"
+                    size="sm"
+                    flex
+                    onPress={() => {
+                      void clearCrashLog();
+                      toast.show('Error log cleared', { icon: 'check' });
+                    }}
+                  />
+                </KeyRow>
+              </>
+            ) : (
+              <View style={styles.status}>
+                <Led color={color.ledGreen} size={9} />
+                <View style={styles.statusText}>
+                  <Text style={[type.headline, { color: color.label }]}>No errors recorded</Text>
+                  <Label tone="secondary">Anything that goes wrong is noted here</Label>
+                </View>
+              </View>
+            )}
+          </Panel>
+
           {/* ── About ── */}
-          <Panel label="07 — About" style={styles.panel}>
+          <Panel label="09 — About" style={styles.panel}>
             <Info label="App" value={`${appConfig.expo.name} ${appConfig.expo.version}`} />
             <Info label="Streams" value="format=raw · maxBitRate=0" />
             <Info label="Lyrics" value="Server tags, then LRCLIB" last />
@@ -376,7 +544,7 @@ export function SettingsScreen() {
           </Panel>
 
           {__DEV__ && (
-            <Panel label="08 — Developer" style={styles.panel}>
+            <Panel label="10 — Developer" style={styles.panel}>
               <KeyRow>
                 <Keycap label="Diagnostics" size="sm" flex onPress={() => navigation.navigate('Diagnostics')} />
                 <Keycap label="Components" size="sm" flex onPress={() => navigation.navigate('Showcase')} />
@@ -389,7 +557,7 @@ export function SettingsScreen() {
           visible={confirm === 'signOut'}
           onClose={() => setConfirm('none')}
           title="Sign out?"
-          subtitle="The queue, history and cached library for this server are cleared."
+          subtitle="The queue, history, downloads and cached library for this server are cleared."
         >
           <SheetRow
             label="Sign out"
@@ -401,6 +569,24 @@ export function SettingsScreen() {
             }}
           />
           <SheetRow label="Stay signed in" last onPress={() => setConfirm('none')} />
+        </Sheet>
+
+        <Sheet
+          visible={confirm === 'downloads'}
+          onClose={() => setConfirm('none')}
+          title="Remove all downloads?"
+          subtitle={`${pluralize(totals.done, 'track')} (${formatBytes(totals.bytes)}) are deleted from this device. Nothing on the server changes.`}
+        >
+          <SheetRow
+            label="Remove all downloads"
+            icon={IconTrash}
+            tone="destructive"
+            onPress={() => {
+              setConfirm('none');
+              void run('downloads', removeAllDownloads, 'Downloads removed');
+            }}
+          />
+          <SheetRow label="Keep them" last onPress={() => setConfirm('none')} />
         </Sheet>
 
         {/* Asked first: one press used to put every preference back to
@@ -493,4 +679,5 @@ const makeStyles = (color: Palette) =>
     infoValue: { ...type.callout, color: color.label, flexShrink: 1, textAlign: 'right' },
     keys: { marginTop: space[4] },
     dataKeys: { marginTop: space[4], gap: space[2] },
+    crash: { ...type.footnote, fontFamily: type.mono.fontFamily, color: color.labelSecondary, lineHeight: 17 },
   });

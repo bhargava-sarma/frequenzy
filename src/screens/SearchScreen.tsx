@@ -16,7 +16,6 @@ import { useActiveMediaItem, useIsPlaying } from '@rntp/player';
 
 import { AlbumActionsSheet } from '../components/AlbumActionsSheet';
 import { AlbumTile } from '../components/AlbumTile';
-import { Appear } from '../components/Appear';
 import { Artwork } from '../components/Artwork';
 import { Chip, ChipRow } from '../components/Chip';
 import { IconCalendar, IconSearch, IconX } from '../components/icons';
@@ -596,12 +595,7 @@ export function SearchScreen() {
   return (
     <TabScaffold>
       {header}
-      {/* Keyed on what kind of thing is showing, so browse giving way to
-          results, or one scope to another, fades up rather than swaps. Not
-          keyed on the query: results changing as you type should not blink. */}
-      <Appear key={hasQuery ? scope : 'browse'} rise={6} style={styles.body}>
-        {body}
-      </Appear>
+      <View style={styles.body}>{body}</View>
       <TrackActionsSheet visible={trackTarget != null} onClose={() => setTrackTarget(null)} song={trackTarget} />
       <AlbumActionsSheet visible={albumTarget != null} onClose={() => setAlbumTarget(null)} album={albumTarget} />
     </TabScaffold>

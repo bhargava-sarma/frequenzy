@@ -68,5 +68,15 @@ export function Touchable({
     [up, onPressOut],
   );
 
-  return <AnimatedPressable {...rest} onPressIn={handleIn} onPressOut={handleOut} style={[style, animated]} />;
+  return (
+    <AnimatedPressable
+      // Dimmed as one layer: a tile's year tag over its cover would otherwise
+      // show the cover through it while held.
+      needsOffscreenAlphaCompositing
+      {...rest}
+      onPressIn={handleIn}
+      onPressOut={handleOut}
+      style={[style, animated]}
+    />
+  );
 }

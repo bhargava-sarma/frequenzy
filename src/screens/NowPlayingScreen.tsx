@@ -103,6 +103,7 @@ const SOURCE_EYEBROW: Record<SourceKind, string> = {
   mix: 'Playing mix',
   search: 'Playing from search',
   history: 'Playing from history',
+  downloads: 'Playing from downloads',
   restored: 'Picking up from',
 };
 
@@ -376,23 +377,19 @@ export function NowPlayingScreen() {
         {faceArea.height > 0 && (
           <GestureDetector gesture={faceGesture}>
             <Animated.View style={[styles.face, faceStyle]}>
-              {/* Keyed on the face, so switching between them is one fading
-                  out of the way of the next rather than a cut. */}
-              <Appear key={face} rise={0} style={styles.face}>
-                {face === 'vinyl' ? (
-                  <VinylFace uri={art} size={faceSize} playing={isPlaying} progress={ratio} />
-                ) : face === 'tape' ? (
-                  <TapeFace
-                    size={faceSize}
-                    playing={isPlaying}
-                    progress={ratio}
-                    title={activeItem.title}
-                    subtitle={activeItem.artist}
-                  />
-                ) : (
-                  <ArtworkFace uri={art} size={faceSize} />
-                )}
-              </Appear>
+              {face === 'vinyl' ? (
+                <VinylFace uri={art} size={faceSize} playing={isPlaying} progress={ratio} />
+              ) : face === 'tape' ? (
+                <TapeFace
+                  size={faceSize}
+                  playing={isPlaying}
+                  progress={ratio}
+                  title={activeItem.title}
+                  subtitle={activeItem.artist}
+                />
+              ) : (
+                <ArtworkFace uri={art} size={faceSize} />
+              )}
               <Animated.View pointerEvents="none" style={[styles.burst, burstStyle]}>
                 <IconHeartFilled size={Math.round(faceSize * 0.3)} color={color.accent} />
               </Animated.View>

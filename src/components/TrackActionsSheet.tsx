@@ -2,9 +2,12 @@ import { useState } from 'react';
 import { Share, StyleSheet, View } from 'react-native';
 
 import { AddToPlaylistSheet } from './AddToPlaylistSheet';
+import { useActivePercent } from './DownloadControls';
 import {
   IconAlbum,
+  IconCircleArrowDownFilled,
   IconCornerDownRight,
+  IconDownload,
   IconHeart,
   IconHeartFilled,
   IconInfoCircle,
@@ -13,6 +16,7 @@ import {
   IconPlaylistAdd,
   IconRadio,
   IconShare,
+  IconTrash,
   IconUser,
   type IconComponent,
 } from './icons';
@@ -21,7 +25,10 @@ import { Sheet, SheetRow } from './Sheet';
 import { TrackInfoSheet } from './TrackInfoSheet';
 import { useArtwork } from '../hooks/useArtwork';
 import { navigateToAlbum, navigateToArtist } from '../navigation/ref';
+import { downloadSongs, removeSongs } from '../offline/downloads';
+import { SINGLE_PIN } from '../offline/types';
 import { EmptyMixError, completeSong, startTrackRadio } from '../player/mixes';
+import { useDownloadStore, useTrackDownload } from '../store/useDownloadStore';
 import { useFavoritesStore, useStarred } from '../store/useFavoritesStore';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { toast } from '../store/useToastStore';
@@ -100,6 +107,23 @@ export function TrackActionsSheet({ visible, onClose, song, hide = [], extraActi
 
   const showAlbum = !hide.includes('album') && target?.albumId;
   const showArtist = !hide.includes('artist') && target?.artistId;
+
+  const download = useTrackDownload(target?.id);
+  const percent = useActivePercent(target?.id);
+  const pins = useDownloadStore((state) => (target ? state.tracks[target.id]?.pins : undefined));
+  const keptBy = useDownloadStore((state) => {
+    const key = pins?.find((pin) => pin !== SINGLE_PIN);
+    return key ? (state.collections[key]?.name ?? null) : null;
+  });
+  const single = pins?.includes(SINGLE_PIN) ?? false;
+  const downloadDetail =
+    download === 'active'
+      ? (percent ?? '…')
+      : download === 'queued'
+        ? 'QUEUED'
+        : download === 'failed'
+          ? 'FAILED'
+          : undefined;
 
   return (
     <>
@@ -192,6 +216,44 @@ export function TrackActionsSheet({ visible, onClose, song, hide = [], extraActi
                 icon={IconUser}
                 detail={target.artist}
                 onPress={() => run(() => navigateToArtist(target.artistId as string, target.artist))}
+              />
+            )}
+            {!download ? (
+              <SheetRow
+                label="Download"
+                icon={IconDownload}
+                onPress={() =>
+                  run(async () => {
+                    const added = downloadSongs([await completeSong(target)]);
+                    toast.show(added > 0 ? 'Downloading' : 'Already downloaded', {
+                      icon: 'download',
+                      detail: target.title,
+                    });
+                  })
+                }
+              />
+            ) : single ? (
+              <SheetRow
+                label={download === 'done' ? 'Remove download' : 'Cancel download'}
+                icon={IconTrash}
+                detail={downloadDetail}
+                onPress={() =>
+                  run(() => {
+                    removeSongs([target.id]);
+                    toast.show(keptBy ? `Still kept with ${keptBy}` : 'Removed download', {
+                      icon: 'check',
+                      detail: target.title,
+                    });
+                  })
+                }
+              />
+            ) : (
+              <SheetRow
+                label={download === 'done' ? 'Downloaded' : 'Downloading'}
+                icon={IconCircleArrowDownFilled}
+                detail={downloadDetail ?? (keptBy ? `WITH ${keptBy.toUpperCase()}` : undefined)}
+                disabled
+                onPress={() => {}}
               />
             )}
             <SheetRow label="Track info" icon={IconInfoCircle} onPress={() => setPending('info')} />

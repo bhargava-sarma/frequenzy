@@ -2,9 +2,11 @@ import { useState } from 'react';
 import { Share, StyleSheet, View } from 'react-native';
 
 import { AddToPlaylistSheet } from './AddToPlaylistSheet';
+import { startCollectionDownload, stopCollectionDownload } from './DownloadControls';
 import {
   IconArrowsShuffle,
   IconCornerDownRight,
+  IconDownload,
   IconHeart,
   IconHeartFilled,
   IconListDetails,
@@ -12,13 +14,16 @@ import {
   IconPlaylistAdd,
   IconRadio,
   IconShare,
+  IconTrash,
   IconUser,
 } from './icons';
 import { Keycap, KeyRow } from './Keycap';
 import { Sheet, SheetRow } from './Sheet';
 import { useArtwork } from '../hooks/useArtwork';
 import { navigateToArtist } from '../navigation/ref';
+import { collectionKey } from '../offline/types';
 import { EmptyMixError, startArtistRadio } from '../player/mixes';
+import { useCollectionDownload } from '../store/useDownloadStore';
 import { useFavoritesStore, useStarred } from '../store/useFavoritesStore';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { useServerStore } from '../store/useServerStore';
@@ -92,6 +97,17 @@ export function AlbumActionsSheet({ visible, onClose, album, hide = [] }: AlbumA
   }
 
   const source = target ? { kind: 'album' as const, label: target.name } : undefined;
+  const downloadInput = target
+    ? {
+        kind: 'album' as const,
+        id: target.id,
+        name: target.name,
+        artist: target.artist,
+        year: target.year,
+        coverArt: target.coverArt,
+      }
+    : null;
+  const kept = useCollectionDownload(target ? collectionKey('album', target.id) : null);
 
   return (
     <>
@@ -164,6 +180,24 @@ export function AlbumActionsSheet({ visible, onClose, album, hide = [] }: AlbumA
               onPress={() => run((tracks) => addToQueue(tracks), 'Added to queue', 'queue')}
             />
             <SheetRow label="Add to playlist…" icon={IconPlaylistAdd} onPress={() => setPending(true)} />
+            {downloadInput &&
+              (kept.pinned ? (
+                <SheetRow
+                  label="Remove download"
+                  icon={IconTrash}
+                  detail={kept.done < kept.total ? `${kept.done}/${kept.total}` : undefined}
+                  onPress={() => {
+                    onClose();
+                    stopCollectionDownload(downloadInput);
+                  }}
+                />
+              ) : (
+                <SheetRow
+                  label="Download album"
+                  icon={IconDownload}
+                  onPress={() => run(async (tracks) => startCollectionDownload(downloadInput, tracks))}
+                />
+              ))}
             {target.artistId && (
               <SheetRow
                 label="Artist radio"

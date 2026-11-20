@@ -11,6 +11,7 @@ import Animated, {
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { StackActions } from '@react-navigation/native';
 
+import { ErrorBoundary } from './ErrorBoundary';
 import { IconHome, IconLibrary, IconSearch, type IconComponent } from './icons';
 import { MiniPlayer } from './MiniPlayer';
 import { useMotion, useSelectionPosition } from '../theme/motion';
@@ -99,7 +100,9 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
           bounds can clip its own shadow too. */}
       <View style={styles.dockShadow}>
         <View style={styles.dock}>
-          <MiniPlayer />
+          <ErrorBoundary scope="mini-player" silent>
+            <MiniPlayer />
+          </ErrorBoundary>
 
           <View style={styles.bar} onLayout={onBarLayout}>
             {slot > 0 && <Animated.View pointerEvents="none" style={[styles.key, { width: slot }, keyStyle]} />}
