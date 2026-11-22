@@ -17,7 +17,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import TrackPlayer, { useActiveMediaItem, useIsPlaying, useProgress } from '@rntp/player';
+import TrackPlayer from '@rntp/player';
 
 import { AmbientBackground } from '../components/AmbientBackground';
 import { Appear } from '../components/Appear';
@@ -54,13 +54,14 @@ import { PlayerToolsSheet } from '../components/PlayerToolsSheet';
 import { ScrubBar } from '../components/ScrubBar';
 import { SleepTimerSheet } from '../components/SleepTimerSheet';
 import { TrackActionsSheet } from '../components/TrackActionsSheet';
-import { useQueuePosition } from '../hooks/useQueuePosition';
 import { sleepLabel, useSleepTimer } from '../hooks/useSleepTimer';
 import { navigateToAlbum, navigateToArtist } from '../navigation/ref';
+import { seekTo } from '../player/playbackSync';
 import { extrasOf, formatPlate, isLossless, songFromMediaItem } from '../player/trackMapping';
 import { useFavoritesStore, useStarred } from '../store/useFavoritesStore';
 import { usePlayerStore, type SourceKind } from '../store/usePlayerStore';
 import { usePlayerUiStore } from '../store/usePlayerUiStore';
+import { useActiveItem, useIsPlaying, usePlaybackPosition, useQueuePosition } from '../store/usePlaybackStore';
 import { useSettingsStore, type PlayerFace } from '../store/useSettingsStore';
 import { toast } from '../store/useToastStore';
 import { useMotion } from '../theme/motion';
@@ -118,9 +119,10 @@ export function NowPlayingScreen() {
   const openQueue = usePlayerUiStore((state) => state.openQueue);
   const openLyrics = usePlayerUiStore((state) => state.openLyrics);
 
-  const activeItem = useActiveMediaItem();
+  const activeItem = useActiveItem();
   const isPlaying = useIsPlaying();
-  const { position, duration } = useProgress(1);
+  // From the playback clock: ticking costs no call into the player.
+  const { position, duration } = usePlaybackPosition(1000);
   const queuePosition = useQueuePosition();
 
   const shuffled = usePlayerStore((state) => state.shuffled);
@@ -255,41 +257,49 @@ export function NowPlayingScreen() {
   const exit = timings.exit;
   const settle = springs.settle;
 
-  const pan = Gesture.Pan()
-    .activeOffsetX([-18, 18])
-    .failOffsetY([-14, 14])
-    .onUpdate((event) => {
-      offset.value = event.translationX;
-    })
-    .onEnd((event, success) => {
-      const fling = Math.abs(event.velocityX) > 900;
-      // `success` is false when the system took the gesture back; that is
-      // not a decision to change track.
-      if (success && (Math.abs(event.translationX) > SKIP_DISTANCE || fling)) {
-        const direction = event.translationX < 0 ? 1 : -1;
-        const changes = direction > 0 ? nextChanges.value : previousChanges.value;
-        if (changes) {
-          // Off the side it was pushed toward; the next face follows it in.
-          runOnJS(beginArrival)(direction);
+  // The latest like, read through a ref so the gesture can be built once:
+  // rebuilt every render, the player re-attached its gestures every second.
+  const likeRef = useRef(like);
+  likeRef.current = like;
+  const likeNow = useCallback(() => likeRef.current(), []);
+
+  const faceGesture = useMemo(() => {
+    const pan = Gesture.Pan()
+      .activeOffsetX([-18, 18])
+      .failOffsetY([-14, 14])
+      .onUpdate((event) => {
+        offset.value = event.translationX;
+      })
+      .onEnd((event, success) => {
+        const fling = Math.abs(event.velocityX) > 900;
+        // `success` is false when the system took the gesture back; that is
+        // not a decision to change track.
+        if (success && (Math.abs(event.translationX) > SKIP_DISTANCE || fling)) {
+          const direction = event.translationX < 0 ? 1 : -1;
+          const changes = direction > 0 ? nextChanges.value : previousChanges.value;
+          if (changes) {
+            // Off the side it was pushed toward; the next face follows it in.
+            runOnJS(beginArrival)(direction);
+            runOnJS(skip)(direction);
+            offset.value = withTiming(-direction * windowWidth, exit, (finished) => {
+              if (finished) runOnJS(faceLeft)();
+            });
+            return;
+          }
           runOnJS(skip)(direction);
-          offset.value = withTiming(-direction * windowWidth, exit, (finished) => {
-            if (finished) runOnJS(faceLeft)();
-          });
-          return;
         }
-        runOnJS(skip)(direction);
-      }
-      offset.value = withSpring(0, settle);
-    });
+        offset.value = withSpring(0, settle);
+      });
 
-  const doubleTap = Gesture.Tap()
-    .numberOfTaps(2)
-    .maxDuration(260)
-    .onEnd((_event, success) => {
-      if (success) runOnJS(like)();
-    });
+    const doubleTap = Gesture.Tap()
+      .numberOfTaps(2)
+      .maxDuration(260)
+      .onEnd((_event, success) => {
+        if (success) runOnJS(likeNow)();
+      });
 
-  const faceGesture = Gesture.Race(pan, doubleTap);
+    return Gesture.Race(pan, doubleTap);
+  }, [offset, nextChanges, previousChanges, beginArrival, skip, faceLeft, likeNow, windowWidth, exit, settle]);
 
   // The face follows the finger, tilting a touch as it goes, the way a card
   // pushed across a table does.
@@ -307,7 +317,7 @@ export function NowPlayingScreen() {
     transform: [{ scale: interpolate(burst.value, [0, 0.22, 0.4, 1], [0.3, 1.18, 1, 1.06]) }],
   }));
 
-  const seek = useCallback((seconds: number) => TrackPlayer.seekTo(seconds), []);
+  const seek = useCallback((seconds: number) => seekTo(seconds), []);
 
   const onFaceLayout = useCallback((event: LayoutChangeEvent) => {
     const { width: w, height: h } = event.nativeEvent.layout;

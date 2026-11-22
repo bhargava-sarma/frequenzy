@@ -1,15 +1,13 @@
-import { type ReactNode } from 'react';
-import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
-import Animated, {
-  Extrapolation,
-  interpolate,
-  useAnimatedScrollHandler,
-  useAnimatedStyle,
-  useDerivedValue,
-  useSharedValue,
-  type DerivedValue,
-  type SharedValue,
-} from 'react-native-reanimated';
+import { useMemo, useRef, type ReactNode } from 'react';
+import {
+  Animated,
+  StyleSheet,
+  View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { IconButton } from './IconButton';
@@ -27,29 +25,40 @@ import { useTheme } from '../theme/ThemeProvider';
  *     follow the scroll in — tied to your finger, never playing on their
  *     own — and its buttons are solid discs, legible over any artwork.
  *
- * No state changes while scrolling: the handler writes a shared value and
- * every style derives from it, so the JS thread never hears about scroll.
+ * Driven by React Native's own Animated with the native driver: the scroll
+ * offset goes straight from the list to these views on the UI thread. The
+ * Reanimated version it replaces committed a fresh shadow tree on every
+ * scrolled frame on Android, and those commits queued against the rows the
+ * list was mounting at the same moment — that was the stutter scrolling an
+ * album or playlist. Nothing here reaches JavaScript while you scroll.
  */
 
-type Progress = SharedValue<number> | DerivedValue<number>;
+type Progress = Animated.AnimatedInterpolation<number> | Animated.Value;
 
 export interface CollapsingHeaderState {
-  scrollY: SharedValue<number>;
-  onScroll: ReturnType<typeof useAnimatedScrollHandler>;
+  scrollY: Animated.Value;
+  onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   /** 0 with the hero showing, 1 with the bar fully in. */
-  progress: DerivedValue<number>;
+  progress: Animated.AnimatedInterpolation<number>;
 }
 
-/** `start`/`end`: scroll offsets over which the bar arrives. */
+/**
+ * `start`/`end`: scroll offsets over which the bar arrives. Attach
+ * `onScroll` to one of React Native's Animated lists (Animated.FlatList
+ * from 'react-native'), with scrollEventThrottle={16}.
+ */
 export function useCollapsingHeader(start = 140, end = 220): CollapsingHeaderState {
-  const scrollY = useSharedValue(0);
-  const onScroll = useAnimatedScrollHandler({
-    onScroll: (event) => {
-      scrollY.value = event.contentOffset.y;
-    },
-  });
-  const progress = useDerivedValue(() =>
-    interpolate(scrollY.value, [start, end], [0, 1], Extrapolation.CLAMP),
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const onScroll = useMemo(
+    () =>
+      Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], {
+        useNativeDriver: true,
+      }) as (event: NativeSyntheticEvent<NativeScrollEvent>) => void,
+    [scrollY],
+  );
+  const progress = useMemo(
+    () => scrollY.interpolate({ inputRange: [start, end], outputRange: [0, 1], extrapolate: 'clamp' }),
+    [scrollY, start, end],
   );
   return { scrollY, onScroll, progress };
 }
@@ -82,7 +91,7 @@ export function NavBar({
   const insets = useSafeAreaInsets();
 
   // The bar's ground and its compact title arrive together.
-  const revealStyle = useAnimatedStyle(() => ({ opacity: alwaysVisible ? 1 : progress.value }));
+  const revealStyle = { opacity: alwaysVisible ? 1 : progress };
 
   return (
     <View

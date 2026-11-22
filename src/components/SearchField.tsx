@@ -1,4 +1,4 @@
-import { forwardRef, type ReactNode } from 'react';
+import { forwardRef, memo, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { IconSearch, IconX } from './icons';
@@ -107,3 +107,46 @@ const makeStyles = (color: Palette) =>
     },
     pressed: { opacity: 0.6 },
   });
+
+/**
+ * A filter field that keeps its own text and reports it a beat after typing
+ * pauses.
+ *
+ * Held by the screen, every keystroke re-rendered the whole screen — the
+ * hero, its keys, every sheet it owns — before the list could even start
+ * filtering, which is what made typing in a long playlist stall. Here the
+ * characters land in the field at once, and the screen hears about them
+ * when there is a word worth filtering by. Clearing reports at once.
+ */
+export const FilterField = memo(function FilterField({
+  onChange,
+  placeholder,
+  delayMs = 180,
+  resetKey,
+}: {
+  onChange: (value: string) => void;
+  placeholder: string;
+  delayMs?: number;
+  /** Changing this empties the field — a new album, a new playlist. */
+  resetKey?: string | number;
+}) {
+  const [text, setText] = useState('');
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+
+  useEffect(() => {
+    setText('');
+    onChangeRef.current('');
+  }, [resetKey]);
+
+  useEffect(() => {
+    if (text === '') {
+      onChangeRef.current('');
+      return;
+    }
+    const timer = setTimeout(() => onChangeRef.current(text), delayMs);
+    return () => clearTimeout(timer);
+  }, [text, delayMs]);
+
+  return <SearchField value={text} onChangeText={setText} placeholder={placeholder} />;
+});

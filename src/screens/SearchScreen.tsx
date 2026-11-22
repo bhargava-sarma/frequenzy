@@ -12,7 +12,6 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useActiveMediaItem, useIsPlaying } from '@rntp/player';
 
 import { AlbumActionsSheet } from '../components/AlbumActionsSheet';
 import { AlbumTile } from '../components/AlbumTile';
@@ -34,10 +33,9 @@ import { TrackRow } from '../components/TrackRow';
 import { clearRecentSearches, getRecentSearches, recordSearch } from '../data/recentSearches';
 import { useArtwork } from '../hooks/useArtwork';
 import { useLibraryData } from '../hooks/useLibraryData';
-import { trackItemLayout } from '../hooks/usePagedList';
+import { HEAVY_LIST_PROPS, trackItemLayout } from '../hooks/usePagedList';
 import type { SearchStackParamList } from '../navigation/types';
 import { DECADES, EmptyMixError, decadeLabel, playMix } from '../player/mixes';
-import { extrasOf } from '../player/trackMapping';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { useServerStore } from '../store/useServerStore';
 import { errorMessage, toast } from '../store/useToastStore';
@@ -89,9 +87,6 @@ export function SearchScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<SearchStackParamList>>();
   const artworkUrl = useArtwork();
   const { width } = useWindowDimensions();
-  const activeItem = useActiveMediaItem();
-  const isPlaying = useIsPlaying();
-  const activeId = extrasOf(activeItem)?.subsonicId;
 
   const client = useServerStore((state) => state.client);
   const playTrackNow = usePlayerStore((state) => state.playTrackNow);
@@ -239,8 +234,6 @@ export function SearchScreen() {
       <TrackRow
         song={item}
         index={index}
-        active={item.id === activeId}
-        playing={isPlaying}
         last={index === songs.length - 1}
         subtitle="artistAlbum"
         onPlay={handlePlay}
@@ -248,7 +241,7 @@ export function SearchScreen() {
         onQueue={handleQueue}
       />
     ),
-    [activeId, isPlaying, songs.length, handlePlay, handleQueue],
+    [songs.length, handlePlay, handleQueue],
   );
 
   const shelfTile = Math.round((width - layout.screenPadding * 2 - space[3] * 2) / 2.6);
@@ -421,8 +414,7 @@ export function SearchScreen() {
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           contentContainerStyle={styles.list}
-          initialNumToRender={12}
-          windowSize={9}
+          {...HEAVY_LIST_PROPS}
         />
       </>
     );
@@ -529,8 +521,6 @@ export function SearchScreen() {
                     key={song.id}
                     song={song}
                     index={index}
-                    active={song.id === activeId}
-                    playing={isPlaying}
                     last={index === Math.min(5, songs.length) - 1}
                     subtitle="artistAlbum"
                     onPlay={handlePlay}

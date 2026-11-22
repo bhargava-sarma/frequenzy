@@ -54,8 +54,10 @@ export function usePagedList<T>(items: T[], firstPage = FIRST_PAGE): PagedList<T
 /**
  * FlatList tuning for row lists in this app.
  *
- * The defaults assume cheap rows. These are not — each is a gesture detector
- * with animated children — so the window is kept tight.
+ * The defaults keep 21 screens of rows mounted around the visible one. Each
+ * row here holds a gesture detector, so the window is kept to five screens:
+ * the two either side of what's visible are plenty for a flick, and rows
+ * are built in small batches so a scroll never waits on a big one.
  *
  * `removeClippedSubviews` is deliberately absent, here and on every list in
  * the app. On Android it detaches offscreen rows from the native view tree,
@@ -67,9 +69,9 @@ export function usePagedList<T>(items: T[], firstPage = FIRST_PAGE): PagedList<T
  */
 export const HEAVY_LIST_PROPS = {
   initialNumToRender: 12,
-  maxToRenderPerBatch: 8,
-  updateCellsBatchingPeriod: 50,
-  windowSize: 7,
+  maxToRenderPerBatch: 6,
+  updateCellsBatchingPeriod: 40,
+  windowSize: 5,
 } as const;
 
 /**

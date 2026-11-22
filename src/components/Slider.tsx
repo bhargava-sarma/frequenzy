@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useRef, useState, useMemo } from 'react';
 import { StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
@@ -48,6 +48,11 @@ export function Slider({
   const [width, setWidth] = useState(0);
   const last = useRef(value);
 
+  // Through a ref: callers pass a fresh arrow each render, and a gesture
+  // rebuilt mid-drag — every step re-renders the settings — can be dropped.
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+
   const commit = useCallback(
     (x: number) => {
       if (width <= 0) return;
@@ -59,18 +64,23 @@ export function Slider({
       if (next !== last.current) {
         last.current = next;
         haptics.tick();
-        onChange(next);
+        onChangeRef.current(next);
       }
     },
-    [width, min, max, step, onChange],
+    [width, min, max, step],
   );
 
-  const pan = Gesture.Pan()
-    .enabled(!disabled && width > 0)
-    .minDistance(0)
-    .hitSlop({ top: 10, bottom: 10 })
-    .onBegin((event) => runOnJS(commit)(event.x))
-    .onUpdate((event) => runOnJS(commit)(event.x));
+  const enabled = !disabled && width > 0;
+  const pan = useMemo(
+    () =>
+      Gesture.Pan()
+        .enabled(enabled)
+        .minDistance(0)
+        .hitSlop({ top: 10, bottom: 10 })
+        .onBegin((event) => runOnJS(commit)(event.x))
+        .onUpdate((event) => runOnJS(commit)(event.x)),
+    [enabled, commit],
+  );
 
   const ratio = max > min ? Math.min(1, Math.max(0, (value - min) / (max - min))) : 0;
   last.current = value;

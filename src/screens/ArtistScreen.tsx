@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { RefreshControl, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
-import Animated from 'react-native-reanimated';
+import { Animated, RefreshControl, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useActiveMediaItem, useIsPlaying } from '@rntp/player';
 
 import { AlbumActionsSheet } from '../components/AlbumActionsSheet';
 import { AlbumTile } from '../components/AlbumTile';
@@ -24,12 +22,12 @@ import { SectionHeader } from '../components/SectionHeader';
 import { DOCK_CLEARANCE } from '../components/TabBar';
 import { TrackActionsSheet } from '../components/TrackActionsSheet';
 import { TrackRow } from '../components/TrackRow';
+import { HEAVY_LIST_PROPS } from '../hooks/usePagedList';
 import { useArtwork } from '../hooks/useArtwork';
 import { useLibraryData } from '../hooks/useLibraryData';
 import { usePullRefresh } from '../hooks/usePullRefresh';
 import type { AnyStackParamList } from '../navigation/types';
 import { EmptyMixError, startArtistRadio } from '../player/mixes';
-import { extrasOf } from '../player/trackMapping';
 import { useFavoritesStore, useStarred } from '../store/useFavoritesStore';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { useServerStore } from '../store/useServerStore';
@@ -76,9 +74,6 @@ export function ArtistScreen() {
   const shufflePlay = usePlayerStore((state) => state.shufflePlay);
   const addToQueue = usePlayerStore((state) => state.addToQueue);
   const setStarred = useFavoritesStore((state) => state.setStarred);
-  const activeItem = useActiveMediaItem();
-  const isPlaying = useIsPlaying();
-  const activeId = extrasOf(activeItem)?.subsonicId;
 
   const { data, loading, error, refresh } = useLibraryData(
     (repo, forceRefresh) => repo.getArtist(artistId, { forceRefresh }),
@@ -231,8 +226,6 @@ export function ArtistScreen() {
               key={song.id}
               song={song}
               index={index}
-              active={song.id === activeId}
-              playing={isPlaying}
               last={index === topSongs.length - 1}
               subtitle="album"
               onPlay={playTop}
@@ -314,8 +307,7 @@ export function ArtistScreen() {
           />
         )}
         contentContainerStyle={styles.list}
-        initialNumToRender={6}
-        windowSize={9}
+        {...HEAVY_LIST_PROPS}
         refreshControl={<RefreshControl {...pull} progressViewOffset={navHeight} />}
       />
 

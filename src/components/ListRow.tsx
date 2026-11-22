@@ -8,6 +8,7 @@ import { PlayingBars } from './PlayingBars';
 import { hairline, layout, space, type, withAlpha } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import type { TrackDownloadStatus } from '../store/useDownloadStore';
+import { useIsTrackActive } from '../store/usePlaybackStore';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import { haptics } from '../utils/haptics';
 
@@ -21,6 +22,10 @@ import { haptics } from '../utils/haptics';
  *
  * Every prop is a primitive or a stable callback so the memo holds; callers
  * pass handlers that take the row's subject as an argument.
+ *
+ * A track row is given its `trackId` and works out for itself whether it is
+ * the one playing, so a new track redraws the two rows that changed rather
+ * than every screen and every list holding a row.
  */
 export interface ListRowProps {
   title: string;
@@ -31,10 +36,10 @@ export interface ListRowProps {
   leading?: 'artwork' | 'index' | 'none';
   /** Shown in the index slot, 1-based. */
   index?: number;
-  /** The row is the current track. */
+  /** The row is the current track (for rows that aren't tracks: the queue's own idea). */
   active?: boolean;
-  /** And audio is running — animates the mark. */
-  playing?: boolean;
+  /** The track this row shows; it then knows by itself when it is playing. */
+  trackId?: string;
   /** Mono figure on the right: a duration, a count. */
   trailingText?: string;
   starred?: boolean;
@@ -60,8 +65,8 @@ export const ListRow = memo(function ListRow({
   round = false,
   leading = 'artwork',
   index,
-  active = false,
-  playing = false,
+  active: activeProp = false,
+  trackId,
   trailingText,
   starred = false,
   download = null,
@@ -75,6 +80,8 @@ export const ListRow = memo(function ListRow({
 }: ListRowProps) {
   const color = useTheme();
   const styles = useThemedStyles(makeStyles);
+  const isCurrent = useIsTrackActive(trackId);
+  const active = activeProp || isCurrent;
 
   return (
     <Pressable
@@ -108,7 +115,7 @@ export const ListRow = memo(function ListRow({
           <Artwork uri={artworkUri} size={layout.thumbSize} round={round} />
           {active && (
             <View style={[styles.artBadge, round && styles.artBadgeRound]}>
-              <PlayingBars playing={playing} color={color.accentInk} size={12} />
+              <PlayingBars color={color.accentInk} size={12} />
             </View>
           )}
         </View>
@@ -117,7 +124,7 @@ export const ListRow = memo(function ListRow({
       {leading === 'index' && (
         <View style={styles.indexSlot}>
           {active ? (
-            <PlayingBars playing={playing} color={color.accent} size={14} />
+            <PlayingBars color={color.accent} size={14} />
           ) : (
             <Text style={styles.index} numberOfLines={1}>
               {index != null ? String(index).padStart(2, '0') : ''}

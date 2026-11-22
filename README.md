@@ -25,6 +25,7 @@ Built with Expo and React Native, against the Subsonic API (1.16.1).
 - [Lyrics and romanisation](#lyrics-and-romanisation)
 - [Offline downloads](#offline-downloads)
 - [When something breaks](#when-something-breaks)
+- [Staying smooth](#staying-smooth)
 - [Design](#design)
 - [Getting started](#getting-started)
 - [Updating the app](#updating-the-app)
@@ -103,8 +104,8 @@ the original — transliteration, not translation, so the line stays singable
 rather than becoming prose you can't follow. See
 [Lyrics and romanisation](#lyrics-and-romanisation).
 
-**Settings** — Auto, light, dark and OLED themes; accent from the artwork or a
-fixed preset; the player face; how strong the ambient colour wash is; haptics,
+**Settings** — Auto, light, dark and OLED themes; an accent colour, with the
+player and the background wash taking theirs from the artwork; the player face; how strong the ambient colour wash is; haptics,
 reduce motion, scrobbling, queue restore, the tab to open on; downloads (space
 used, pause, retry, home network only, remove all); server status with a
 library rescan; cache and history clearing; and the last error, if any, with a
@@ -285,6 +286,34 @@ leaves the device unless that key is pressed.
 
 ---
 
+## Staying smooth
+
+Most of what made earlier builds stutter came from a few patterns, now
+avoided by design:
+
+- **The player is read in one place.** Every read from the native player on
+  Android is synchronous and waits, with no timeout, for the UI thread — the
+  thread busiest exactly while you scroll. Its state is mirrored into a store
+  (`player/playbackSync.ts`) from its events, read directly only when an event
+  says something changed, and position is a clock rather than a stream of
+  reads. Components never call the player's getters or its hooks.
+- **Rows subscribe to themselves.** A row knows whether it is the playing
+  track; a new track redraws two rows, not every screen holding a list. The
+  level bars read play state themselves and hold still on screens out of view.
+- **Nothing changes app-wide per track.** The theme the whole app reads
+  changes only with Settings; the cover's colour reaches the player and the
+  wash, which redraw on their own.
+- **Lists are cheap per row.** A swipeable row at rest holds one animated
+  style; its gesture is built once; the reveal behind it exists only during a
+  drag. Lists keep five screens of rows mounted, not twenty-one.
+- **Scroll effects never touch JavaScript.** The collapsing bar and hero
+  backdrop are driven natively from the scroll offset.
+- **Nothing animates forever.** No looping animation runs for the length of
+  a track or a download; progress lines step once a second.
+- **Every gesture is built once** per component, never on each render.
+
+---
+
 ## Design
 
 The design language is called **FQ-1**: the app drawn as a piece of portable
@@ -299,9 +328,11 @@ audio hardware. Three influences, each with a job.
 - **Retro** for the player: a vinyl record that spins with playback and a
   cassette whose reels wind as the track runs, alongside the plain cover.
 - **Artwork colour** for mood. The cover is decoded in pure JS and turned into
-  an accent and a still, four-colour wash behind the screen. Ink is chosen by
-  *measured* WCAG contrast rather than a lightness threshold, so text stays
-  legible against any cover. It can be pinned to a preset in Settings.
+  a still, four-colour wash behind every screen and the player's accent. Ink
+  is chosen by *measured* WCAG contrast rather than a lightness threshold, so
+  text stays legible against any cover. The rest of the app keeps the accent
+  chosen in Settings — re-colouring every control on every album change
+  re-rendered the whole app each time.
 
 Three finishes: **Aluminium** (light), **Graphite** (dark) and **OLED** (true
 black). The player, lyrics and queue are always dark, whatever the theme.
@@ -462,12 +493,13 @@ src/
   navigation/   Stacks, tabs, route types
   offline/      Downloads: the queue and worker, the on-device index,
                 and the native file-system bridge
-  player/       Setup, track mapping, scrobbler and its offline queue,
-                mixes and radio, queue persistence, stream repair
+  player/       Setup, the playback mirror, track mapping, scrobbler and
+                its offline queue, mixes and radio, queue persistence,
+                stream repair
   screens/      One file per surface
   storage/      Keystore credentials, AsyncStorage cache
-  store/        Zustand stores (player, playlists, server, settings,
-                favourites, downloads, toasts, UI)
+  store/        Zustand stores (playback, player, playlists, server,
+                settings, favourites, downloads, toasts, UI)
   theme/        Tokens, provider, artwork colour extraction
   utils/        Formatting, haptics, romanisation
 scripts/        Node verification scripts

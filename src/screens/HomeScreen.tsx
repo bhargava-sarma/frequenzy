@@ -9,7 +9,6 @@ import {
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useActiveMediaItem, useIsPlaying } from '@rntp/player';
 
 import { AlbumActionsSheet } from '../components/AlbumActionsSheet';
 import { IconButton } from '../components/IconButton';
@@ -47,7 +46,6 @@ import { useLibraryData } from '../hooks/useLibraryData';
 import { usePullRefresh } from '../hooks/usePullRefresh';
 import { LIKED_PLAYLIST_ID, type HomeStackParamList, type RootStackParamList } from '../navigation/types';
 import { DECADES, EmptyMixError, decadeLabel, playMix, playOutline, shuffleLibrary } from '../player/mixes';
-import { extrasOf } from '../player/trackMapping';
 import { usePlaylistStore } from '../store/usePlaylistStore';
 import { useServerStore } from '../store/useServerStore';
 import { errorMessage, toast } from '../store/useToastStore';
@@ -86,9 +84,6 @@ export function HomeScreen() {
   const rootNavigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const artworkUrl = useArtwork();
   const { width } = useWindowDimensions();
-  const activeItem = useActiveMediaItem();
-  const isPlaying = useIsPlaying();
-  const activeId = extrasOf(activeItem)?.subsonicId;
   const info = useServerStore((state) => state.info);
 
   const tileSize = Math.round((width - layout.screenPadding * 2 - space[3] * 2) / 2.35);
@@ -335,8 +330,7 @@ export function HomeScreen() {
                   title={track.title}
                   subtitle={track.artist}
                   artworkUri={artworkUrl(track.coverArt)}
-                  active={track.songId === activeId}
-                  playing={isPlaying}
+                  trackId={track.songId}
                   trailingText={`${track.plays}×`}
                   last={index === chart.length - 1}
                   // A track row plays, here as everywhere else; the album is

@@ -1,9 +1,9 @@
 import { useEffect } from 'react';
-import { useActiveMediaItem } from '@rntp/player';
 
 import { localThumbUri } from '../offline/downloads';
 import { extrasOf } from '../player/trackMapping';
 import { useDownloadStore } from '../store/useDownloadStore';
+import { useActiveItem } from '../store/usePlaybackStore';
 import { useServerStore } from '../store/useServerStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { extractArtworkColors } from '../theme/artworkColor';
@@ -22,7 +22,7 @@ import { useArtworkColorStore } from '../theme/ThemeProvider';
  * its own small cover, read from the device with or without a connection.
  */
 export function ArtworkAccentBridge() {
-  const activeItem = useActiveMediaItem();
+  const activeItem = useActiveItem();
   const client = useServerStore((state) => state.client);
   const connected = useServerStore((state) => state.connection != null);
   const enabled = useSettingsStore((state) => state.accentMode === 'artwork');

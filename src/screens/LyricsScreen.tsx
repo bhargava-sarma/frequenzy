@@ -1,7 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import TrackPlayer, { useActiveMediaItem, useProgress } from '@rntp/player';
 
 import { activeLineIndex } from '../api/lrclib';
 import { AmbientBackground } from '../components/AmbientBackground';
@@ -22,7 +21,9 @@ import { Label } from '../components/Label';
 import { PanelHandle } from '../components/PanelHandle';
 import { EmptyState, LoadingState } from '../components/ScreenState';
 import { useLyrics } from '../hooks/useLyrics';
+import { requestPrecision, seekTo } from '../player/playbackSync';
 import { extrasOf } from '../player/trackMapping';
+import { useActiveItem, usePlaybackPosition } from '../store/usePlaybackStore';
 import { usePlayerUiStore } from '../store/usePlayerUiStore';
 import { useSettingsStore, type LyricsSize } from '../store/useSettingsStore';
 import { layout, space, type } from '../theme/tokens';
@@ -64,9 +65,12 @@ export function LyricsScreen() {
   const insets = useSafeAreaInsets();
   const closeLyrics = usePlayerUiStore((state) => state.closeLyrics);
 
-  const activeItem = useActiveMediaItem();
+  const activeItem = useActiveItem();
   const trackId = extrasOf(activeItem)?.subsonicId ?? '';
-  const { position } = useProgress(TICK_SECONDS);
+  // From the playback clock, which is re-read from the player more often
+  // while lyrics are open so a line changes on its word.
+  const { position } = usePlaybackPosition(TICK_SECONDS * 1000);
+  useEffect(() => requestPrecision(), []);
   const { status, lyrics, retry } = useLyrics(activeItem);
 
   const size = useSettingsStore((state) => state.lyricsSize);
@@ -124,7 +128,7 @@ export function LyricsScreen() {
     (seconds: number) => {
       manualUntil.current = 0;
       setFollowing(true);
-      TrackPlayer.seekTo(Math.max(0, seconds - offset));
+      seekTo(Math.max(0, seconds - offset));
     },
     [offset],
   );

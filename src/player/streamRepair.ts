@@ -1,8 +1,10 @@
 import TrackPlayer, { Event, type MediaItem } from '@rntp/player';
 
 import { localCopy, onTrackDownloaded } from '../offline/downloads';
+import { positionNow, usePlaybackStore } from '../store/usePlaybackStore';
 import { useServerStore } from '../store/useServerStore';
 import { toast } from '../store/useToastStore';
+import { seekTo } from './playbackSync';
 import { isLocalItem } from './trackMapping';
 
 /**
@@ -44,19 +46,36 @@ function rebasedItem(item: MediaItem, base: string): MediaItem | null {
   return { ...item, url, artworkUrl };
 }
 
-function rebaseQueue(base: string, includeActive: boolean) {
+/**
+ * Replaces queued items with `transform`'s result, all but the playing one.
+ *
+ * The mirrored queue is checked first, so the common case — nothing to
+ * change — costs no call into the player. Only when something does need
+ * replacing is the queue read fresh, and each replacement is checked
+ * against that fresh copy by id, so a queue that moved since the mirror
+ * was taken is never written at the wrong index.
+ */
+function replaceQueued(transform: (item: MediaItem) => MediaItem | null): void {
+  const mirror = usePlaybackStore.getState();
+  if (!mirror.queue.some((item, index) => index !== mirror.index && transform(item) != null)) return;
+
   let queue: MediaItem[];
+  let active: number | null;
   try {
     queue = TrackPlayer.getQueue();
+    active = TrackPlayer.getActiveMediaItemIndex();
   } catch {
     return;
   }
-  const active = TrackPlayer.getActiveMediaItemIndex();
   queue.forEach((item, index) => {
-    if (!includeActive && index === active) return;
-    const next = rebasedItem(item, base);
-    if (next) TrackPlayer.replaceMediaItem(index, next);
+    if (index === active) return;
+    const next = transform(item);
+    if (next && next.mediaId === item.mediaId) TrackPlayer.replaceMediaItem(index, next);
   });
+}
+
+function rebaseQueue(base: string) {
+  replaceQueued((item) => rebasedItem(item, base));
 }
 
 /** The same item pointed at its downloaded file, or null if there is none. */
@@ -77,19 +96,7 @@ function localizedItem(item: MediaItem): MediaItem | null {
  * one, which is already buffered and would restart if replaced.
  */
 export function localizeQueue(): void {
-  let queue: MediaItem[];
-  let active: number | null | undefined;
-  try {
-    queue = TrackPlayer.getQueue();
-    active = TrackPlayer.getActiveMediaItemIndex();
-  } catch {
-    return;
-  }
-  queue.forEach((item, index) => {
-    if (index === active) return;
-    const next = localizedItem(item);
-    if (next) TrackPlayer.replaceMediaItem(index, next);
-  });
+  replaceQueued(localizedItem);
 }
 
 /** The next queued item after `from` that plays from the device. */
@@ -124,7 +131,7 @@ export function startStreamRepair(onUnrecoverable: (message: string) => void): (
     const base = state.connection?.url ?? null;
     if (!base || base === lastBase) return;
     lastBase = base;
-    rebaseQueue(base, false);
+    rebaseQueue(base);
   });
 
   // Coalesced: an album finishing downloads a track every few seconds, and
@@ -142,8 +149,10 @@ export function startStreamRepair(onUnrecoverable: (message: string) => void): (
 
   const errorSub = TrackPlayer.addEventListener(Event.PlaybackError, (event) => {
     void (async () => {
-      const item = TrackPlayer.getActiveMediaItem();
-      const index = TrackPlayer.getActiveMediaItemIndex();
+      // From the mirror: an error is no moment to wait on the main thread.
+      const mirror = usePlaybackStore.getState();
+      const item = mirror.item;
+      const index = mirror.index >= 0 ? mirror.index : null;
       const key = item?.mediaId ?? '';
       const last = retried.get(key) ?? 0;
 
@@ -152,14 +161,9 @@ export function startStreamRepair(onUnrecoverable: (message: string) => void): (
       if (item && index != null) {
         const local = localizedItem(item);
         if (local) {
-          let at = 0;
-          try {
-            at = TrackPlayer.getProgress().position;
-          } catch {
-            at = 0;
-          }
+          const at = positionNow(mirror);
           TrackPlayer.replaceMediaItem(index, local);
-          if (at > 1) TrackPlayer.seekTo(at);
+          if (at > 1) seekTo(at);
           TrackPlayer.play();
           return;
         }
@@ -179,19 +183,15 @@ export function startStreamRepair(onUnrecoverable: (message: string) => void): (
 
       // Where it broke off. A re-pointed item is a new source and starts
       // from the top, so the place has to be carried over by hand.
-      let resumeAt = 0;
-      try {
-        resumeAt = TrackPlayer.getProgress().position;
-      } catch {
-        resumeAt = 0;
-      }
+      const resumeAt = positionNow(mirror);
 
       try {
         client.invalidateConnection();
         const connection = await client.ensureConnection(true);
 
         // The queue may have moved while the probe ran. Repairing by a stale
-        // index would overwrite whatever track is at that position now.
+        // index would overwrite whatever track is at that position now, so
+        // this one look is a direct read.
         const now = TrackPlayer.getActiveMediaItem();
         const nowIndex = TrackPlayer.getActiveMediaItemIndex();
         if (!now || nowIndex == null || now.mediaId !== item.mediaId) return;
@@ -199,7 +199,7 @@ export function startStreamRepair(onUnrecoverable: (message: string) => void): (
         const next = rebasedItem(now, connection.url);
         if (next) {
           TrackPlayer.replaceMediaItem(nowIndex, next);
-          if (resumeAt > 1) TrackPlayer.seekTo(resumeAt);
+          if (resumeAt > 1) seekTo(resumeAt);
         } else {
           // Same address: the failure was transient. Re-prepare in place.
           TrackPlayer.retry();
@@ -208,8 +208,13 @@ export function startStreamRepair(onUnrecoverable: (message: string) => void): (
       } catch {
         // Out of reach. If something further on is downloaded, play that
         // rather than stopping dead at the first track that needs the server.
-        const now = TrackPlayer.getActiveMediaItemIndex();
-        const skipTo = now == null ? null : nextLocalIndex(now);
+        let current: number | null = null;
+        try {
+          current = TrackPlayer.getActiveMediaItemIndex();
+        } catch {
+          current = null;
+        }
+        const skipTo = current == null ? null : nextLocalIndex(current);
         if (skipTo != null) {
           TrackPlayer.skipToIndex(skipTo);
           TrackPlayer.play();

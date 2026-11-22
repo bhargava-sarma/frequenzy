@@ -1,9 +1,7 @@
-import { useCallback, useDeferredValue, useMemo, useState } from 'react';
-import { RefreshControl, StyleSheet, View, useWindowDimensions } from 'react-native';
-import Animated from 'react-native-reanimated';
+import { useCallback, useMemo, useState } from 'react';
+import { Animated, RefreshControl, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useActiveMediaItem, useIsPlaying } from '@rntp/player';
 
 import { AlbumActionsSheet } from '../components/AlbumActionsSheet';
 import { useCollapsingHeader, useNavBarHeight } from '../components/CollapsingHeader';
@@ -22,18 +20,19 @@ import { Keycap, KeyRow } from '../components/Keycap';
 import { Label } from '../components/Label';
 import { DetailScaffold } from '../components/Scaffold';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenState';
-import { SearchField } from '../components/SearchField';
+import { FilterField } from '../components/SearchField';
 import { Shelf } from '../components/Shelf';
 import { DOCK_CLEARANCE } from '../components/TabBar';
 import { TrackActionsSheet } from '../components/TrackActionsSheet';
 import { TrackRow } from '../components/TrackRow';
+import { HEAVY_LIST_PROPS } from '../hooks/usePagedList';
 import { useArtwork } from '../hooks/useArtwork';
 import { useLibraryData } from '../hooks/useLibraryData';
 import { usePullRefresh } from '../hooks/usePullRefresh';
 import type { AlbumDetail } from '../data/libraryRepository';
 import type { AnyStackParamList } from '../navigation/types';
-import { downloadedAlbum } from '../offline/downloads';
-import { formatPlate, extrasOf } from '../player/trackMapping';
+import { downloadedAlbum, knownOffline } from '../offline/downloads';
+import { formatPlate } from '../player/trackMapping';
 import { useFavoritesStore, useStarred } from '../store/useFavoritesStore';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { toast } from '../store/useToastStore';
@@ -59,20 +58,19 @@ export function AlbumScreen() {
   const shufflePlay = usePlayerStore((state) => state.shufflePlay);
   const addToQueue = usePlayerStore((state) => state.addToQueue);
   const setStarred = useFavoritesStore((state) => state.setStarred);
-  const activeItem = useActiveMediaItem();
-  const isPlaying = useIsPlaying();
-  const activeId = extrasOf(activeItem)?.subsonicId;
 
   /**
    * Out of reach of the server, an album that is downloaded — whole or in
-   * part — still opens, built from what is on the device. Marked offline so
-   * its partial track list is never mistaken for the album's real one.
+   * part — still opens, built from what is on the device. Known to be
+   * offline, that copy is used straight away rather than after a probe of
+   * every address. Marked offline so its partial track list is never
+   * mistaken for the album's real one.
    */
   const { data, loading, error, refresh } = useLibraryData(
-    (library, forceRefresh): Promise<AlbumDetail & { offline?: boolean }> =>
-      library.getAlbum(albumId, { forceRefresh }).catch((cause: unknown) => {
+    (library, forceRefresh): Promise<AlbumDetail & { offline?: boolean }> => {
+      const fromDevice = (): (AlbumDetail & { offline: true }) | null => {
         const saved = downloadedAlbum(albumId);
-        if (!saved) throw cause;
+        if (!saved) return null;
         const first = saved.songs[0];
         return {
           offline: true,
@@ -87,7 +85,17 @@ export function AlbumScreen() {
           },
           songs: saved.songs,
         };
-      }),
+      };
+      if (!forceRefresh && knownOffline()) {
+        const saved = fromDevice();
+        if (saved) return Promise.resolve(saved);
+      }
+      return library.getAlbum(albumId, { forceRefresh }).catch((cause: unknown) => {
+        const saved = fromDevice();
+        if (!saved) throw cause;
+        return saved;
+      });
+    },
     [albumId],
   );
   // Albums are served from a day-long cache; pulling is how a retagged or
@@ -126,8 +134,10 @@ export function AlbumScreen() {
     [more.data, albumId],
   );
 
+  /** The filter as typed, a beat after typing pauses (see FilterField). */
   const [filter, setFilter] = useState('');
-  const deferredFilter = useDeferredValue(filter.trim().toLowerCase());
+  const onFilter = useCallback((value: string) => setFilter(value.trim().toLowerCase()), []);
+  const deferredFilter = filter;
   const [trackTarget, setTrackTarget] = useState<Child | null>(null);
   const [albumTarget, setAlbumTarget] = useState<AlbumSummary | null>(null);
 
@@ -156,7 +166,11 @@ export function AlbumScreen() {
     return out;
   }, [visible, multiDisc]);
 
-  const source = album ? { kind: 'album' as const, label: album.name } : undefined;
+  const albumTitle = album?.name;
+  const source = useMemo(
+    () => (albumTitle ? { kind: 'album' as const, label: albumTitle } : undefined),
+    [albumTitle],
+  );
 
   const handlePlay = useCallback(
     (index: number) => toast.guard(playNow(visible, index, source)),
@@ -178,7 +192,9 @@ export function AlbumScreen() {
   const title = album?.name ?? albumName ?? 'Album';
   const tileSize = Math.round((width - layout.screenPadding * 2 - space[3] * 2) / 2.35);
 
-  const hero = (
+  // Built once per change to what it shows: the list re-renders its header
+  // whenever it is handed a new one.
+  const hero = useMemo(() => (
     <View>
       <DetailHero
         artworkUri={artworkUrl(album?.coverArt, 600)}
@@ -240,11 +256,28 @@ export function AlbumScreen() {
       />
       {songs.length > MIN_ROWS_FOR_FILTER && (
         <View style={styles.filter}>
-          <SearchField value={filter} onChangeText={setFilter} placeholder="Find in album" />
+          <FilterField onChange={onFilter} placeholder="Find in album" resetKey={albumId} />
         </View>
       )}
     </View>
-  );
+  ), [
+    artworkUrl,
+    album,
+    offline,
+    title,
+    songs,
+    total,
+    plate,
+    genre,
+    navigation,
+    playNow,
+    shufflePlay,
+    addToQueue,
+    source,
+    downloadInput,
+    onFilter,
+    albumId,
+  ]);
 
   const footer =
     moreAlbums.length > 0 ? (
@@ -312,8 +345,6 @@ export function AlbumScreen() {
             <TrackRow
               song={item.song}
               index={item.index}
-              active={item.song.id === activeId}
-              playing={isPlaying}
               last={item.index === visible.length - 1}
               leading="index"
               // The album's own artist on every row is noise; only a guest
@@ -326,8 +357,7 @@ export function AlbumScreen() {
           )
         }
         contentContainerStyle={styles.list}
-        initialNumToRender={16}
-        windowSize={11}
+        {...HEAVY_LIST_PROPS}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         refreshControl={<RefreshControl {...pull} progressViewOffset={navHeight} />}

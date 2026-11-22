@@ -1,7 +1,6 @@
 import { memo, useMemo, useState, type ReactNode } from 'react';
-import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Animated, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { Image } from 'expo-image';
-import Animated, { useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 
 import { Artwork } from './Artwork';
@@ -118,20 +117,21 @@ export const DetailHero = memo(function DetailHero({
  * wash, rather than inside the list: there, its fade to the ground colour
  * ended in a visible seam where the grid and wash resumed below it. Here
  * those layers run continuously over it. It moves exactly with the list, as
- * if printed on the page — no parallax, no stretch.
+ * if printed on the page — no parallax, no stretch — driven natively from
+ * the list's own scroll offset (see CollapsingHeader).
  */
 export const HeroBackdrop = memo(function HeroBackdrop({
   uri,
   scrollY,
 }: {
   uri?: string | null;
-  scrollY: SharedValue<number>;
+  scrollY: Animated.Value;
 }) {
   const color = useTheme();
   const { reduceMotion } = useThemeControls();
   const fadeId = useSvgId('herofade');
 
-  const style = useAnimatedStyle(() => ({ transform: [{ translateY: -scrollY.value }] }));
+  const style = useMemo(() => ({ transform: [{ translateY: Animated.multiply(scrollY, -1) }] }), [scrollY]);
   const cacheKey = artworkCacheKey(uri);
   const source = useMemo(() => (uri ? { uri, cacheKey } : null), [uri, cacheKey]);
 

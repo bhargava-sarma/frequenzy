@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
@@ -108,15 +108,20 @@ export function ToastHost() {
     setShown(null);
   }
 
-  const pan = Gesture.Pan()
-    .activeOffsetY([-6, 6])
-    .onUpdate((event) => {
-      dragY.value = Math.min(0, event.translationY);
-    })
-    .onEnd((event, success) => {
-      if (success && (dragY.value < -24 || event.velocityY < -500)) runOnJS(dismiss)(undefined);
-      else dragY.value = withSpring(0, springs.settle);
-    });
+  const settle = springs.settle;
+  const pan = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetY([-6, 6])
+        .onUpdate((event) => {
+          dragY.value = Math.min(0, event.translationY);
+        })
+        .onEnd((event, success) => {
+          if (success && (dragY.value < -24 || event.velocityY < -500)) runOnJS(dismiss)(undefined);
+          else dragY.value = withSpring(0, settle);
+        }),
+    [dragY, dismiss, settle],
+  );
 
   const style = useAnimatedStyle(() => ({
     opacity: progress.value,

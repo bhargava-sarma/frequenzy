@@ -191,6 +191,27 @@ export function collectionSongs(key: string): Child[] | null {
 }
 
 /**
+ * A downloaded collection as last seen: every track in its order, whether or
+ * not it has arrived yet — the records hold each track's details either
+ * way. For drawing an album or playlist the instant it opens.
+ */
+export function collectionSnapshot(key: string): { collection: OfflineCollection; songs: Child[] } | null {
+  const state = useDownloadStore.getState();
+  const collection = state.collections[key];
+  if (!collection) return null;
+  const songs = collection.songIds
+    .map((id) => state.tracks[id]?.song)
+    .filter((song): song is Child => song != null);
+  return { collection, songs };
+}
+
+/** Whether no server address is answering — known, not merely being re-checked. */
+export function knownOffline(): boolean {
+  const { connection, connecting } = useServerStore.getState();
+  return connection == null && !connecting;
+}
+
+/**
  * An album's downloaded tracks, whether it was downloaded whole or only some
  * of its tracks were — for showing the album with no server to ask.
  */

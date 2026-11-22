@@ -27,10 +27,15 @@ interface BoundaryProps {
   /**
    * Renders nothing on error instead of the panel — for small pieces whose
    * absence is better than a full-size error card: the mini player, the
-   * toast host. The error is still logged.
+   * toast host. The error is still logged, and the piece is put back a
+   * moment later: left empty, a mini player that hit one bad render stayed
+   * gone until the app was restarted.
    */
   silent?: boolean;
 }
+
+/** Silent retries back off: 1s, 3s, 10s, then every 30s. */
+const SILENT_RETRY_MS = [1000, 3000, 10_000, 30_000];
 
 interface BoundaryState {
   error: Error | null;
@@ -40,6 +45,9 @@ interface BoundaryState {
 
 export class ErrorBoundary extends Component<BoundaryProps, BoundaryState> {
   state: BoundaryState = { error: null, attempt: 0 };
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private failures = 0;
+  private lastFailure = 0;
 
   static getDerivedStateFromError(error: unknown): Partial<BoundaryState> {
     return { error: error instanceof Error ? error : new Error(String(error)) };
@@ -54,9 +62,24 @@ export class ErrorBoundary extends Component<BoundaryProps, BoundaryState> {
       componentStack: info.componentStack ?? undefined,
       fatal: false,
     });
+    if (this.props.silent) {
+      // A quiet minute resets the back-off.
+      if (Date.now() - this.lastFailure > 60_000) this.failures = 0;
+      this.lastFailure = Date.now();
+      const delay = SILENT_RETRY_MS[Math.min(this.failures, SILENT_RETRY_MS.length - 1)];
+      this.failures += 1;
+      if (this.retryTimer) clearTimeout(this.retryTimer);
+      this.retryTimer = setTimeout(this.retry, delay);
+    }
+  }
+
+  componentWillUnmount() {
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
   }
 
   private retry = () => {
+    this.retryTimer = null;
     this.setState((state) => ({ error: null, attempt: state.attempt + 1 }));
   };
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { BackHandler, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
@@ -106,23 +106,28 @@ function useRisingSurface(open: boolean, onDismiss: () => void) {
 
   const onLayout = startRise;
 
-  const pan = Gesture.Pan()
-    .activeOffsetY(24)
-    .failOffsetX([-20, 20])
-    .onUpdate((event) => {
-      dragY.value = Math.max(0, event.translationY);
-    })
-    .onEnd((event, success) => {
-      // A gesture the system took back is not a decision to close.
-      if (success && (dragY.value > DISMISS_DISTANCE || event.velocityY > DISMISS_VELOCITY)) {
-        // Hand the drag over to the slide-out, so it continues from here.
-        offset.value = offset.value + dragY.value;
-        dragY.value = 0;
-        runOnJS(onDismiss)();
-        return;
-      }
-      dragY.value = withSpring(0, springs.settle);
-    });
+  const settle = springs.settle;
+  const pan = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetY(24)
+        .failOffsetX([-20, 20])
+        .onUpdate((event) => {
+          dragY.value = Math.max(0, event.translationY);
+        })
+        .onEnd((event, success) => {
+          // A gesture the system took back is not a decision to close.
+          if (success && (dragY.value > DISMISS_DISTANCE || event.velocityY > DISMISS_VELOCITY)) {
+            // Hand the drag over to the slide-out, so it continues from here.
+            offset.value = offset.value + dragY.value;
+            dragY.value = 0;
+            runOnJS(onDismiss)();
+            return;
+          }
+          dragY.value = withSpring(0, settle);
+        }),
+    [dragY, offset, onDismiss, settle],
+  );
 
   const style = useAnimatedStyle(() => ({
     transform: [{ translateY: offset.value + dragY.value }],

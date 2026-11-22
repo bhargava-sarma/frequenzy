@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { RefreshControl, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import Animated from 'react-native-reanimated';
+import { Animated, RefreshControl, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useActiveMediaItem, useIsPlaying } from '@rntp/player';
 
 import { AlbumActionsSheet } from '../components/AlbumActionsSheet';
 import { AlbumTile } from '../components/AlbumTile';
@@ -19,12 +17,12 @@ import { DOCK_CLEARANCE } from '../components/TabBar';
 import { MIX_HUES } from '../components/Tiles';
 import { TrackActionsSheet } from '../components/TrackActionsSheet';
 import { TrackRow } from '../components/TrackRow';
+import { HEAVY_LIST_PROPS } from '../hooks/usePagedList';
 import { useArtwork } from '../hooks/useArtwork';
 import { useLibraryData } from '../hooks/useLibraryData';
 import { usePullRefresh } from '../hooks/usePullRefresh';
 import type { AnyStackParamList } from '../navigation/types';
 import { EmptyMixError, playGenre, playMix } from '../player/mixes';
-import { extrasOf } from '../player/trackMapping';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { useServerStore } from '../store/useServerStore';
 import { errorMessage, toast } from '../store/useToastStore';
@@ -71,9 +69,6 @@ export function GenreScreen() {
   const client = useServerStore((state) => state.client);
   const playNow = usePlayerStore((state) => state.playNow);
   const addToQueue = usePlayerStore((state) => state.addToQueue);
-  const activeItem = useActiveMediaItem();
-  const isPlaying = useIsPlaying();
-  const activeId = extrasOf(activeItem)?.subsonicId;
 
   const albums = useLibraryData((repo, forceRefresh) => repo.getAlbumsByGenre(genre, { forceRefresh }), [genre]);
   const pull = usePullRefresh(albums.loading, albums.refresh);
@@ -192,8 +187,6 @@ export function GenreScreen() {
               key={song.id}
               song={song}
               index={index}
-              active={song.id === activeId}
-              playing={isPlaying}
               last={index === songs.length - 1}
               subtitle="artistAlbum"
               onPlay={playSample}
@@ -238,8 +231,7 @@ export function GenreScreen() {
           />
         )}
         contentContainerStyle={styles.list}
-        initialNumToRender={6}
-        windowSize={9}
+        {...HEAVY_LIST_PROPS}
         refreshControl={<RefreshControl {...pull} progressViewOffset={navHeight} />}
       />
       <TrackActionsSheet visible={trackTarget != null} onClose={() => setTrackTarget(null)} song={trackTarget} />

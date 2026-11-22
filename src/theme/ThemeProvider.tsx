@@ -33,20 +33,26 @@ const IMMERSIVE_TERTIARY = '#96948E';
 /**
  * Live theme.
  *
- * Two contexts, split by how often they change and who cares:
+ * Three contexts, split by how often they change and who reads them:
  *
- *   - The theme context carries the palette and the few appearance
+ *   - The theme context carries the app's palette and the few appearance
  *     settings components draw with (ambient, grid, reduced motion). Nearly
- *     everything reads it; it changes when the theme flips or the accent
- *     moves to a new track — once, not per frame.
+ *     every component reads it, so it changes only when a setting does.
+ *   - The immersive context carries the player's palette, whose accent
+ *     follows the cover that's playing. Only <ImmersiveScope> reads it.
  *   - The artwork context carries the ambient mesh colours and the shared
- *     value that crossfades them. Only backgrounds read it, so a track
- *     change re-renders a handful of gradient views rather than the tree.
+ *     value that crossfades them. Only backgrounds read it.
+ *
+ * The artwork accent used to live in the app's palette. Every new album
+ * then handed every themed component a new palette — every row, key and
+ * label in every mounted tab re-rendered and rebuilt its styles, on every
+ * album change, mid-scroll or not. The cover's colour now reaches the
+ * player and the wash behind every screen, which redraw on their own, and
+ * the rest of the app keeps its accent until you change it in Settings.
  *
  * The player is always a dark, immersive face — over artwork colour, white
- * type is the only thing that reads everywhere — so the provider also
- * builds an "immersive" palette with the accent conditioned for a dark
- * ground, and <ImmersiveScope> swaps it in for everything inside it.
+ * type is the only thing that reads everywhere — so its palette has the
+ * accent conditioned for a dark ground.
  */
 
 // ---------------------------------------------------------------------------
@@ -95,8 +101,6 @@ interface ThemeContextValue {
   palette: Palette;
   name: ThemeName;
   resolved: ThemeMode;
-  /** The always-dark palette the player, queue and lyrics use. */
-  immersivePalette: Palette;
   ambientIntensity: number;
   reduceMotion: boolean;
   gridPaper: boolean;
@@ -110,12 +114,14 @@ const ThemeContext = createContext<ThemeContextValue>({
   palette: fallbackPalette,
   name: 'dark',
   resolved: 'dark',
-  immersivePalette: fallbackPalette,
   ambientIntensity: 0.8,
   reduceMotion: false,
   gridPaper: true,
   immersive: false,
 });
+
+/** The always-dark palette the player, queue and lyrics use. */
+const ImmersiveContext = createContext<Palette>(fallbackPalette);
 
 export interface MeshLayer {
   /** Conditioned for the app's theme — the wash behind lists. */
@@ -161,29 +167,27 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const mode = modeOf(name);
   const art = accentMode === 'artwork' ? artworkColors : null;
 
-  const accentFor = (m: ThemeMode): AccentPair =>
-    art?.[m].accent ?? presetAccent(accentPreset, m);
-
-  const light = accentFor('light');
-  const dark = accentFor('dark');
-
+  // The app's accent is the chosen preset; the cover's accent is the
+  // player's (see the note at the top of this file).
+  const preset = presetAccent(accentPreset, mode);
   const palette = useMemo(
-    () => buildPalette(name, mode === 'light' ? light : dark),
-    // The accent pairs are compared by value, so a re-render with the same
-    // colours keeps the same palette object — the style cache depends on it.
+    () => buildPalette(name, preset),
+    // Compared by value, so a re-render keeps the same palette object — the
+    // style cache depends on it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [name, mode, light.accent, light.accentInk, dark.accent, dark.accentInk],
+    [name, preset.accent, preset.accentInk],
   );
 
+  const immersiveAccent: AccentPair = art?.dark.accent ?? presetAccent(accentPreset, 'dark');
   const immersivePalette = useMemo(
     () => {
-      const base = mode === 'dark' ? palette : buildPalette('dark', dark);
+      const base = buildPalette('dark', immersiveAccent);
       // The immersive screens sit on the artwork's colours, not on near-black,
       // so the quieter text steps are lifted to keep their contrast there.
       return { ...base, labelSecondary: IMMERSIVE_SECONDARY, labelTertiary: IMMERSIVE_TERTIARY };
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [mode, palette, dark.accent, dark.accentInk],
+    [immersiveAccent.accent, immersiveAccent.accentInk],
   );
 
   // --- Mesh, crossfaded on the UI thread ----------------------------------
@@ -249,13 +253,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       palette,
       name,
       resolved: mode,
-      immersivePalette,
       ambientIntensity: ambient,
       reduceMotion,
       gridPaper,
       immersive: false,
     }),
-    [palette, name, mode, immersivePalette, ambient, reduceMotion, gridPaper],
+    [palette, name, mode, ambient, reduceMotion, gridPaper],
   );
 
   const artwork = useMemo<ArtworkContextValue>(
@@ -265,7 +268,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   return (
     <ThemeContext.Provider value={value}>
-      <ArtworkContext.Provider value={artwork}>{children}</ArtworkContext.Provider>
+      <ImmersiveContext.Provider value={immersivePalette}>
+        <ArtworkContext.Provider value={artwork}>{children}</ArtworkContext.Provider>
+      </ImmersiveContext.Provider>
     </ThemeContext.Provider>
   );
 }
@@ -278,15 +283,16 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
  */
 export function ImmersiveScope({ children }: { children: ReactNode }) {
   const parent = useContext(ThemeContext);
+  const immersivePalette = useContext(ImmersiveContext);
   const value = useMemo<ThemeContextValue>(
     () => ({
       ...parent,
-      palette: parent.immersivePalette,
-      name: parent.immersivePalette.name,
+      palette: immersivePalette,
+      name: immersivePalette.name,
       resolved: 'dark',
       immersive: true,
     }),
-    [parent],
+    [parent, immersivePalette],
   );
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
@@ -301,8 +307,8 @@ export function useTheme(): Palette {
 }
 
 /** Appearance values components draw with. Respects ImmersiveScope. */
-export function useThemeControls(): Omit<ThemeContextValue, 'palette' | 'immersivePalette'> {
-  const { palette: _p, immersivePalette: _i, ...controls } = useContext(ThemeContext);
+export function useThemeControls(): Omit<ThemeContextValue, 'palette'> {
+  const { palette: _p, ...controls } = useContext(ThemeContext);
   return controls;
 }
 
