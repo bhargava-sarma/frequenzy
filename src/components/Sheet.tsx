@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   KeyboardAvoidingView,
   Modal,
@@ -130,6 +130,14 @@ export function Sheet({
 
   // Starts unmounted even when visible: opening goes through claim().
   const [mounted, setMounted] = useState(false);
+  /**
+   * The same, readable at once. The effect below decides open or close from
+   * it, and read from state it could be a render stale: a sheet asked to
+   * open and then close inside one render took the "never opened" branch,
+   * opened anyway, and could not be closed again — a modal over the whole
+   * app, swallowing every touch and the back button, until it was killed.
+   */
+  const mountedRef = useRef(false);
   /** 0 below the screen edge, 1 in place. */
   const progress = useSharedValue(0);
   const dragY = useSharedValue(0);
@@ -148,19 +156,35 @@ export function Sheet({
    */
   const pendingOpen = useRef(false);
   const laidOut = useRef(false);
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [id] = useState(() => nextSheetId++);
 
+  const onClosedRef = useRef(onClosed);
+  onClosedRef.current = onClosed;
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   const finishClose = useCallback(() => {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+    closeTimer.current = null;
+    // Reopened while leaving: it is on its way back up, not gone.
+    if (visibleRef.current || !mountedRef.current) return;
     laidOut.current = false;
+    mountedRef.current = false;
     setMounted(false);
     release(id);
-    onClosed?.();
-  }, [onClosed, id]);
+    onClosedRef.current?.();
+  }, [id]);
 
   useEffect(() => {
     if (visible) {
+      if (closeTimer.current) clearTimeout(closeTimer.current);
+      closeTimer.current = null;
       claim(id, () => {
         dragY.value = 0;
+        mountedRef.current = true;
         setMounted(true);
         if (laidOut.current) progress.value = withTiming(1, timings.enter);
         else {
@@ -168,13 +192,13 @@ export function Sheet({
           // Rises anyway if the layout event is late, rather than leaving an
           // invisible modal over the screen that swallows every touch.
           setTimeout(() => {
-            if (!pendingOpen.current) return;
+            if (!pendingOpen.current || !visibleRef.current) return;
             pendingOpen.current = false;
             progress.value = withTiming(1, timings.enter);
           }, 200);
         }
       });
-    } else if (!mounted) {
+    } else if (!mountedRef.current) {
       // Asked to close while still waiting for its turn.
       waiting.delete(id);
     } else {
@@ -182,30 +206,51 @@ export function Sheet({
       progress.value = withTiming(0, timings.exit, (finished) => {
         if (finished) runOnJS(finishClose)();
       });
+      // And closes regardless once the exit should have played: an exit
+      // interrupted on the UI thread never reports finishing, and a sheet
+      // that never finishes holds the one-sheet slot and its modal forever.
+      if (closeTimer.current) clearTimeout(closeTimer.current);
+      closeTimer.current = setTimeout(finishClose, (timings.exit.duration ?? 240) + 300);
     }
-    // `mounted` is read, not tracked: this reacts to the caller's intent.
+    // Reacts to the caller's intent only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
   // A sheet unmounted while open (its screen went away) must not hold the
   // slot forever.
-  useEffect(() => () => release(id), [id]);
+  useEffect(
+    () => () => {
+      if (closeTimer.current) clearTimeout(closeTimer.current);
+      release(id);
+    },
+    [id],
+  );
 
-  const pan = Gesture.Pan()
-    .activeOffsetY(6)
-    .onUpdate((event) => {
-      // Downward only, with a little give upward so it doesn't feel nailed.
-      dragY.value = event.translationY > 0 ? event.translationY : event.translationY * 0.15;
-    })
-    .onEnd((event, success) => {
-      // `success` is false when the system took the gesture back; that is
-      // not a decision to dismiss.
-      if (success && (dragY.value > DISMISS_DISTANCE || event.velocityY > DISMISS_VELOCITY)) {
-        runOnJS(onClose)();
-        return;
-      }
-      dragY.value = withSpring(0, springs.settle);
-    });
+  const settle = springs.settle;
+  const pan = useMemo(() => {
+    const close = () => onCloseRef.current();
+    return Gesture.Pan()
+      .activeOffsetY(6)
+      .onUpdate((event) => {
+        // Downward only, with a little give upward so it doesn't feel nailed.
+        dragY.value = event.translationY > 0 ? event.translationY : event.translationY * 0.15;
+      })
+      .onEnd((event, success) => {
+        // `success` is false when the system took the gesture back; that is
+        // not a decision to dismiss.
+        if (success && (dragY.value > DISMISS_DISTANCE || event.velocityY > DISMISS_VELOCITY)) {
+          runOnJS(close)();
+          return;
+        }
+        dragY.value = withSpring(0, settle);
+      });
+  }, [dragY, settle]);
+
+  /** Back, or a tap on the scrim. Already closing, it finishes the job. */
+  const requestClose = useCallback(() => {
+    if (!visibleRef.current) finishClose();
+    else onCloseRef.current();
+  }, [finishClose]);
 
   const sheetStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: (1 - progress.value) * travel.value + dragY.value }],
@@ -235,7 +280,7 @@ export function Sheet({
       animationType="none"
       statusBarTranslucent
       navigationBarTranslucent
-      onRequestClose={onClose}
+      onRequestClose={requestClose}
     >
       {/* A modal is a separate window: gestures inside it need their own root. */}
       <GestureHandlerRootView style={styles.fill}>
@@ -245,7 +290,7 @@ export function Sheet({
               style={styles.fill}
               accessibilityRole="button"
               accessibilityLabel="Close"
-              onPress={onClose}
+              onPress={requestClose}
             />
           </Animated.View>
 

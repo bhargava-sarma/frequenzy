@@ -1,4 +1,4 @@
-import { memo, useCallback, useRef, useState } from 'react';
+import { memo, useCallback, useRef, useState, useMemo } from 'react';
 import { StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
@@ -50,12 +50,18 @@ export const AlphabetRail = memo(function AlphabetRail({
     setActive(null);
   }, []);
 
-  const pan = Gesture.Pan()
-    .minDistance(0)
-    .hitSlop({ left: 16, right: 8 })
-    .onBegin((event) => runOnJS(pick)(event.y))
-    .onUpdate((event) => runOnJS(pick)(event.y))
-    .onFinalize(() => runOnJS(end)());
+  // Built once per layout: the letter under the finger re-renders the rail,
+  // and a gesture rebuilt mid-drag can be dropped by the native handler.
+  const pan = useMemo(
+    () =>
+      Gesture.Pan()
+        .minDistance(0)
+        .hitSlop({ left: 16, right: 8 })
+        .onBegin((event) => runOnJS(pick)(event.y))
+        .onUpdate((event) => runOnJS(pick)(event.y))
+        .onFinalize(() => runOnJS(end)()),
+    [pick, end],
+  );
 
   const onLayout = useCallback((event: LayoutChangeEvent) => {
     setHeight(event.nativeEvent.layout.height);

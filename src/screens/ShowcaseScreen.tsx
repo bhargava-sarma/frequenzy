@@ -142,7 +142,7 @@ export function ShowcaseScreen() {
         </ScrollView>
 
         <SectionHeader index="05" title="Rows" />
-        <ListRow title="Xtal" subtitle="Aphex Twin" trailingText="4:51" leading="index" index={1} active playing />
+        <ListRow title="Xtal" subtitle="Aphex Twin" trailingText="4:51" leading="index" index={1} active />
         <ListRow title="Tha" subtitle="Aphex Twin" trailingText="9:01" leading="index" index={2} starred onMore={() => {}} />
         <ListRow title="Pulsewidth" subtitle="Aphex Twin" trailingText="3:47" rank={1} onMore={() => {}} last />
 

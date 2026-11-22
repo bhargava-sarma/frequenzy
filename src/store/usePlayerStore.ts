@@ -2,6 +2,7 @@ import TrackPlayer, { Event, RepeatMode, type MediaItem } from '@rntp/player';
 import { create } from 'zustand';
 
 import { localCopy } from '../offline/downloads';
+import { afterQueueChange, noteSpeed, seekTo, startPlaybackSync } from '../player/playbackSync';
 import { setupPlayer } from '../player/setup';
 import { songFromMediaItem, toMediaItems } from '../player/trackMapping';
 import type { Child } from '../types/subsonic';
@@ -180,47 +181,57 @@ function reportDropped(playable: Playable, verb: 'Playing' | 'Queued') {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-/** How often to re-check that a queue change has landed. */
-const CONFIRM_INTERVAL_MS = 25;
-/** Grace period before a replace-style change is assumed lost and re-sent. */
+/** Grace period before a replace that didn't land is sent again. */
 const REFIRE_AFTER_MS = 750;
 
 /**
- * Applies a queue change, then waits for the player to confirm it.
+ * Applies a queue change and waits for the player to take it.
  *
- * Writes and reads do not travel the same path: `addMediaItems` and friends
- * are void TurboModule methods dispatched onto the native method queue,
- * while `getQueue` is synchronous and runs inline on the JS thread. A read
- * taken straight after a write sees the queue as it was *before* the write —
- * every time — so this fires the mutation once and polls only the
- * confirmation. (Re-running the mutation per failed check once queued a
- * swiped track twice.)
+ * Writes are void TurboModule calls, queued to the native module thread;
+ * the player announces each with QueueChanged once it has been handed to
+ * its own thread, so a read made after that event sees the change. This
+ * waits for the event — it used to poll a full copy of the queue every
+ * 25 ms, and on a long playlist each of those copies stalled the app.
  *
- * `refire` re-sends once after a grace period, only for replace-style
- * changes: commands issued before the MediaController binds are dropped
- * silently, which is what made the very first play need two taps. Never set
- * it for an append.
+ * `verify` is read once, after the event. A command sent before the
+ * MediaController has bound is announced but dropped — which is what made
+ * the very first play need two taps — so with `refire` a replace that
+ * didn't land is sent once more. Never set `refire` for an append.
+ * `events` is how many changes `mutate` makes, so a remove-then-add waits
+ * for both.
  */
 async function applyQueueChange(
   mutate: () => void,
-  confirm: () => boolean,
-  { refire = false, timeoutMs = 3000 }: { refire?: boolean; timeoutMs?: number } = {},
+  verify?: () => boolean,
+  { refire = false, timeoutMs = 3000, events = 1 }: { refire?: boolean; timeoutMs?: number; events?: number } = {},
 ): Promise<void> {
-  mutate();
+  await afterQueueChange(mutate, timeoutMs, events);
+  if (!verify || verify()) return;
+  if (refire) {
+    await sleep(REFIRE_AFTER_MS);
+    if (verify()) return;
+    await afterQueueChange(mutate, timeoutMs, events);
+    if (verify()) return;
+  }
+  throw new Error('The player did not accept the change in time.');
+}
 
-  const started = Date.now();
-  let refired = false;
+/** The player's queue length, read fresh. One full copy of the queue: only on a user action. */
+function freshQueueLength(): number {
+  try {
+    return TrackPlayer.getQueue().length;
+  } catch {
+    return 0;
+  }
+}
 
-  for (;;) {
-    if (confirm()) return;
-
-    const elapsed = Date.now() - started;
-    if (elapsed >= timeoutMs) throw new Error('The player did not accept the change in time.');
-    if (refire && !refired && elapsed >= REFIRE_AFTER_MS) {
-      refired = true;
-      mutate();
-    }
-    await sleep(CONFIRM_INTERVAL_MS);
+/** Whether the player is now on the item a replace asked for. One small read. */
+function landedOn(item: MediaItem | undefined): boolean {
+  if (!item) return false;
+  try {
+    return TrackPlayer.getActiveMediaItem()?.mediaId === item.mediaId;
+  } catch {
+    return false;
   }
 }
 
@@ -301,7 +312,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
 
     await applyQueueChange(
       () => TrackPlayer.setMediaItems(items, start),
-      () => TrackPlayer.getQueue().length > 0,
+      () => landedOn(items[start]),
       { refire: true },
     );
 
@@ -329,6 +340,8 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
       try {
         setupPlayer();
         watchQueuePosition();
+        // The single reader of player state everything else draws from.
+        startPlaybackSync();
         // The native player outlives the JS runtime (music keeps going when
         // the app is swiped away), so whatever it is already doing is truth.
         let repeat: RepeatSetting = 'off';
@@ -370,8 +383,10 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
         // the track changed meanwhile the plan was made for another moment.
         for (let attempt = 0; attempt < 2; attempt++) {
           const activeIndex = TrackPlayer.getActiveMediaItemIndex();
+          if (activeIndex == null) return;
+          // A fresh copy: the order below is planned from exactly what is queued.
           const queue = TrackPlayer.getQueue();
-          if (activeIndex == null || queue.length === 0) return;
+          if (queue.length === 0) return;
 
           // The JS runtime can restart under a queue that kept playing, and
           // what is queued is then the only running order there is.
@@ -423,15 +438,18 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
           const items = tail.length > 0 ? (await buildPlayable(tail)).items : [];
           if (TrackPlayer.getActiveMediaItemIndex() !== activeIndex) continue;
 
-          const length = TrackPlayer.getQueue().length;
+          const length = freshQueueLength();
           if (length <= from && items.length === 0) return;
 
+          const removing = length > from;
+          const adding = items.length > 0;
           await applyQueueChange(
             () => {
-              if (length > from) TrackPlayer.removeMediaItems(from, length);
-              if (items.length > 0) TrackPlayer.addMediaItems(items);
+              if (removing) TrackPlayer.removeMediaItems(from, length);
+              if (adding) TrackPlayer.addMediaItems(items);
             },
-            () => TrackPlayer.getQueue().length === from + items.length,
+            () => freshQueueLength() === from + items.length,
+            { events: (removing ? 1 : 0) + (adding ? 1 : 0) },
           );
 
           lastActiveIndex = activeIndex;
@@ -446,19 +464,20 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
     playTrackNow: async (song) => {
       get().init();
 
+      // No active item means an empty queue: there is nothing to insert into.
       const activeIndex = TrackPlayer.getActiveMediaItemIndex();
-      if (activeIndex == null || TrackPlayer.getQueue().length === 0) {
+      if (activeIndex == null) {
         await get().playNow([song]);
         return;
       }
 
       const { items } = await buildPlayable([song]);
-      const before = TrackPlayer.getQueue().length;
+      const before = freshQueueLength();
       const insertAt = activeIndex + 1;
 
       await applyQueueChange(
         () => TrackPlayer.insertMediaItems(insertAt, items),
-        () => TrackPlayer.getQueue().length > before,
+        () => freshQueueLength() > before,
       );
 
       // Skipping into it moves the active index forward, and the hand-picked
@@ -475,7 +494,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
       const activeIndex = TrackPlayer.getActiveMediaItemIndex();
       // With nothing playing there is no "next", so start playback rather
       // than quietly stacking an unheard queue.
-      if (activeIndex == null || TrackPlayer.getQueue().length === 0) {
+      if (activeIndex == null) {
         await get().playNow(songs);
         return;
       }
@@ -483,11 +502,11 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
       const playable = await buildPlayable(songs);
       const { items } = playable;
       if (items.length === 0) return;
-      const before = TrackPlayer.getQueue().length;
+      const before = freshQueueLength();
 
       await applyQueueChange(
         () => TrackPlayer.insertMediaItems(activeIndex + 1, items),
-        () => TrackPlayer.getQueue().length > before,
+        () => freshQueueLength() > before,
       );
 
       set({ priorityCount: get().priorityCount + items.length });
@@ -499,7 +518,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
       get().init();
 
       const insertAt = priorityInsertIndex();
-      if (insertAt == null || TrackPlayer.getQueue().length === 0) {
+      if (insertAt == null) {
         await get().playNow(songs);
         return;
       }
@@ -507,13 +526,13 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
       const playable = await buildPlayable(songs);
       const { items } = playable;
       if (items.length === 0) return;
-      const before = TrackPlayer.getQueue().length;
+      const before = freshQueueLength();
       // The region may extend past the end if items were removed under it.
       const at = Math.min(insertAt, before);
 
       await applyQueueChange(
         () => TrackPlayer.insertMediaItems(at, items),
-        () => TrackPlayer.getQueue().length > before,
+        () => freshQueueLength() > before,
       );
 
       set({ priorityCount: get().priorityCount + items.length });
@@ -534,16 +553,16 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
 
       // A last look, as close to the send as possible: something may have
       // started playing while the items were being built.
-      if (TrackPlayer.getQueue().length > 0) return;
+      if (TrackPlayer.getActiveMediaItemIndex() != null) return;
       await applyQueueChange(
         () => TrackPlayer.setMediaItems(items, start),
-        () => TrackPlayer.getQueue().length > 0,
+        () => landedOn(items[start]),
         { timeoutMs: 1200 },
       );
       original = playable.songs;
       // Dispatched on the same native queue as the replace, so it lands
       // after the item is loaded rather than racing it.
-      if (position > 1 && sameTrack) TrackPlayer.seekTo(position);
+      if (position > 1 && sameTrack) seekTo(position);
 
       lastActiveIndex = start;
       set({ priorityCount: 0, shuffled: false, source });
@@ -579,7 +598,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
     nudge: (index, direction) => {
       const activeIndex = TrackPlayer.getActiveMediaItemIndex() ?? -1;
       const target = index + direction;
-      const length = TrackPlayer.getQueue().length;
+      // One fresh read per tap: a nudge just after another change must not
+      // be bounded by a mirror that hasn't caught up yet.
+      const length = freshQueueLength();
       // Upcoming tracks only: moving across the playing track would change
       // what "previous" means mid-song.
       if (index <= activeIndex || target <= activeIndex || target >= length) return;
@@ -597,7 +618,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
 
     clearUpcoming: () => {
       const activeIndex = TrackPlayer.getActiveMediaItemIndex();
-      const length = TrackPlayer.getQueue().length;
+      const length = freshQueueLength();
       if (activeIndex == null || length <= activeIndex + 1) return;
       TrackPlayer.removeMediaItems(activeIndex + 1, length);
       set({ priorityCount: 0 });
@@ -620,6 +641,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
     setSpeed: (speed) => {
       const clamped = Math.min(2, Math.max(0.5, Math.round(speed * 100) / 100));
       TrackPlayer.setPlaybackSpeed(clamped);
+      noteSpeed(clamped);
       set({ speed: clamped });
     },
   };

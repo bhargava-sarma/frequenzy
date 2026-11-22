@@ -1,21 +1,21 @@
-import { memo, useEffect } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { memo, useEffect, useMemo } from 'react';
+import { AppState, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
-  Easing,
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
-import TrackPlayer, { useActiveMediaItem, useIsPlaying, useProgress } from '@rntp/player';
+import TrackPlayer from '@rntp/player';
 
 import { Artwork } from './Artwork';
 import { IconButton } from './IconButton';
 import { IconPlayerPauseFilled, IconPlayerPlayFilled, IconPlayerSkipForwardFilled } from './icons';
 import { useArtwork } from '../hooks/useArtwork';
 import { extrasOf } from '../player/trackMapping';
+import { durationOf, positionNow, useActiveItem, useIsPlaying, usePlaybackStore } from '../store/usePlaybackStore';
 import { useMotion } from '../theme/motion';
 import { space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
@@ -29,35 +29,52 @@ import { haptics } from '../utils/haptics';
  * Renders nothing with an empty queue, so the dock is just the tabs until
  * there is something to control. Tap to open the player, or swipe the row
  * sideways to skip, the way you'd thumb a cassette deck's transport without
- * looking. A hairline along the bottom reads position; the player reports
- * once a second, and the line glides between reports rather than ticking.
+ * looking. A hairline along the bottom reads position.
+ *
+ * It is on screen for the whole session, so it is built to cost nothing at
+ * rest. The position line is set once a second from the playback clock —
+ * no read from the player, no re-render, no animation: a two-point line
+ * moves a point or two a second, which reads as smooth, and a glide
+ * restarted every second kept an animation running for as long as music
+ * played. The swipe is built once rather than on every render.
  */
 const SKIP_DISTANCE = 70;
-/** A report further than this from the last one is a seek or a new track: jump, don't glide. */
-const GLIDE_LIMIT_SECONDS = 2.5;
+/** How often the position line is moved. */
+const LINE_EVERY_MS = 1000;
 
 export const MiniPlayer = memo(function MiniPlayer() {
   const color = useTheme();
   const styles = useThemedStyles(makeStyles);
-  const { reduce, timings, springs } = useMotion();
+  const { timings, springs } = useMotion();
   const openPlayer = usePlayerUiStore((state) => state.openPlayer);
-  const activeItem = useActiveMediaItem();
+  const activeItem = useActiveItem();
   const isPlaying = useIsPlaying();
-  const { position, duration } = useProgress(1);
   const artworkUrl = useArtwork();
 
   const offset = useSharedValue(0);
   const fill = useSharedValue(0);
   const appear = useSharedValue(0);
 
-  const total = duration || activeItem?.duration || 0;
-  const ratio = total > 0 ? Math.min(1, Math.max(0, position / total)) : 0;
-
+  // The line, from the clock: on every re-read of the position (a seek, a
+  // new track) and once a second while playing in the foreground.
   useEffect(() => {
-    const jumped = total <= 0 || Math.abs(ratio - fill.value) * total > GLIDE_LIMIT_SECONDS;
-    if (reduce || jumped) fill.value = ratio;
-    else fill.value = withTiming(ratio, { duration: 1000, easing: Easing.linear });
-  }, [ratio, total, reduce, fill]);
+    const place = () => {
+      const state = usePlaybackStore.getState();
+      const total = durationOf(state);
+      fill.value = total > 0 ? Math.min(1, Math.max(0, positionNow(state) / total)) : 0;
+    };
+    place();
+    const unsubscribe = usePlaybackStore.subscribe((state, previous) => {
+      if (state.at !== previous.at || state.duration !== previous.duration || state.item !== previous.item) place();
+    });
+    const timer = setInterval(() => {
+      if (usePlaybackStore.getState().playing && AppState.currentState === 'active') place();
+    }, LINE_EVERY_MS);
+    return () => {
+      unsubscribe();
+      clearInterval(timer);
+    };
+  }, [fill]);
 
   // The row fades up when there is first something to show.
   const showing = activeItem != null;
@@ -66,26 +83,25 @@ export const MiniPlayer = memo(function MiniPlayer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showing, appear]);
 
-  const skip = (direction: 1 | -1) => {
-    haptics.press();
-    if (direction > 0) TrackPlayer.skipToNext();
-    else TrackPlayer.skipToPrevious();
-  };
-
-  const pan = Gesture.Pan()
-    .activeOffsetX([-16, 16])
-    .failOffsetY([-12, 12])
-    .onUpdate((event) => {
-      offset.value = event.translationX * 0.6;
-    })
-    .onEnd((event, success) => {
-      // A drag the system took back — an edge gesture, an incoming call —
-      // is not a decision to skip.
-      if (success && (Math.abs(event.translationX) > SKIP_DISTANCE || Math.abs(event.velocityX) > 900)) {
-        runOnJS(skip)(event.translationX < 0 ? 1 : -1);
-      }
-      offset.value = withSpring(0, springs.settle);
-    });
+  const settle = springs.settle;
+  const pan = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetX([-16, 16])
+        .failOffsetY([-12, 12])
+        .onUpdate((event) => {
+          offset.value = event.translationX * 0.6;
+        })
+        .onEnd((event, success) => {
+          // A drag the system took back — an edge gesture, an incoming call —
+          // is not a decision to skip.
+          if (success && (Math.abs(event.translationX) > SKIP_DISTANCE || Math.abs(event.velocityX) > 900)) {
+            runOnJS(skipBy)(event.translationX < 0 ? 1 : -1);
+          }
+          offset.value = withSpring(0, settle);
+        }),
+    [offset, settle],
+  );
 
   const rowStyle = useAnimatedStyle(() => ({
     opacity: appear.value,
@@ -151,6 +167,12 @@ export const MiniPlayer = memo(function MiniPlayer() {
     </View>
   );
 });
+
+function skipBy(direction: 1 | -1) {
+  haptics.press();
+  if (direction > 0) TrackPlayer.skipToNext();
+  else TrackPlayer.skipToPrevious();
+}
 
 const makeStyles = (color: Palette) =>
   StyleSheet.create({

@@ -2,7 +2,6 @@ import { memo, useCallback, useMemo, useState } from 'react';
 import { FlatList, StyleSheet, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useActiveMediaItem, useIsPlaying } from '@rntp/player';
 
 import { stopCollectionDownload } from './DownloadControls';
 import {
@@ -26,12 +25,13 @@ import { Sheet, SheetRow } from './Sheet';
 import { DOCK_CLEARANCE } from './TabBar';
 import { TrackActionsSheet } from './TrackActionsSheet';
 import { TrackRow } from './TrackRow';
+import { HEAVY_LIST_PROPS } from '../hooks/usePagedList';
 import { useArtwork } from '../hooks/useArtwork';
+import { useScreenFocused } from '../navigation/screenFocus';
 import { type LibraryStackParamList } from '../navigation/types';
 import { collectionSongs, retryFailed, setPaused, sortSongs, totalsOf } from '../offline/downloads';
 import { freeSpace } from '../offline/nativeFs';
 import type { OfflineCollection } from '../offline/types';
-import { extrasOf } from '../player/trackMapping';
 import { useCollectionDownload, useDownloadProgress, useDownloadStore } from '../store/useDownloadStore';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { toast } from '../store/useToastStore';
@@ -48,6 +48,7 @@ import { formatBytes, pluralize } from '../utils/time';
  */
 
 const SOURCE = { kind: 'downloads' as const, label: 'Downloads' };
+const IDLE_PROGRESS = { id: null, bytes: 0, total: 0 };
 
 export function DownloadsView({ filter }: { filter: string }) {
   const navigation = useNavigation<NativeStackNavigationProp<LibraryStackParamList>>();
@@ -57,9 +58,6 @@ export function DownloadsView({ filter }: { filter: string }) {
   const unsupported = useDownloadStore((state) => state.unsupported);
   const playNow = usePlayerStore((state) => state.playNow);
   const addToQueue = usePlayerStore((state) => state.addToQueue);
-  const activeItem = useActiveMediaItem();
-  const isPlaying = useIsPlaying();
-  const activeId = extrasOf(activeItem)?.subsonicId;
 
   const [trackTarget, setTrackTarget] = useState<Child | null>(null);
   const [collectionTarget, setCollectionTarget] = useState<OfflineCollection | null>(null);
@@ -172,8 +170,6 @@ export function DownloadsView({ filter }: { filter: string }) {
           <TrackRow
             song={item}
             index={index}
-            active={item.id === activeId}
-            playing={isPlaying}
             last={index === shown.length - 1}
             subtitle="artistAlbum"
             onPlay={handlePlay}
@@ -184,8 +180,7 @@ export function DownloadsView({ filter }: { filter: string }) {
         contentContainerStyle={styles.list}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
-        initialNumToRender={14}
-        windowSize={9}
+        {...HEAVY_LIST_PROPS}
       />
 
       <TrackActionsSheet visible={trackTarget != null} onClose={() => setTrackTarget(null)} song={trackTarget} />
@@ -269,7 +264,9 @@ function DownloadSummary({ songs }: { songs: Child[] }) {
   const paused = useDownloadStore((state) => state.paused);
   const blocked = useDownloadStore((state) => state.blocked);
   const unsupported = useDownloadStore((state) => state.unsupported);
-  const progress = useDownloadProgress();
+  // Progress ticks several times a second; out of view, nothing needs them.
+  const focused = useScreenFocused();
+  const progress = useDownloadProgress((state) => (focused ? state : IDLE_PROGRESS));
   const playNow = usePlayerStore((state) => state.playNow);
   const shufflePlay = usePlayerStore((state) => state.shufflePlay);
 
@@ -304,7 +301,7 @@ function DownloadSummary({ songs }: { songs: Child[] }) {
   return (
     <Panel label="Offline" style={styles.panel}>
       <View style={styles.stateRow}>
-        <Led color={led} size={9} busy={busy} />
+        <Led color={led} size={9} busy={busy && progress.id == null} />
         <Text style={styles.state} numberOfLines={2}>
           {state}
         </Text>

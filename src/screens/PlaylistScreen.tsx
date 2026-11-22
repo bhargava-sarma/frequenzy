@@ -1,9 +1,7 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
-import { RefreshControl, StyleSheet, View } from 'react-native';
-import Animated from 'react-native-reanimated';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, RefreshControl, StyleSheet, View } from 'react-native';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useActiveMediaItem, useIsPlaying } from '@rntp/player';
 
 import { AddToPlaylistSheet } from '../components/AddToPlaylistSheet';
 import { useCollapsingHeader, useNavBarHeight } from '../components/CollapsingHeader';
@@ -27,17 +25,17 @@ import { Keycap, KeyRow } from '../components/Keycap';
 import { PromptSheet } from '../components/PromptSheet';
 import { DetailScaffold } from '../components/Scaffold';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenState';
-import { SearchField } from '../components/SearchField';
+import { FilterField } from '../components/SearchField';
 import { Sheet, SheetRow } from '../components/Sheet';
 import { DOCK_CLEARANCE } from '../components/TabBar';
 import { TrackActionsSheet } from '../components/TrackActionsSheet';
 import { TrackRow } from '../components/TrackRow';
+import { HEAVY_LIST_PROPS } from '../hooks/usePagedList';
 import { useArtwork } from '../hooks/useArtwork';
 import { usePullRefresh } from '../hooks/usePullRefresh';
 import { LIKED_PLAYLIST_ID, type AnyStackParamList } from '../navigation/types';
-import { collectionSongs, noteCollection } from '../offline/downloads';
+import { collectionSnapshot, knownOffline, noteCollection } from '../offline/downloads';
 import { collectionKey } from '../offline/types';
-import { extrasOf } from '../player/trackMapping';
 import { useDownloadStore } from '../store/useDownloadStore';
 import { useFavoritesStore } from '../store/useFavoritesStore';
 import { usePlayerStore } from '../store/usePlayerStore';
@@ -82,9 +80,6 @@ export function PlaylistScreen() {
   const deletePlaylist = usePlaylistStore((state) => state.remove);
   const removeTrackAt = usePlaylistStore((state) => state.removeTrackAt);
   const loadPlaylists = usePlaylistStore((state) => state.load);
-  const activeItem = useActiveMediaItem();
-  const isPlaying = useIsPlaying();
-  const activeId = extrasOf(activeItem)?.subsonicId;
 
   const [playlist, setPlaylist] = useState<Playlist | null>(null);
   const [songs, setSongs] = useState<Child[]>([]);
@@ -101,7 +96,34 @@ export function PlaylistScreen() {
   useEffect(() => {
     if (!client) return;
     let cancelled = false;
-    setLoading(true);
+
+    /**
+     * A downloaded playlist is drawn from the device the moment it opens.
+     * Known to be offline, that is the answer, and nothing waits on the
+     * network to find out again — this used to sit on a loading light
+     * through a probe of every address before showing the copy it had all
+     * along. Online, the copy shows while the server's list loads, and is
+     * replaced by it.
+     */
+    const local = collectionSnapshot(collectionKey(isLiked ? 'liked' : 'playlist', playlistId));
+    if (local) {
+      setPlaylist({
+        id: playlistId,
+        name: isLiked ? 'Liked songs' : local.collection.name,
+        coverArt: local.collection.coverArt,
+        songCount: local.songs.length,
+        duration: local.songs.reduce((sum, song) => sum + (song.duration ?? 0), 0),
+      });
+      setSongs(local.songs);
+      setError(null);
+      setLoading(false);
+      if (knownOffline()) {
+        setOffline(true);
+        return;
+      }
+    } else {
+      setLoading(true);
+    }
 
     const load = isLiked
       ? client.getStarred2().then((response) => {
@@ -143,20 +165,8 @@ export function PlaylistScreen() {
       })
       .catch((cause: unknown) => {
         if (cancelled) return;
-        // Out of reach: a downloaded playlist still opens, from the device.
-        const key = collectionKey(isLiked ? 'liked' : 'playlist', playlistId);
-        const saved = collectionSongs(key);
-        const collection = useDownloadStore.getState().collections[key];
-        if (saved && collection) {
-          setPlaylist({
-            id: playlistId,
-            name: collection.name,
-            coverArt: collection.coverArt,
-            songCount: saved.length,
-            duration: saved.reduce((sum, song) => sum + (song.duration ?? 0), 0),
-          });
-          setSongs(saved);
-          setError(null);
+        // Out of reach: the downloaded copy, already on screen, stays.
+        if (local) {
           setOffline(true);
           return;
         }
@@ -171,8 +181,10 @@ export function PlaylistScreen() {
     };
   }, [client, playlistId, isLiked, reloadToken]);
 
+  /** The filter as typed, a beat after typing pauses (see FilterField). */
   const [filter, setFilter] = useState('');
-  const deferredFilter = useDeferredValue(filter.trim().toLowerCase());
+  const onFilter = useCallback((value: string) => setFilter(value.trim().toLowerCase()), []);
+  const deferredFilter = filter;
   const [menu, setMenu] = useState<Menu>('none');
   const [trackTarget, setTrackTarget] = useState<Child | null>(null);
 
@@ -212,7 +224,10 @@ export function PlaylistScreen() {
         : null,
     [playlist, playlistId, isLiked],
   );
-  const source = { kind: isLiked ? ('liked' as const) : ('playlist' as const), label: title };
+  const source = useMemo(
+    () => ({ kind: isLiked ? ('liked' as const) : ('playlist' as const), label: title }),
+    [isLiked, title],
+  );
   const total = playlist?.duration ?? songs.reduce((sum, song) => sum + (song.duration ?? 0), 0);
 
   const handlePlay = useCallback(
@@ -293,7 +308,9 @@ export function PlaylistScreen() {
     }
   }
 
-  const header = (
+  // Built once per change to what it shows, not on every render: the list
+  // re-renders its header whenever it is handed a new one.
+  const header = useMemo(() => (
     <View>
       <DetailHero
         artworkUri={artworkUrl(playlist?.coverArt, 600)}
@@ -362,11 +379,28 @@ export function PlaylistScreen() {
       />
       {songs.length > MIN_ROWS_FOR_FILTER && (
         <View style={styles.filter}>
-          <SearchField value={filter} onChangeText={setFilter} placeholder="Find in playlist" />
+          <FilterField onChange={onFilter} placeholder="Find in playlist" resetKey={playlistId} />
         </View>
       )}
     </View>
-  );
+  ), [
+    artworkUrl,
+    playlist,
+    offline,
+    isLiked,
+    title,
+    songs,
+    total,
+    color.accent,
+    color.accentInk,
+    playNow,
+    shufflePlay,
+    addToQueue,
+    source,
+    downloadInput,
+    onFilter,
+    playlistId,
+  ]);
 
   return (
     <DetailScaffold
@@ -416,8 +450,6 @@ export function PlaylistScreen() {
           <TrackRow
             song={item}
             index={index}
-            active={item.id === activeId}
-            playing={isPlaying}
             last={index === filtered.length - 1}
             subtitle="artistAlbum"
             leftAction="remove"
@@ -428,8 +460,7 @@ export function PlaylistScreen() {
           />
         )}
         contentContainerStyle={styles.list}
-        initialNumToRender={14}
-        windowSize={9}
+        {...HEAVY_LIST_PROPS}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         refreshControl={<RefreshControl {...pull} progressViewOffset={navHeight} />}

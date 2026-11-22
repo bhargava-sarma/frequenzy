@@ -6,6 +6,7 @@ import { SwipeableRow } from './SwipeableRow';
 import { useArtwork } from '../hooks/useArtwork';
 import { useTrackDownload } from '../store/useDownloadStore';
 import { useFavoritesStore, useStarred } from '../store/useFavoritesStore';
+import { useServerStore } from '../store/useServerStore';
 import { useTheme } from '../theme/ThemeProvider';
 import type { Child } from '../types/subsonic';
 import { formatDuration } from '../utils/time';
@@ -25,9 +26,6 @@ export interface TrackRowProps {
   song: Child;
   /** Position within the list, handed back to onPlay. */
   index: number;
-  active: boolean;
-  /** Audio running, for the level mark on the active row. */
-  playing?: boolean;
   last: boolean;
   /** 'index' shows track numbers instead of art — albums. */
   leading?: 'artwork' | 'index';
@@ -46,8 +44,6 @@ export interface TrackRowProps {
 export const TrackRow = memo(function TrackRow({
   song,
   index,
-  active,
-  playing = false,
   last,
   leading = 'artwork',
   number,
@@ -62,6 +58,9 @@ export const TrackRow = memo(function TrackRow({
   const artworkUrl = useArtwork();
   const starred = useStarred(song.id, Boolean(song.starred));
   const download = useTrackDownload(song.id);
+  // Offline, what can't play is shown as such: dimmed unless downloaded.
+  const offline = useServerStore((state) => state.connection == null && !state.connecting);
+  const unplayable = offline && download !== 'done';
   const setStarred = useFavoritesStore((state) => state.setStarred);
 
   const toggleLike = useCallback(() => {
@@ -118,10 +117,10 @@ export const TrackRow = memo(function TrackRow({
         artworkUri={leading === 'artwork' ? artworkUrl(song.coverArt) : undefined}
         leading={leading}
         index={number ?? song.track ?? index + 1}
-        active={active}
-        playing={playing}
+        trackId={song.id}
         starred={starred}
         download={download}
+        dimmed={unplayable}
         trailingText={song.duration ? formatDuration(song.duration) : undefined}
         last={last}
         onPress={() => onPlay(index)}

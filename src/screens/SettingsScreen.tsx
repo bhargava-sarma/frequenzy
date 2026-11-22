@@ -246,7 +246,7 @@ export function SettingsScreen() {
             <Segmented options={THEMES} value={settings.theme} onChange={(value) => set('theme', value)} />
 
             <View style={styles.divider} />
-            <Row label="Colour from artwork" hint="Highlights and the ambient wash follow the cover that's playing.">
+            <Row label="Colour from artwork" hint="The player and the wash behind every screen take the colours of the cover that's playing.">
               <Toggle
                 value={settings.accentMode === 'artwork'}
                 onChange={(on) => set('accentMode', on ? 'artwork' : 'preset')}
@@ -254,9 +254,7 @@ export function SettingsScreen() {
               />
             </Row>
 
-            <Text style={[styles.controlLabel, styles.spaced]}>
-              {settings.accentMode === 'artwork' ? 'Fallback accent' : 'Accent'}
-            </Text>
+            <Text style={[styles.controlLabel, styles.spaced]}>Accent</Text>
             <View style={styles.swatches}>
               {ACCENT_PRESET_ORDER.map((preset) => {
                 const fill = accentPresets[preset][resolved];

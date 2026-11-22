@@ -130,7 +130,6 @@ export const CollectionDownloadStatus = memo(function CollectionDownloadStatus({
   const count = `${done} of ${total}`;
   let text: string;
   let led = color.ledAmber;
-  let busy = false;
   if (complete) {
     text = `On this device · ${pluralize(total, 'track')}`;
     led = color.ledGreen;
@@ -148,12 +147,13 @@ export const CollectionDownloadStatus = memo(function CollectionDownloadStatus({
     led = color.ledRed;
   } else {
     text = `Downloading · ${count}`;
-    busy = true;
   }
 
+  // A steady light: downloads can run for an hour, and a light breathing
+  // that long is an animation running that long — the text says it's busy.
   return (
     <View style={styles.status}>
-      <Led color={led} busy={busy} />
+      <Led color={led} />
       <Label tone="secondary">{text}</Label>
     </View>
   );

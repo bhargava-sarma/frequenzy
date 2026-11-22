@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import TrackPlayer, { Event, useIsPlaying, type MediaItem } from '@rntp/player';
+import TrackPlayer, { type MediaItem } from '@rntp/player';
 
 import { AddToPlaylistSheet } from '../components/AddToPlaylistSheet';
 import { AmbientBackground } from '../components/AmbientBackground';
@@ -31,10 +31,12 @@ import { PromptSheet } from '../components/PromptSheet';
 import { EmptyState } from '../components/ScreenState';
 import { Sheet, SheetRow } from '../components/Sheet';
 import { SwipeableRow } from '../components/SwipeableRow';
+import { HEAVY_LIST_PROPS } from '../hooks/usePagedList';
 import { useArtwork } from '../hooks/useArtwork';
 import { navigateToAlbum, navigateToArtist } from '../navigation/ref';
 import { extrasOf } from '../player/trackMapping';
 import { useTrackDownload } from '../store/useDownloadStore';
+import { useIsPlaying, usePlaybackStore } from '../store/usePlaybackStore';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { usePlayerUiStore } from '../store/usePlayerUiStore';
 import { usePlaylistStore } from '../store/usePlaylistStore';
@@ -81,55 +83,23 @@ export function QueueScreen() {
   const speed = usePlayerStore((state) => state.speed);
   const createPlaylist = usePlaylistStore((state) => state.create);
 
-  const [queue, setQueue] = useState<MediaItem[]>([]);
-  const [activeIndex, setActiveIndex] = useState(-1);
+  // The mirrored queue: read from the player once per change, centrally,
+  // rather than copied again here on every event.
+  const queue = usePlaybackStore((state) => state.queue);
+  const activeIndex = usePlaybackStore((state) => state.index);
   const [showHistory, setShowHistory] = useState(false);
   const [menu, setMenu] = useState<'none' | 'queue' | 'save'>('none');
   const [target, setTarget] = useState<{ item: MediaItem; index: number } | null>(null);
   const [adding, setAdding] = useState<string[] | null>(null);
   /**
-   * Where the track was, and when that was read. The pair, because the
-   * finishing time is worked out from both: computed from "now" on each
-   * render against a position read minutes ago, it crept later every time
-   * anything re-rendered.
+   * Where the track was, and when that was true — the playback clock. The
+   * pair, because the finishing time is worked out from both: computed from
+   * "now" on each render against an old position, it crept later every
+   * time anything re-rendered.
    */
-  const [clock, setClock] = useState({ position: 0, at: Date.now() });
-
-  const readClock = useCallback(() => {
-    try {
-      setClock({ position: TrackPlayer.getProgress().position, at: Date.now() });
-    } catch {
-      // Nothing to read before the player is bound.
-    }
-  }, []);
-
-  const sync = useCallback(() => {
-    try {
-      setQueue(TrackPlayer.getQueue());
-      setActiveIndex(TrackPlayer.getActiveMediaItemIndex() ?? -1);
-    } catch {
-      // The same: an unbound player has no queue to mirror yet.
-    }
-    readClock();
-  }, [readClock]);
-
-  useEffect(() => {
-    sync();
-    const queueSub = TrackPlayer.addEventListener(Event.QueueChanged, sync);
-    const transitionSub = TrackPlayer.addEventListener(Event.MediaItemTransition, sync);
-    // Keeps "left" honest through a long track without copying the queue.
-    const timer = setInterval(readClock, 15_000);
-    return () => {
-      queueSub.remove();
-      transitionSub.remove();
-      clearInterval(timer);
-    };
-  }, [sync, readClock]);
-
-  // A pause or a resume moves the finishing time; read again at each.
-  useEffect(() => {
-    readClock();
-  }, [isPlaying, readClock]);
+  const clockPosition = usePlaybackStore((state) => state.position);
+  const clockAt = usePlaybackStore((state) => state.at);
+  const clock = { position: clockPosition, at: clockAt || Date.now() };
 
   const current = activeIndex >= 0 ? queue[activeIndex] : undefined;
   const upcoming = activeIndex >= 0 ? queue.slice(activeIndex + 1) : queue;
@@ -268,7 +238,7 @@ export function QueueScreen() {
                   {current.artist ?? 'Unknown artist'}
                 </Text>
               </View>
-              <PlayingBars playing={isPlaying} color={color.accent} size={16} />
+              <PlayingBars color={color.accent} size={16} />
             </Display>
           ) : null
         }
@@ -337,8 +307,7 @@ export function QueueScreen() {
           );
         }}
         contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + space[8] }]}
-        initialNumToRender={14}
-        windowSize={9}
+        {...HEAVY_LIST_PROPS}
       />
 
       <Sheet

@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
-import Animated from 'react-native-reanimated';
+import { Animated, StyleSheet, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useActiveMediaItem, useIsPlaying } from '@rntp/player';
 
 import { useCollapsingHeader, useNavBarHeight } from '../components/CollapsingHeader';
 import { IconButton } from '../components/IconButton';
@@ -16,10 +14,10 @@ import { Sheet, SheetRow } from '../components/Sheet';
 import { DOCK_CLEARANCE } from '../components/TabBar';
 import { TrackActionsSheet } from '../components/TrackActionsSheet';
 import { clearPlayHistory, getRecentPlays, onPlayHistoryChanged, type PlayEntry } from '../data/playHistory';
+import { HEAVY_LIST_PROPS } from '../hooks/usePagedList';
 import { useArtwork } from '../hooks/useArtwork';
 import type { AnyStackParamList } from '../navigation/types';
 import { playOutline } from '../player/mixes';
-import { extrasOf } from '../player/trackMapping';
 import { toast } from '../store/useToastStore';
 import { layout, space, type } from '../theme/tokens';
 import { useTheme } from '../theme/ThemeProvider';
@@ -57,9 +55,6 @@ export function HistoryScreen() {
   const artworkUrl = useArtwork();
   const navHeight = useNavBarHeight();
   const { onScroll, progress } = useCollapsingHeader(30, 80);
-  const activeItem = useActiveMediaItem();
-  const isPlaying = useIsPlaying();
-  const activeId = extrasOf(activeItem)?.subsonicId;
 
   const [entries, setEntries] = useState<PlayEntry[] | null>(null);
   const [target, setTarget] = useState<Child | null>(null);
@@ -150,8 +145,7 @@ export function HistoryScreen() {
               title={item.entry.title}
               subtitle={[item.entry.artist, item.entry.album].filter(Boolean).join(' · ')}
               artworkUri={artworkUrl(item.entry.coverArt)}
-              active={item.entry.songId === activeId}
-              playing={isPlaying}
+              trackId={item.entry.songId}
               trailingText={formatClock(item.entry.playedAt)}
               last={item.last}
               onPress={() => play(item.entry)}
@@ -161,8 +155,7 @@ export function HistoryScreen() {
           )
         }
         contentContainerStyle={styles.list}
-        initialNumToRender={16}
-        windowSize={9}
+        {...HEAVY_LIST_PROPS}
       />
 
       <TrackActionsSheet visible={target != null} onClose={() => setTarget(null)} song={target} />

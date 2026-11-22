@@ -1,7 +1,6 @@
-import TrackPlayer, { Event } from '@rntp/player';
-
 import type { SubsonicClient } from '../api/client';
 import { recordPlay } from '../data/playHistory';
+import { durationOf, positionNow, usePlaybackStore } from '../store/usePlaybackStore';
 import { useServerStore } from '../store/useServerStore';
 import { getSettings } from '../store/useSettingsStore';
 import { addPendingScrobble, flushPendingScrobbles, isWorthRetrying } from './pendingScrobbles';
@@ -23,13 +22,11 @@ import { extrasOf } from './trackMapping';
  * is scrobbled at all. Sticking to the convention matters because these plays
  * land in the same counters as the ones from any other client.
  *
- * Progress is polled from JS rather than driven by Event.PlaybackProgressUpdated.
- * That event only fires when progressSync.intervalSeconds is configured, and it
- * is emitted by the playback *service*, which reads its config from stored
- * preferences — so whether it arrives depends on service lifecycle rather than
- * on anything this file controls. Since the JS runtime has to be alive for the
- * scrobble request to be sent at all, polling here costs nothing extra and
- * removes that dependency entirely.
+ * Progress is checked on a timer against the mirrored player state (see
+ * playbackSync), not by asking the player: those reads block the JS thread,
+ * and three of them every five seconds were three stalls every five seconds.
+ * The mirror follows the player's events in the foreground and is re-read on
+ * a slow timer in the background, which is exactly where this needs it.
  */
 
 /** Tracks shorter than this are never scrobbled. */
@@ -81,7 +78,7 @@ export function startScrobbler(getClient: () => SubsonicClient | null): () => vo
     // Repeat-one re-enters the same track; treating it as a fresh play means a
     // track on loop scrobbles each time round rather than once.
     current = { mediaId, startedAt: Date.now(), submitted: false, announced: false };
-    if (TrackPlayer.isPlaying()) announce();
+    if (usePlaybackStore.getState().playing) announce();
   }
 
   function announce() {
@@ -96,13 +93,10 @@ export function startScrobbler(getClient: () => SubsonicClient | null): () => vo
     // Resuming past the scrobble point means this play was counted before
     // the app closed — or was reached by seeking, which isn't listening.
     // Either way, submitting it now would count it twice or count it falsely.
-    try {
-      const { position, duration } = TrackPlayer.getProgress();
-      if (duration >= MIN_DURATION_SECONDS && position >= submitThreshold(duration)) {
-        current.submitted = true;
-      }
-    } catch {
-      // No progress to read yet; the poll decides.
+    const position = positionNow();
+    const duration = durationOf();
+    if (duration >= MIN_DURATION_SECONDS && position >= submitThreshold(duration)) {
+      current.submitted = true;
     }
 
     const client = getClient();
@@ -111,8 +105,13 @@ export function startScrobbler(getClient: () => SubsonicClient | null): () => vo
     }
   }
 
-  const transition = TrackPlayer.addEventListener(Event.MediaItemTransition, ({ item }) => {
-    const mediaId = item?.mediaId;
+  const transition = usePlaybackStore.subscribe((state, previous) => {
+    const mediaId = state.item?.mediaId;
+    if (mediaId === previous.item?.mediaId && state.transition === previous.transition) {
+      // Same track, now sounding: the deferred "now playing" goes out.
+      if (state.playing && !previous.playing && current?.mediaId === mediaId) announce();
+      return;
+    }
     if (!mediaId) {
       current = null;
       return;
@@ -121,7 +120,8 @@ export function startScrobbler(getClient: () => SubsonicClient | null): () => vo
   });
 
   const timer = setInterval(() => {
-    const item = TrackPlayer.getActiveMediaItem();
+    const state = usePlaybackStore.getState();
+    const item = state.item;
     const mediaId = item?.mediaId;
     if (!mediaId) {
       current = null;
@@ -136,11 +136,12 @@ export function startScrobbler(getClient: () => SubsonicClient | null): () => vo
       return;
     }
 
-    if (!TrackPlayer.isPlaying()) return;
+    if (!state.playing) return;
     announce();
     if (current.submitted) return;
 
-    const { position, duration } = TrackPlayer.getProgress();
+    const position = positionNow(state);
+    const duration = durationOf(state);
     if (!duration || duration < MIN_DURATION_SECONDS) return;
 
     if (position < submitThreshold(duration)) return;
@@ -188,7 +189,7 @@ export function startScrobbler(getClient: () => SubsonicClient | null): () => vo
   });
 
   return () => {
-    transition.remove();
+    transition();
     clearInterval(timer);
     unsubscribeServer();
   };

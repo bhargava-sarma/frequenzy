@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
   RefreshControl,
@@ -37,12 +37,12 @@ import { PromptSheet } from '../components/PromptSheet';
 import { TabScaffold } from '../components/Scaffold';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenState';
-import { SearchField } from '../components/SearchField';
+import { FilterField } from '../components/SearchField';
 import { Sheet, SheetRow } from '../components/Sheet';
 import { DOCK_CLEARANCE } from '../components/TabBar';
 import { useArtwork } from '../hooks/useArtwork';
 import { useLibraryData } from '../hooks/useLibraryData';
-import { trackItemLayout } from '../hooks/usePagedList';
+import { HEAVY_LIST_PROPS, trackItemLayout } from '../hooks/usePagedList';
 import { usePullRefresh } from '../hooks/usePullRefresh';
 import { LIKED_PLAYLIST_ID, type LibraryStackParamList } from '../navigation/types';
 import { collectionKey } from '../offline/types';
@@ -131,8 +131,9 @@ export function LibraryScreen() {
   const view = useSettingsStore((state) => state.albumView);
   const update = useSettingsStore((state) => state.update);
 
+  /** The filter as typed, a beat after typing pauses (see FilterField). */
   const [filter, setFilter] = useState('');
-  const deferredFilter = useDeferredValue(filter.trim().toLowerCase());
+  const deferredFilter = useMemo(() => filter.trim().toLowerCase(), [filter]);
   const [seed, setSeed] = useState(0);
   const [albumTarget, setAlbumTarget] = useState<AlbumSummary | null>(null);
   const [playlistTarget, setPlaylistTarget] = useState<Playlist | null>(null);
@@ -384,10 +385,10 @@ export function LibraryScreen() {
           />
         ))}
       </ChipRow>
-      <SearchField
-        value={filter}
-        onChangeText={setFilter}
+      <FilterField
+        onChange={setFilter}
         placeholder={mode === 'downloads' ? 'Filter downloads' : `Filter ${unit}s`}
+        resetKey={mode}
       />
       {mode === 'albums' && (
         <ChipRow style={styles.sorts}>
@@ -464,8 +465,7 @@ export function LibraryScreen() {
         contentContainerStyle={styles.list}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
-        initialNumToRender={14}
-        windowSize={9}
+        {...HEAVY_LIST_PROPS}
         refreshControl={refreshControl}
       />
     );
@@ -494,8 +494,7 @@ export function LibraryScreen() {
           contentContainerStyle={[styles.list, styles.railGutter]}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
-          initialNumToRender={14}
-          windowSize={9}
+          {...HEAVY_LIST_PROPS}
             refreshControl={refreshControl}
           onScrollToIndexFailed={() => {}}
         />

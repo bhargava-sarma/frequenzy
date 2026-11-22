@@ -20,22 +20,27 @@ import { useServerStore } from '../store/useServerStore';
  * between the LAN and the remote route, and even then the image cache finds
  * the same picture under its address-free key (see artworkCacheKey).
  *
- * A cover saved with a download is used in preference to the server's, at
- * every size: it draws with no connection at all and costs no request.
+ * A cover saved with a download is used whenever there is one: it draws
+ * with no connection at all, and costs no request. It is looked up when the
+ * resolver runs rather than subscribed to, so a download landing a new
+ * cover every few seconds doesn't hand every list on screen a new resolver
+ * and re-render every row; rows pick saved covers up as they next draw. The
+ * one re-render that matters — the saved covers becoming known at start-up
+ * — is subscribed to.
  */
 export function useArtwork() {
   const client = useServerStore((state) => state.client);
   const base = useServerStore((state) => state.artworkBase);
-  const saved = useDownloadStore((state) => state.covers);
+  const downloadsReady = useDownloadStore((state) => state.hydrated);
 
   return useCallback(
     (coverArtId: string | undefined | null, size = 128): string | undefined => {
       if (!coverArtId) return undefined;
-      const local = saved[coverArtId];
+      const local = downloadsReady ? useDownloadStore.getState().covers[coverArtId] : undefined;
       if (local) return `${dirs.covers()}${local}.jpg`;
       if (!client || !base) return undefined;
       return client.buildCoverArtUrl(coverArtId, size) ?? undefined;
     },
-    [client, base, saved],
+    [client, base, downloadsReady],
   );
 }
