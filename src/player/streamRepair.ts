@@ -99,6 +99,35 @@ export function localizeQueue(): void {
   replaceQueued(localizedItem);
 }
 
+/**
+ * The same item streamed from the server at `base`, or null if it already
+ * is. For downloaded items queued as files: at home they stream instead, so
+ * a Cast speaker — which can reach the server but not the phone's storage —
+ * can play them.
+ */
+function streamedItem(item: MediaItem, base: string): MediaItem | null {
+  const client = useServerStore.getState().client;
+  const id = item.mediaId;
+  if (!client || !id) return null;
+  if (!isLocalItem(item)) return rebasedItem(item, base);
+  const coverArt = (item.extras as { coverArt?: string } | undefined)?.coverArt;
+  return {
+    ...item,
+    url: client.buildStreamUrl(id, base),
+    artworkUrl: coverArt ? (client.buildCoverArtUrl(coverArt, 512) ?? item.artworkUrl) : item.artworkUrl,
+  };
+}
+
+/** Points the queue at the home server: every item streams from it. */
+export function streamQueueFrom(base: string): void {
+  replaceQueued((item) => streamedItem(item, base));
+}
+
+/** Whether the phone is on the home network right now. */
+function atHome(): boolean {
+  return useServerStore.getState().connection?.kind === 'local';
+}
+
 /** The next queued item after `from` that plays from the device. */
 function nextLocalIndex(from: number): number | null {
   let queue: MediaItem[];
@@ -126,22 +155,34 @@ export function startStreamRepair(onUnrecoverable: (message: string) => void): (
   let lastBase = useServerStore.getState().connection?.url ?? null;
 
   const unsubscribe = useServerStore.subscribe((state, previous) => {
-    // Gone offline: whatever is downloaded should be what plays next.
-    if (!state.connection && previous.connection) localizeQueue();
+    const kind = state.connection?.kind ?? null;
+    const before = previous.connection?.kind ?? null;
     const base = state.connection?.url ?? null;
-    if (!base || base === lastBase) return;
-    lastBase = base;
-    rebaseQueue(base);
+    const moved = base != null && base !== lastBase;
+    if (base) lastBase = base;
+
+    if (kind !== before) {
+      // Home: stream everything from the server, downloads included, so it
+      // can all be cast. Away or offline: downloaded tracks play from the
+      // device again — no mobile data, no connection needed.
+      if (kind === 'local' && base) {
+        streamQueueFrom(base);
+        return;
+      }
+      localizeQueue();
+    }
+    if (moved && base) rebaseQueue(base);
   });
 
   // Coalesced: an album finishing downloads a track every few seconds, and
-  // one pass over the queue covers all of them.
+  // one pass over the queue covers all of them. At home queued tracks keep
+  // streaming, so there is nothing to swap.
   let localizeTimer: ReturnType<typeof setTimeout> | null = null;
   const stopDownloads = onTrackDownloaded(() => {
-    if (localizeTimer) return;
+    if (localizeTimer || atHome()) return;
     localizeTimer = setTimeout(() => {
       localizeTimer = null;
-      localizeQueue();
+      if (!atHome()) localizeQueue();
     }, 1500);
   });
 
@@ -155,19 +196,6 @@ export function startStreamRepair(onUnrecoverable: (message: string) => void): (
       const index = mirror.index >= 0 ? mirror.index : null;
       const key = item?.mediaId ?? '';
       const last = retried.get(key) ?? 0;
-
-      // Downloaded: no reason to need the server at all. Swap in the file
-      // and carry on from the same place.
-      if (item && index != null) {
-        const local = localizedItem(item);
-        if (local) {
-          const at = positionNow(mirror);
-          TrackPlayer.replaceMediaItem(index, local);
-          if (at > 1) seekTo(at);
-          TrackPlayer.play();
-          return;
-        }
-      }
 
       const client = useServerStore.getState().client;
       if (!client || !item || index == null || Date.now() - last < RETRY_WINDOW_MS) {
@@ -184,10 +212,35 @@ export function startStreamRepair(onUnrecoverable: (message: string) => void): (
       // Where it broke off. A re-pointed item is a new source and starts
       // from the top, so the place has to be carried over by hand.
       const resumeAt = positionNow(mirror);
+      const resume = (next: MediaItem) => {
+        TrackPlayer.replaceMediaItem(index, next);
+        if (resumeAt > 1) seekTo(resumeAt);
+        TrackPlayer.play();
+      };
+
+      // A file that won't play: corrupt, or — the usual case — sent to a
+      // Cast speaker, which can't reach the phone's storage. Stream it.
+      const connection = useServerStore.getState().connection;
+      if (isLocalItem(item)) {
+        const streamed = connection ? streamedItem(item, connection.url) : null;
+        if (streamed) resume(streamed);
+        else onUnrecoverable(event.message || 'Playback failed');
+        return;
+      }
+
+      // A stream that won't play away from home, for a track that is
+      // downloaded: no reason to need the server at all.
+      if (connection?.kind !== 'local') {
+        const local = localizedItem(item);
+        if (local) {
+          resume(local);
+          return;
+        }
+      }
 
       try {
         client.invalidateConnection();
-        const connection = await client.ensureConnection(true);
+        const reached = await client.ensureConnection(true);
 
         // The queue may have moved while the probe ran. Repairing by a stale
         // index would overwrite whatever track is at that position now, so
@@ -196,7 +249,7 @@ export function startStreamRepair(onUnrecoverable: (message: string) => void): (
         const nowIndex = TrackPlayer.getActiveMediaItemIndex();
         if (!now || nowIndex == null || now.mediaId !== item.mediaId) return;
 
-        const next = rebasedItem(now, connection.url);
+        const next = rebasedItem(now, reached.url);
         if (next) {
           TrackPlayer.replaceMediaItem(nowIndex, next);
           if (resumeAt > 1) seekTo(resumeAt);

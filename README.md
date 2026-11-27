@@ -24,6 +24,7 @@ Built with Expo and React Native, against the Subsonic API (1.16.1).
 - [Connectivity: one server, two addresses](#connectivity-one-server-two-addresses)
 - [Lyrics and romanisation](#lyrics-and-romanisation)
 - [Offline downloads](#offline-downloads)
+- [Casting](#casting)
 - [When something breaks](#when-something-breaks)
 - [Staying smooth](#staying-smooth)
 - [Design](#design)
@@ -83,6 +84,12 @@ track info and share.
 phone, as the original files, and play them with no connection at all. A
 downloaded playlist follows the server as it changes; plays made offline reach
 Navidrome once it can be heard from. See [Offline downloads](#offline-downloads).
+
+**Cast** — Send the queue to a Google Home or Nest speaker, a Chromecast or
+any Cast device from the button in the player. The speaker streams straight
+from your server, the original file over your home network; the phone becomes
+the remote, and the notification, lock screen and volume keys control the
+speaker. See [Casting](#casting).
 
 **Radio** — From any track (Navidrome's similar songs) or any artist, filled out
 from the library when the server's similarity data is thin.
@@ -253,8 +260,11 @@ reported is resumed rather than kept.
   and a playlist or Liked songs also whenever it is opened: new tracks are
   fetched, removed ones are deleted. A playlist deleted on the server keeps
   its download.
-- **Playing offline.** Downloaded tracks always play from the device, even when
-  the server is reachable. With no connection, playing a list that is partly
+- **Playing offline.** Away from home and offline, downloaded tracks play from
+  the device. At home they stream from the server like everything else —
+  the network is free there, and a stream is something a Cast speaker can
+  play, where a file on the phone is not; the queue switches over as you
+  arrive and leave. With no connection, playing a list that is partly
   downloaded plays just the downloaded tracks instead of failing; a queued
   stream that can't be reached is swapped for its downloaded copy, or skipped
   to the next track that is downloaded. Covers are saved with the files, so
@@ -267,6 +277,32 @@ reported is resumed rather than kept.
 Files live in the app's private storage and are deleted on sign-out. The
 feature uses the file-system module already compiled into the app, so it
 arrived as an over-the-air update rather than needing a new build.
+
+---
+
+## Casting
+
+Google Cast comes from Media3's Cast player, which the playback library
+already includes: when a session starts, Media3 hands the queue and the
+position to the speaker, and takes them back when it ends. It targets Google's
+Default Media Receiver — what Google Home, Nest speakers and Chromecasts run —
+so no receiver app is registered anywhere. The one piece of native setup, the
+Cast options provider in the Android manifest, is added by
+`plugins/withCast.js`.
+
+- **What the speaker plays.** The speaker fetches each track itself, so it is
+  given the same `format=raw`, uncapped stream URL the phone uses, at the home
+  address. That is why everything streams at home (see
+  [Offline downloads](#offline-downloads)); a downloaded file queued before
+  you got home is switched to the stream automatically if the speaker can't
+  open it.
+- **Formats.** Cast audio devices play FLAC up to 24-bit/96 kHz, MP3, AAC,
+  Opus and Vorbis. Higher sample rates won't play on a speaker.
+- **Where.** The speaker has to reach the server, so casting works on the home
+  network — the address a phone at home connects through.
+
+Adding the options provider changed native config, so Cast arrived in a new
+build rather than over the air.
 
 ---
 
