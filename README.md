@@ -296,6 +296,18 @@ entries the speaker never sent back in full (Media3 1.9 crashed the app on
 those), and which reads a speaker's queue without assuming another Media3 app
 put it there.
 
+- **Long queues.** A Cast message can carry at most 512 KiB, and Media3 sends
+  a whole playlist in one — at one to two KiB a track, a few hundred tracks
+  made the Cast SDK throw and closed the app the moment a speaker was picked.
+  So the speaker is given a window: a few tracks before the current one and
+  as many after it as fit a 200 KiB budget (at most 100), measured from the
+  real encoded items. Near the end of its window it is sent the next part,
+  and when playback returns to the phone the full queue comes back with it.
+  While casting, the app's queue shows what the speaker has. This lives in
+  the playback library's native code, as a patch applied on install
+  (`patches/@rntp+player+5.13.0.patch`, via patch-package): the library is
+  pinned to exactly 5.13.0 so the patch always applies.
+
 - **What the speaker plays.** The speaker fetches each track itself, so it is
   given the same `format=raw`, uncapped stream URL the phone uses, at the home
   address. That is why everything streams at home (see
