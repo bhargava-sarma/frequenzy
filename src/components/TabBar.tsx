@@ -1,5 +1,5 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { Keyboard, Platform, Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
+import { memo, useEffect, useRef, useState } from 'react';
+import { Keyboard, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
   useAnimatedStyle,
@@ -12,9 +12,17 @@ import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { StackActions } from '@react-navigation/native';
 
 import { ErrorBoundary } from './ErrorBoundary';
-import { IconHome, IconLibrary, IconSearch, type IconComponent } from './icons';
+import {
+  IconHome,
+  IconHomeFilled,
+  IconLibrary,
+  IconLibraryFilled,
+  IconSearch,
+  IconSearchFilled,
+  type IconComponent,
+} from './icons';
 import { MiniPlayer } from './MiniPlayer';
-import { useMotion, useSelectionPosition } from '../theme/motion';
+import { useMotion } from '../theme/motion';
 import { icon, layout, radius, space, stroke, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
@@ -26,8 +34,12 @@ import { haptics } from '../utils/haptics';
  *
  * Inset from three edges and fully rounded, it reads as one object resting
  * on the content rather than as screen chrome. It is solid — content never
- * shows through it. Tabs carry printed legends under their glyphs, and the
- * selected one sits on a raised key that slides between them.
+ * shows through it. Tabs carry printed legends under their glyphs.
+ *
+ * The selected tab is marked the Material 3 way: a pill in the accent's
+ * container colour behind its glyph, which swaps to its filled form. The
+ * pill grows out from the centre on an expressive spring when a tab is
+ * chosen and shrinks away from the one left.
  *
  * While the keyboard is up the dock steps out of the way: over a keyboard
  * it would cover the very results being typed for, and nothing on it is
@@ -37,10 +49,10 @@ import { haptics } from '../utils/haptics';
  * the mini player showing, so a list's last row is always reachable.
  */
 
-const TABS: Record<string, { icon: IconComponent; label: string }> = {
-  Home: { icon: IconHome, label: 'Home' },
-  Search: { icon: IconSearch, label: 'Search' },
-  Library: { icon: IconLibrary, label: 'Library' },
+const TABS: Record<string, { icon: IconComponent; filled: IconComponent; label: string }> = {
+  Home: { icon: IconHome, filled: IconHomeFilled, label: 'Home' },
+  Search: { icon: IconSearch, filled: IconSearchFilled, label: 'Search' },
+  Library: { icon: IconLibrary, filled: IconLibraryFilled, label: 'Library' },
 };
 
 export const DOCK_CLEARANCE = 168;
@@ -68,11 +80,6 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
   const styles = useThemedStyles(makeStyles);
   const { timings } = useMotion();
   const keyboardUp = useKeyboardVisible();
-  const [barWidth, setBarWidth] = useState(0);
-
-  const position = useSelectionPosition(state.index);
-  const slot = barWidth > 0 ? barWidth / state.routes.length : 0;
-  const keyStyle = useAnimatedStyle(() => ({ transform: [{ translateX: position.value * slot }] }));
 
   // 0 in place, 1 tucked below the screen edge.
   const hidden = useSharedValue(0);
@@ -84,10 +91,6 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
     opacity: 1 - hidden.value,
     transform: [{ translateY: hidden.value * 40 }],
   }));
-
-  const onBarLayout = useCallback((event: LayoutChangeEvent) => {
-    setBarWidth(event.nativeEvent.layout.width);
-  }, []);
 
   return (
     <Animated.View
@@ -104,8 +107,7 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
             <MiniPlayer />
           </ErrorBoundary>
 
-          <View style={styles.bar} onLayout={onBarLayout}>
-            {slot > 0 && <Animated.View pointerEvents="none" style={[styles.key, { width: slot }, keyStyle]} />}
+          <View style={styles.bar}>
             {state.routes.map((route, index) => {
               const focused = state.index === index;
               const tab = TABS[route.name];
@@ -117,9 +119,7 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
                   accessibilityRole="tab"
                   accessibilityState={{ selected: focused }}
                   accessibilityLabel={tab.label}
-                  // Drawn in place until the bar has been measured and the
-                  // sliding key exists.
-                  style={[styles.item, focused && slot === 0 && styles.itemFocused]}
+                  style={styles.item}
                   onPress={() => {
                     haptics.tick();
                     const event = navigation.emit({
@@ -146,7 +146,7 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
                     if (route.name === 'Search') emitSearchRequested();
                   }}
                 >
-                  <TabGlyph Icon={tab.icon} label={tab.label} focused={focused} />
+                  <TabGlyph Icon={tab.icon} FilledIcon={tab.filled} label={tab.label} focused={focused} />
                 </Pressable>
               );
             })}
@@ -159,16 +159,30 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
 
 const TabGlyph = memo(function TabGlyph({
   Icon,
+  FilledIcon,
   label,
   focused,
 }: {
   Icon: IconComponent;
+  FilledIcon: IconComponent;
   label: string;
   focused: boolean;
 }) {
   const color = useTheme();
   const styles = useThemedStyles(makeStyles);
   const { timings, springs } = useMotion();
+
+  // The pill: grows from the centre when chosen, shrinks away when left.
+  // Mounts already in place for the tab the app opens on.
+  const selected = useSharedValue(focused ? 1 : 0);
+  useEffect(() => {
+    selected.value = withSpring(focused ? 1 : 0, springs.spatial);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focused, selected]);
+  const pillStyle = useAnimatedStyle(() => ({
+    opacity: Math.min(1, selected.value * 1.6),
+    transform: [{ scaleX: 0.35 + 0.65 * selected.value }],
+  }));
 
   // The glyph dips and comes back as its tab takes focus: the press landing.
   // Not on mount — the tab the app opens on was not pressed.
@@ -187,13 +201,16 @@ const TabGlyph = memo(function TabGlyph({
 
   return (
     <View style={styles.glyph}>
-      <Animated.View style={glyphStyle}>
-        <Icon
-          size={22}
-          strokeWidth={focused ? 2.1 : icon.strokeWidth}
-          color={focused ? color.accent : color.labelSecondary}
-        />
-      </Animated.View>
+      <View style={styles.iconSlot}>
+        <Animated.View style={[styles.pill, { backgroundColor: color.accentContainer }, pillStyle]} />
+        <Animated.View style={glyphStyle}>
+          {focused ? (
+            <FilledIcon size={22} color={color.onAccentContainer} />
+          ) : (
+            <Icon size={22} strokeWidth={icon.strokeWidth} color={color.labelSecondary} />
+          )}
+        </Animated.View>
+      </View>
       <Text
         style={[type.labelBold, styles.legend, { color: focused ? color.label : color.labelTertiary }]}
         numberOfLines={1}
@@ -233,25 +250,15 @@ const makeStyles = (color: Palette) =>
       marginTop: space[2],
       height: 54,
     },
-    key: {
-      position: 'absolute',
-      top: 0,
-      bottom: 0,
-      left: 0,
-      borderRadius: radius.lg,
-      borderWidth: stroke,
-      backgroundColor: color.surfaceRaised,
-      borderColor: color.border,
-    },
     item: {
       flex: 1,
       alignItems: 'center',
       justifyContent: 'center',
       borderRadius: radius.lg,
-      borderWidth: stroke,
-      borderColor: 'transparent',
     },
-    itemFocused: { backgroundColor: color.surfaceRaised, borderColor: color.border },
-    glyph: { alignItems: 'center', gap: 3 },
+    glyph: { alignItems: 'center', gap: 2 },
+    /** Material 3's navigation indicator: 56 × 32, fully rounded. */
+    iconSlot: { width: 56, height: 32, alignItems: 'center', justifyContent: 'center' },
+    pill: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: radius.full },
     legend: { fontSize: 9, letterSpacing: 1.1 },
   });

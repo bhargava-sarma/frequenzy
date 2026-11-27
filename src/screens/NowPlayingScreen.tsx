@@ -483,7 +483,7 @@ export function NowPlayingScreen() {
         </Display>
 
         <View style={styles.scrub}>
-          <ScrubBar position={position} duration={total} tone="onArtwork" onSeek={seek} />
+          <ScrubBar position={position} duration={total} tone="onArtwork" onSeek={seek} playing={isPlaying} />
         </View>
 
         {/* Transport. */}
@@ -514,6 +514,9 @@ export function NowPlayingScreen() {
             variant="primary"
             size="lg"
             accessibilityLabel={isPlaying ? 'Pause' : 'Play'}
+            // Material 3 Expressive: round while paused, square-cornered
+            // while playing, morphing between the two.
+            shape={isPlaying ? 'default' : 'round'}
             style={styles.playKey}
             onPress={() => (isPlaying ? TrackPlayer.pause() : TrackPlayer.play())}
           />

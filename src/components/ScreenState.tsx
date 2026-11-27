@@ -5,6 +5,7 @@ import { Appear } from './Appear';
 import { IconAlertTriangle, type IconComponent } from './icons';
 import { Keycap } from './Keycap';
 import { Label } from './Label';
+import { LoadingIndicator } from './LoadingIndicator';
 import { layout, radius, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemeControls, useThemedStyles } from '../theme/ThemeProvider';
@@ -12,10 +13,10 @@ import { useTheme, useThemeControls, useThemedStyles } from '../theme/ThemeProvi
 /**
  * Loading, empty and error states.
  *
- * Typographic rather than a spinner: a centred platform spinner is exactly
- * the generic look this design avoids. Loading is three status lights
- * stepping in sequence above a printed label — a device thinking. The
- * lights switch rather than fade.
+ * Loading is Material 3 Expressive's morphing indicator above a printed
+ * label — the shape-shifting mark Android 16 uses for a short wait, in the
+ * accent, rather than a generic spinner. (The stepping status lights below
+ * remain for the small inline waits, where a lit LED reads better.)
  *
  * The states themselves fade in, and the loader waits a moment before it
  * does. Most reads here come back from the cache within a frame or two, and
@@ -30,7 +31,7 @@ export const LoadingState = memo(function LoadingState({ label = 'Loading' }: { 
   const styles = useThemedStyles(makeStyles);
   return (
     <Appear rise={0} delay={LOADER_PATIENCE_MS} style={styles.root}>
-      <SteppingLights />
+      <LoadingIndicator size={40} accessibilityLabel={label} />
       <Label tone="tertiary" style={styles.loadingLabel}>
         {label}
       </Label>

@@ -12,7 +12,8 @@
  * stays liftable alongside `api/` and `types/`.
  */
 
-import { contrast, ensureContrast, pickInk, rotateHue, withSl } from './color';
+import { contrast, ensureContrast, mix, pickInk, rotateHue, withSl } from './color';
+import type { MaterialRoles } from './material';
 
 // ---------------------------------------------------------------------------
 // 1. Colour
@@ -79,10 +80,18 @@ export interface Palette {
    */
   accent: string;
   accentInk: string;
+  /**
+   * A quiet fill of the accent and the ink that reads on it — Material's
+   * primary container: tonal keys, the selected tab's pill, a lit chip.
+   */
+  accentContainer: string;
+  onAccentContainer: string;
+  /** Whether the colours came from the wallpaper (Material You). */
+  material: boolean;
 }
 
 /** Fields every theme shares; accent is filled in at runtime. */
-type Base = Omit<Palette, 'accent' | 'accentInk'>;
+type Base = Omit<Palette, 'accent' | 'accentInk' | 'accentContainer' | 'onAccentContainer' | 'material'>;
 
 const display = {
   display: '#050505',
@@ -240,6 +249,88 @@ export function buildPalette(name: ThemeName, accent: AccentPair): Palette {
     ...base,
     accent: legible,
     accentInk: legible === accent.accent ? accent.accentInk : pickInk(legible),
+    ...accentContainers(legible, base.mode, base.surface),
+    material: false,
+  };
+}
+
+/**
+ * A container pair for an accent that didn't come with one: the accent sunk
+ * toward the ground with an ink drawn from the accent's own hue, walked until
+ * it reads. Matches the role Material's primary container plays.
+ */
+function accentContainers(accent: string, mode: ThemeMode, surface: string): Pick<Palette, 'accentContainer' | 'onAccentContainer'> {
+  const container = mode === 'light' ? mix(accent, '#FFFFFF', 0.78) : mix(accent, surface, 0.62);
+  const ink = mode === 'light' ? mix(accent, '#000000', 0.58) : mix(accent, '#FFFFFF', 0.72);
+  return { accentContainer: container, onAccentContainer: ensureContrast(ink, container, 4.5) };
+}
+
+/**
+ * Builds a palette from Material You roles — the wallpaper's colours.
+ *
+ * The hardware stays: panels on a ground, keys proud of their panels, wells
+ * cut in, the black display, the LEDs. What changes is what they are made of.
+ * Each layer takes the Material surface container at its height, so the whole
+ * device is tinted toward the wallpaper the way a Material app is; the loud
+ * key is the primary; the grey keys become the tonal secondary container.
+ */
+export function buildMaterialPalette(name: ThemeName, r: MaterialRoles): Palette {
+  const base = bases[name];
+  const shared = {
+    label: r.onSurface,
+    labelSecondary: r.onSurfaceVariant,
+    labelTertiary: r.outline,
+    destructive: r.error,
+    accent: r.primary,
+    accentInk: r.onPrimary,
+    accentContainer: r.primaryContainer,
+    onAccentContainer: r.onPrimaryContainer,
+    material: true,
+  };
+  if (name === 'light') {
+    return {
+      ...base,
+      ...shared,
+      background: r.surfaceContainer,
+      surface: r.surfaceContainerLow,
+      surfaceRaised: r.surfaceContainerLowest,
+      surfaceSunken: r.surfaceContainerHighest,
+      fill: r.surfaceContainerHigh,
+      separator: mix(r.outlineVariant, r.surfaceContainerLow, 0.45),
+      border: r.outlineVariant,
+      // The dark key stays dark on the light body, as it is on the hardware,
+      // drawn from the secondary hue rather than neutral grey.
+      keyDark: mix(r.onSurface, r.secondary, 0.3),
+      keyDarkInk: r.surfaceContainerLowest,
+    };
+  }
+  if (name === 'black') {
+    return {
+      ...base,
+      ...shared,
+      background: '#000000',
+      surface: r.surfaceContainerLowest,
+      surfaceRaised: r.surfaceContainerLow,
+      surfaceSunken: '#000000',
+      fill: r.surfaceContainer,
+      separator: mix(r.outlineVariant, '#000000', 0.55),
+      border: mix(r.outlineVariant, '#000000', 0.3),
+      keyDark: mix(r.secondaryContainer, '#000000', 0.2),
+      keyDarkInk: r.onSecondaryContainer,
+    };
+  }
+  return {
+    ...base,
+    ...shared,
+    background: r.surface,
+    surface: r.surfaceContainer,
+    surfaceRaised: r.surfaceContainerHigh,
+    surfaceSunken: r.surfaceContainerLowest,
+    fill: r.surfaceContainerHighest,
+    separator: mix(r.outlineVariant, r.surfaceContainer, 0.5),
+    border: mix(r.outlineVariant, r.surfaceContainer, 0.2),
+    keyDark: r.secondaryContainer,
+    keyDarkInk: r.onSecondaryContainer,
   };
 }
 

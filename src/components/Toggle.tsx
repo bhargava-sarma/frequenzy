@@ -1,15 +1,24 @@
-import { memo } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
-import Animated, { interpolateColor, useAnimatedStyle } from 'react-native-reanimated';
+import { memo, useEffect } from 'react';
+import { Pressable, StyleSheet } from 'react-native';
+import Animated, {
+  interpolateColor,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from 'react-native-reanimated';
 
-import { useSwitchProgress } from '../theme/motion';
+import { IconCheck } from './icons';
+import { useMotion, usePressProgress } from '../theme/motion';
 import { useTheme } from '../theme/ThemeProvider';
 import { haptics } from '../utils/haptics';
 
 /**
- * A slide switch, the hardware kind: a rectangular well and a gripped knob
- * that crosses it in a tenth of a second, with the well lighting up when
- * it's on. The one control whose change of state is a change of place.
+ * A switch, Material 3's: a rounded track with a thumb that is small and
+ * outlined while off, and grows into a full round thumb carrying a check as
+ * it crosses to on. Held, the thumb swells; let go, it springs into place
+ * on Material 3 Expressive's fast spatial spring while the colours follow on
+ * the effects spring, which never bounces. The system's toggle haptic marks
+ * the change.
  */
 export interface ToggleProps {
   value: boolean;
@@ -18,10 +27,16 @@ export interface ToggleProps {
   disabled?: boolean;
 }
 
-const WIDTH = 50;
-const HEIGHT = 30;
-const KNOB = 24;
-const PAD = (HEIGHT - KNOB) / 2;
+const WIDTH = 52;
+const HEIGHT = 32;
+const BORDER = 2;
+/** The thumb is drawn at its "on" size and scaled for the other states. */
+const THUMB = 24;
+const THUMB_OFF = 16;
+const THUMB_PRESSED = 28;
+/** Thumb centres, from the track's inner edge. */
+const OFF_X = HEIGHT / 2 - BORDER - THUMB / 2;
+const ON_X = WIDTH - HEIGHT / 2 - BORDER - THUMB / 2;
 
 export const Toggle = memo(function Toggle({
   value,
@@ -30,16 +45,38 @@ export const Toggle = memo(function Toggle({
   disabled = false,
 }: ToggleProps) {
   const color = useTheme();
-  const on = useSwitchProgress(value);
+  const { springs } = useMotion();
+  const { pressed, down, up } = usePressProgress();
 
-  const well = useAnimatedStyle(() => ({
-    backgroundColor: interpolateColor(on.value, [0, 1], [color.surfaceSunken, color.accent]),
-    borderColor: interpolateColor(on.value, [0, 1], [color.border, color.accent]),
+  // Position and colour run on separate springs: the thumb may overshoot,
+  // the colours must not.
+  const position = useSharedValue(value ? 1 : 0);
+  const tint = useSharedValue(value ? 1 : 0);
+  useEffect(() => {
+    position.value = withSpring(value ? 1 : 0, springs.spatialFast);
+    tint.value = withSpring(value ? 1 : 0, springs.effects);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value, position, tint]);
+
+  const off = color.labelTertiary;
+  const track = useAnimatedStyle(() => ({
+    backgroundColor: interpolateColor(tint.value, [0, 1], [color.surfaceSunken, color.accent]),
+    borderColor: interpolateColor(tint.value, [0, 1], [off, color.accent]),
   }));
 
-  const knob = useAnimatedStyle(() => ({
-    transform: [{ translateX: on.value * (WIDTH - KNOB - PAD * 2 - 2) }],
-  }));
+  const thumb = useAnimatedStyle(() => {
+    const resting = THUMB_OFF + (THUMB - THUMB_OFF) * Math.min(1, Math.max(0, position.value));
+    const size = resting + (THUMB_PRESSED - resting) * pressed.value;
+    return {
+      backgroundColor: interpolateColor(tint.value, [0, 1], [off, color.accentInk]),
+      transform: [
+        { translateX: OFF_X + (ON_X - OFF_X) * position.value },
+        { scale: size / THUMB },
+      ],
+    };
+  });
+
+  const check = useAnimatedStyle(() => ({ opacity: tint.value }));
 
   return (
     <Pressable
@@ -48,24 +85,19 @@ export const Toggle = memo(function Toggle({
       accessibilityState={{ checked: value, disabled }}
       disabled={disabled}
       hitSlop={8}
+      onPressIn={down}
+      onPressOut={up}
       onPress={() => {
-        haptics.tick();
+        haptics.toggle(!value);
         onChange(!value);
       }}
       style={disabled && styles.disabled}
     >
-      <Animated.View style={[styles.well, well]}>
-        <Animated.View
-          style={[
-            styles.knob,
-            { backgroundColor: color.surfaceRaised, borderColor: color.border },
-            knob,
-          ]}
-        >
-          {/* Grip ridges, so the knob reads as something to push. */}
-          <View style={[styles.ridge, { backgroundColor: color.labelTertiary }]} />
-          <View style={[styles.ridge, { backgroundColor: color.labelTertiary }]} />
-          <View style={[styles.ridge, { backgroundColor: color.labelTertiary }]} />
+      <Animated.View style={[styles.track, track]}>
+        <Animated.View style={[styles.thumb, thumb]}>
+          <Animated.View style={check}>
+            <IconCheck size={15} color={color.accent} strokeWidth={3} />
+          </Animated.View>
         </Animated.View>
       </Animated.View>
     </Pressable>
@@ -73,24 +105,21 @@ export const Toggle = memo(function Toggle({
 });
 
 const styles = StyleSheet.create({
-  well: {
+  track: {
     width: WIDTH,
     height: HEIGHT,
-    borderRadius: 9,
-    borderWidth: 1,
-    padding: PAD,
+    borderRadius: HEIGHT / 2,
+    borderWidth: BORDER,
     justifyContent: 'center',
   },
-  knob: {
-    width: KNOB,
-    height: KNOB - 2,
-    borderRadius: 6,
-    borderWidth: 1,
-    flexDirection: 'row',
+  thumb: {
+    position: 'absolute',
+    left: 0,
+    width: THUMB,
+    height: THUMB,
+    borderRadius: THUMB / 2,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 2.5,
   },
-  ridge: { width: 1.5, height: 9, borderRadius: 1 },
-  disabled: { opacity: 0.4 },
+  disabled: { opacity: 0.38 },
 });
