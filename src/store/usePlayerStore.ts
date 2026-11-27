@@ -125,15 +125,24 @@ interface Playable {
 /**
  * Turns songs into queue items.
  *
- * Downloaded tracks always play from the device. The rest need a live
- * address; when none answers, a list with downloaded tracks in it plays
- * just those instead of failing whole, and a list with none fails as it
- * always has. Known to be offline already, it doesn't make anyone wait out
- * another probe to learn that again — it plays what it has and lets the
- * probe run behind.
+ * At home — connected through the home address — everything streams from
+ * the server, downloaded or not: the network is free and fast there, and a
+ * stream URL is something a Cast speaker can fetch, where a file on the
+ * phone is not. Away from home and offline, downloaded tracks play from the
+ * device, saving mobile data and needing no connection at all.
+ *
+ * The rest need a live address; when none answers, a list with downloaded
+ * tracks in it plays just those instead of failing whole, and a list with
+ * none fails as it always has. Known to be offline already, it doesn't make
+ * anyone wait out another probe to learn that again — it plays what it has
+ * and lets the probe run behind.
  */
 async function buildPlayable(songs: Child[], startIndex = 0): Promise<Playable> {
   const { client, connection, connecting } = useServerStore.getState();
+  if (client && connection?.kind === 'local') {
+    return { songs, items: await toMediaItems(client, songs), start: startIndex, dropped: 0 };
+  }
+
   const local = songs.map((song) => localCopy(song.id));
   const someLocal = local.some(Boolean);
   let canStream = local.every(Boolean);
@@ -145,7 +154,11 @@ async function buildPlayable(songs: Child[], startIndex = 0): Promise<Playable> 
       void client.ensureConnection().catch(() => {});
     } else {
       try {
-        await client.ensureConnection();
+        const reached = await client.ensureConnection();
+        // Reached home after all: stream everything, as above.
+        if (reached.kind === 'local') {
+          return { songs, items: await toMediaItems(client, songs), start: startIndex, dropped: 0 };
+        }
         canStream = true;
       } catch (error) {
         if (!someLocal) throw error;

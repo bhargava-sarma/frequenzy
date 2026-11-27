@@ -34,12 +34,14 @@
         "expo-build-properties",
         {
           "android": {
-            "usesCleartextTraffic": true
+            "usesCleartextTraffic": true,
+            "extraProguardRules": "-keep class androidx.media3.cast.DefaultCastOptionsProvider { *; }"
           }
         }
       ],
       "expo-font",
-      "expo-image"
+      "expo-image",
+      "./plugins/withCast"
     ],
     "extra": {
       "eas": {

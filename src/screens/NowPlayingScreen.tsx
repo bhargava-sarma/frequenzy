@@ -17,7 +17,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import TrackPlayer from '@rntp/player';
+import TrackPlayer, { CastButton } from '@rntp/player';
 
 import { AmbientBackground } from '../components/AmbientBackground';
 import { Appear } from '../components/Appear';
@@ -366,9 +366,12 @@ export function NowPlayingScreen() {
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <AmbientBackground variant="immersive" />
 
-      {/* Header: close, where this is playing from, options. */}
+      {/* Header: close, where this is playing from, Cast and options. The
+          sides are the same width, so the title stays centred. */}
       <View style={styles.header}>
-        <IconButton icon={IconChevronDown} accessibilityLabel="Close player" onPress={closePlayer} />
+        <View style={styles.headerSide}>
+          <IconButton icon={IconChevronDown} accessibilityLabel="Close player" onPress={closePlayer} />
+        </View>
         <View style={styles.headerText}>
           <Label tone="onArtwork" style={styles.headerEyebrow}>
             {source ? SOURCE_EYEBROW[source.kind] : 'Now playing'}
@@ -379,7 +382,12 @@ export function NowPlayingScreen() {
             </Text>
           ) : null}
         </View>
-        <IconButton icon={IconDots} accessibilityLabel="Track options" onPress={() => setSheet('actions')} />
+        <View style={[styles.headerSide, styles.headerSideEnd]}>
+          {/* Google Cast: the system's own button and device picker. It
+              shows itself when a speaker is on the network. */}
+          <CastButton tintColor={color.onArtwork} style={styles.cast} accessibilityLabel="Cast to a speaker" />
+          <IconButton icon={IconDots} accessibilityLabel="Track options" onPress={() => setSheet('actions')} />
+        </View>
       </View>
 
       {/* The face: swipe to skip, double-tap to like. */}
@@ -619,6 +627,9 @@ const makeStyles = (color: Palette) =>
       gap: space[3],
     },
     headerText: { flex: 1, alignItems: 'center' },
+    headerSide: { width: 92, flexDirection: 'row', alignItems: 'center' },
+    headerSideEnd: { justifyContent: 'flex-end', gap: space[1] },
+    cast: { width: 44, height: 44 },
     headerEyebrow: { opacity: 0.7 },
     headerTitle: { ...type.callout, fontFamily: type.headline.fontFamily, color: color.onArtwork, marginTop: 2 },
     faceArea: { flex: 1, alignItems: 'center', justifyContent: 'center' },

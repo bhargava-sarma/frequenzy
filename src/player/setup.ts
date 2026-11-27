@@ -1,4 +1,4 @@
-import TrackPlayer, { PlayerCommand } from '@rntp/player';
+import TrackPlayer, { DEFAULT_CAST_RECEIVER_APP_ID, PlayerCommand } from '@rntp/player';
 
 /**
  * One-time player initialization.
@@ -21,6 +21,11 @@ export function setupPlayer(): void {
       // Music should survive swiping the app out of recents — stopping there
       // is the behaviour that makes other Subsonic clients frustrating.
       taskRemovedBehavior: 'continue',
+      // Google Cast, to the Default Media Receiver: what Nest and Google Home
+      // speakers play. Media3 hands the queue to the speaker when a session
+      // starts and takes it back when it ends; the receiver comes from the
+      // options provider the app declares (plugins/withCast.js).
+      cast: DEFAULT_CAST_RECEIVER_APP_ID,
     },
     // Disk cache is deliberately left off. It defaults to 500 MB, and this
     // library is lossless FLAC where a single album runs to hundreds of MB;

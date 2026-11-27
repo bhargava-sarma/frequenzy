@@ -796,7 +796,17 @@ export class SubsonicClient {
    */
   async getStreamUrl(songId: string): Promise<string> {
     const connection = await this.ensureConnection();
-    return this.buildUrl(connection.url, 'stream', {
+    return this.buildStreamUrl(songId, connection.url);
+  }
+
+  /**
+   * The same stream URL, built synchronously against a given address — for
+   * repairing a queue in place, where there is no time to await. Every
+   * stream URL in the app goes through here, so the raw, uncapped
+   * parameters can't be left off by accident.
+   */
+  buildStreamUrl(songId: string, baseUrl: string): string {
+    return this.buildUrl(baseUrl, 'stream', {
       id: songId,
       format: 'raw',
       maxBitRate: 0,

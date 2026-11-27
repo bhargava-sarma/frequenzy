@@ -63,7 +63,14 @@ export function refreshQueue(): void {
   const index = safely(() => TrackPlayer.getActiveMediaItemIndex(), null) ?? -1;
   const current = usePlaybackStore.getState().item;
   const atIndex = index >= 0 ? queue[index] : undefined;
-  const item = !atIndex ? null : current && current.mediaId === atIndex.mediaId ? current : atIndex;
+  // Kept as the same object only while it is the same track from the same
+  // source: an item re-pointed in place — at a downloaded file, a new
+  // address — must show its new URL to whatever acts on it.
+  const item = !atIndex
+    ? null
+    : current && current.mediaId === atIndex.mediaId && current.url === atIndex.url
+      ? current
+      : atIndex;
   usePlaybackStore.setState({ queue, index, item });
 }
 
