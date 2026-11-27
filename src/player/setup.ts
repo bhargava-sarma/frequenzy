@@ -50,3 +50,32 @@ export function setupPlayer(): void {
   initialized = true;
 }
 
+
+const RECOVERY_SPACING_MS = 30_000;
+const MAX_RECOVERIES = 3;
+let lastRecovery = 0;
+let recoveries = 0;
+
+/**
+ * Starts the player over after its controller lost the playback service.
+ *
+ * The player reports that as a PlaybackError with code
+ * 'controller-connection-failed' and discards whatever was waiting to run;
+ * nothing works again until it is torn down and set up anew, which is the
+ * library's documented recovery. Spaced out and capped, so a service that
+ * keeps failing to start can't put the app in a loop. Returns whether it
+ * tried.
+ */
+export function recoverPlayer(): boolean {
+  if (recoveries >= MAX_RECOVERIES || Date.now() - lastRecovery < RECOVERY_SPACING_MS) return false;
+  lastRecovery = Date.now();
+  recoveries += 1;
+  try {
+    TrackPlayer.destroy();
+  } catch {
+    // Already gone; setting up again is the point.
+  }
+  initialized = false;
+  setupPlayer();
+  return true;
+}

@@ -24,6 +24,18 @@ let backgroundTimer: ReturnType<typeof setInterval> | null = null;
 /** Screens showing time to the line — lyrics, the player — ask for tighter syncs. */
 let precise = 0;
 let clockTicks = 0;
+let warmupTimers: ReturnType<typeof setTimeout>[] = [];
+
+/** After the first of several expected queue events, how long to wait for the rest. */
+const QUEUE_SETTLE_MS = 400;
+/**
+ * Re-reads after startup. The player answers with an empty default until its
+ * controller has connected to the playback service, so a read at launch can
+ * miss a queue that is already playing — with nothing changing afterwards to
+ * send an event, the mini player would stay hidden. A few cheap re-reads
+ * while the mirror is still empty cover the connection.
+ */
+const WARMUP_DELAYS_MS = [400, 1200, 3000, 6000];
 
 function safely<T>(read: () => T, fallback: T): T {
   try {
@@ -162,6 +174,11 @@ export function startPlaybackSync(): () => void {
   if (started) return () => {};
   started = true;
   syncAll();
+  warmupTimers = WARMUP_DELAYS_MS.map((delay) =>
+    setTimeout(() => {
+      if (usePlaybackStore.getState().queue.length === 0) syncAll();
+    }, delay),
+  );
 
   const subscriptions = [
     TrackPlayer.addEventListener(Event.MediaItemTransition, ({ item, index }) => {
@@ -228,7 +245,8 @@ export function startPlaybackSync(): () => void {
     for (const subscription of subscriptions) subscription.remove();
     appState.remove();
     stopBackgroundPoll();
-    for (const timer of [queueTimer, resyncTimer, resumeTimer]) if (timer) clearTimeout(timer);
+    for (const timer of [queueTimer, resyncTimer, resumeTimer, ...warmupTimers]) if (timer) clearTimeout(timer);
+    warmupTimers = [];
     if (clockTimer) clearInterval(clockTimer);
     queueTimer = resyncTimer = resumeTimer = null;
     clockTimer = null;
@@ -237,25 +255,38 @@ export function startPlaybackSync(): () => void {
 
 /**
  * Waits for the player to report `events` changes to its queue, after
- * `mutate` has sent them. The event arrives once a change has been handed
- * to the player's thread, so a read made after it sees the result.
+ * `mutate` has sent them. The event arrives once a change has been applied
+ * by the player, so a read made after it sees the result.
+ *
+ * Resolves true when every expected change was announced, false when the
+ * wait ran out — the caller then checks the queue itself rather than
+ * assuming failure: a change can land without its own event (two edits
+ * announced as one, an edit that left the queue as it was). Once the first
+ * event is in, the rest get a short settle window rather than the whole
+ * timeout. Rejects only if `mutate` itself throws.
  */
-export function afterQueueChange(mutate: () => void, timeoutMs = 3000, events = 1): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
+export function afterQueueChange(mutate: () => void, timeoutMs = 3000, events = 1): Promise<boolean> {
+  return new Promise<boolean>((resolve, reject) => {
     let remaining = events;
     let done = false;
+    let settle: ReturnType<typeof setTimeout> | null = null;
     const subscription = TrackPlayer.addEventListener(Event.QueueChanged, () => {
       remaining -= 1;
-      if (remaining <= 0) finish(true);
+      if (remaining <= 0) {
+        finish(true);
+        return;
+      }
+      if (settle) clearTimeout(settle);
+      settle = setTimeout(() => finish(false), QUEUE_SETTLE_MS);
     });
     const timer = setTimeout(() => finish(false), timeoutMs);
-    function finish(ok: boolean) {
+    function finish(announced: boolean) {
       if (done) return;
       done = true;
       clearTimeout(timer);
+      if (settle) clearTimeout(settle);
       subscription.remove();
-      if (ok) resolve();
-      else reject(new Error('The player did not accept the change in time.'));
+      resolve(announced);
     }
     try {
       mutate();

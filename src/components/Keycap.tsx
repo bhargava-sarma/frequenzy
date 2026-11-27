@@ -1,6 +1,5 @@
 import { memo, useCallback, useEffect } from 'react';
 import {
-  ActivityIndicator,
   Pressable,
   StyleSheet,
   Text,
@@ -8,11 +7,12 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
-import Animated, { useAnimatedStyle } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 
 import type { IconComponent } from './icons';
+import { LoadingIndicator } from './LoadingIndicator';
 import { mix } from '../theme/color';
-import { usePressProgress } from '../theme/motion';
+import { useMotion, usePressProgress } from '../theme/motion';
 import { icon as iconTokens, radius, space, type, withAlpha } from '../theme/tokens';
 import { useTheme, useThemeControls } from '../theme/ThemeProvider';
 import { haptics } from '../utils/haptics';
@@ -30,6 +30,11 @@ import { haptics } from '../utils/haptics';
  * Variants map to the keycap colours of the hardware this borrows from:
  * the one orange key (primary), white keys (secondary), grey keys (dark),
  * and printed legends with no key at all (ghost).
+ *
+ * Shape follows Material 3 Expressive: a key's corners tighten while it is
+ * held and spring back with it, and a `round` key morphs between a circle and
+ * its square-cornered self — the play key does, round while paused and
+ * square while playing, the way Android 16's media controls do.
  */
 
 export type KeycapVariant = 'primary' | 'secondary' | 'dark' | 'ghost';
@@ -52,6 +57,8 @@ export interface KeycapProps {
   square?: boolean;
   /** Lit state for toggles: the legend takes the accent. */
   active?: boolean;
+  /** `round` morphs the key to a circle (or pill, if wider than tall). */
+  shape?: 'default' | 'round';
   accessibilityLabel?: string;
   style?: StyleProp<ViewStyle>;
 }
@@ -61,6 +68,8 @@ const RADIUS: Record<KeycapSize, number> = { sm: 10, md: radius.md, lg: 14 };
 const ICON: Record<KeycapSize, number> = { sm: 16, md: 19, lg: 24 };
 /** How far the face stands proud of the lip, and so how far a press travels. */
 const TRAVEL = 2.5;
+/** How much of its rounding a key gives up while held. */
+const PRESS_SQUARE = 0.38;
 
 export const Keycap = memo(function Keycap({
   label,
@@ -75,6 +84,7 @@ export const Keycap = memo(function Keycap({
   flex = false,
   square = false,
   active = false,
+  shape = 'default',
   accessibilityLabel,
   style,
 }: KeycapProps) {
@@ -130,6 +140,15 @@ export const Keycap = memo(function Keycap({
   }
 
   const { pressed, down, up } = usePressProgress();
+  const { springs } = useMotion();
+
+  // 0 at the key's own corners, 1 fully round; sprung between when `shape`
+  // changes, so the play key morphs rather than snaps.
+  const roundness = useSharedValue(shape === 'round' ? 1 : 0);
+  useEffect(() => {
+    roundness.value = withSpring(shape === 'round' ? 1 : 0, springs.spatialFast);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shape, roundness]);
 
   // A key that goes busy or disabled under the finger gets no release
   // event to come back up on; without this it would stay down.
@@ -139,11 +158,16 @@ export const Keycap = memo(function Keycap({
 
   // Held: a lipped key sits down on its lip; a ghost key, having no lip to
   // sit on, dims.
-  const travel = useAnimatedStyle(() =>
-    hasLip
-      ? { transform: [{ translateY: pressed.value * TRAVEL }] }
-      : { opacity: 1 - pressed.value * 0.4 },
-  );
+  const full = height / 2;
+  const travel = useAnimatedStyle(() => {
+    const borderRadius = (corner + (full - corner) * roundness.value) * (1 - pressed.value * PRESS_SQUARE);
+    return hasLip
+      ? { borderRadius, transform: [{ translateY: pressed.value * TRAVEL }] }
+      : { borderRadius, opacity: 1 - pressed.value * 0.4 };
+  });
+  const lipShape = useAnimatedStyle(() => ({
+    borderRadius: (corner + (full - corner) * roundness.value) * (1 - pressed.value * PRESS_SQUARE),
+  }));
 
   const handlePress = useCallback(() => {
     haptics.press();
@@ -157,7 +181,7 @@ export const Keycap = memo(function Keycap({
   }, [onLongPress]);
 
   const content = busy ? (
-    <ActivityIndicator size="small" color={ink} />
+    <LoadingIndicator size={ICON[size] + 4} color={ink} />
   ) : (
     <>
       {Icon && (
@@ -201,8 +225,8 @@ export const Keycap = memo(function Keycap({
       ]}
     >
       {hasLip && (
-        <View
-          style={[StyleSheet.absoluteFill, { top: TRAVEL, borderRadius: corner, backgroundColor: lip }]}
+        <Animated.View
+          style={[StyleSheet.absoluteFill, { top: TRAVEL, backgroundColor: lip }, lipShape]}
         />
       )}
       <Animated.View
@@ -210,7 +234,6 @@ export const Keycap = memo(function Keycap({
           styles.face,
           {
             marginBottom: hasLip ? TRAVEL : 0,
-            borderRadius: corner,
             backgroundColor: face,
             borderColor: edge,
             borderWidth: 1,

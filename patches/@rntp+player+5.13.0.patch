@@ -1,0 +1,466 @@
+diff --git a/node_modules/@rntp/player/android/src/main/java/com/doublesymmetry/trackplayer/CastQueueWindow.kt b/node_modules/@rntp/player/android/src/main/java/com/doublesymmetry/trackplayer/CastQueueWindow.kt
+new file mode 100644
+index 0000000..979530b
+--- /dev/null
++++ b/node_modules/@rntp/player/android/src/main/java/com/doublesymmetry/trackplayer/CastQueueWindow.kt
+@@ -0,0 +1,297 @@
++package com.doublesymmetry.trackplayer
++
++import android.net.Uri
++import android.util.Log
++import androidx.media3.cast.CastPlayer
++import androidx.media3.cast.MediaItemConverter
++import androidx.media3.cast.RemoteCastPlayer
++import androidx.media3.common.MediaItem
++import androidx.media3.common.Player
++import androidx.media3.common.PlayerTransferState
++import androidx.media3.common.util.UnstableApi
++
++/**
++ * Keeps every queue sent to a Cast receiver under the Cast SDK's message limit.
++ *
++ * A Cast message may carry at most 512 KiB, and RemoteCastPlayer sends a whole
++ * playlist in one LOAD (and inserted items in one QUEUE_INSERT). Every item
++ * carries its stream URL, artwork URL, metadata and custom data — one to two
++ * KiB — so a queue of a few hundred tracks goes over, and the SDK throws
++ * IllegalArgumentException("Message exceeds maximum size") on the main thread,
++ * which kills the app the moment a speaker is picked.
++ *
++ * So the receiver is given a window: a few items before the current one and as
++ * many after it as fit a budget well under the limit, measured from the
++ * converter's real output. The full queue is held here; as the receiver nears
++ * the end of its window the next part is appended, and when playback comes
++ * back to the phone the full queue is handed back with it — unless the queue
++ * was edited on the way, in which case what the receiver has is handed back.
++ */
++@UnstableApi
++internal class CastQueueWindow(private val converter: MediaItemConverter) {
++
++  /** A slice of a longer queue: [items] start at [start] in it. */
++  class Window(val start: Int, val items: List<MediaItem>)
++
++  /** The full queue while a slice of it — [start] until [end] — is on the receiver. */
++  private class Held(val items: List<MediaItem>, val start: Int, var end: Int)
++
++  private var held: Held? = null
++
++  /**
++   * The window of [items] to send, around [anchor]. Remembers the full list
++   * when it had to be cut, so it can be extended and handed back.
++   */
++  fun cut(items: List<MediaItem>, anchor: Int): Window {
++    if (items.isEmpty()) {
++      held = null
++      return Window(0, items)
++    }
++    val range = windowBounds(items.size, anchor.coerceIn(0, items.size - 1)) { sizeOf(items[it]) }
++    val window = Window(range.first, items.subList(range.first, range.last + 1).toList())
++    held = if (window.items.size < items.size) {
++      Held(items.toList(), range.first, range.last + 1)
++    } else {
++      null
++    }
++    return window
++  }
++
++  /**
++   * As many leading [items] as fit one message, for an insertion. An edit
++   * like this changes the receiver's queue, so the held one is let go.
++   */
++  fun fit(items: List<MediaItem>): List<MediaItem> {
++    held = null
++    val count = prefixCount(items.size, MAX_ITEMS) { sizeOf(items[it]) }
++    return if (count == items.size) items else items.subList(0, count).toList()
++  }
++
++  /** Lets go of the held queue: the receiver's queue no longer matches it. */
++  fun forget() {
++    held = null
++  }
++
++  /**
++   * Appends the next part of the held queue once the receiver is within a
++   * few items of the end of what it has. Call on transitions and timeline
++   * changes while casting; it does nothing otherwise.
++   */
++  fun extend(player: Player) {
++    val keep = held ?: return
++    if (keep.end >= keep.items.size) return
++    val sent = keep.end - keep.start
++    val count = player.mediaItemCount
++    // Fewer than sent: the last extension has not landed yet. More: the
++    // queue was added to some other way, so it no longer matches.
++    if (count < sent) return
++    if (count > sent) {
++      held = null
++      return
++    }
++    val remaining = count - 1 - player.currentMediaItemIndex
++    if (remaining > EXTEND_WHEN_REMAINING) return
++    val rest = keep.items.subList(keep.end, keep.items.size)
++    val next = prefixCount(rest.size, MAX_ITEMS) { sizeOf(rest[it]) }
++    if (next == 0) return
++    val chunk = rest.subList(0, next).toList()
++    keep.end += next
++    try {
++      player.addMediaItems(chunk)
++    } catch (e: Exception) {
++      Log.e(TAG, "Could not extend the queue on the receiver", e)
++      held = null
++    }
++  }
++
++  /**
++   * On the way back to the phone: the state with the full held queue, if the
++   * receiver's queue is still the window it was given. Null otherwise.
++   */
++  fun restore(state: PlayerTransferState): PlayerTransferState? {
++    val keep = held ?: return null
++    held = null
++    val remote = state.mediaItems
++    val sent = keep.end - keep.start
++    // The receiver may not have reported an extension still on its way, so
++    // it can hold fewer than were sent — never more, and never others.
++    if (remote.isEmpty() || remote.size > sent) return null
++    for (i in remote.indices) {
++      val id = remote[i].mediaId
++      if (id.isNotEmpty() && id != keep.items[keep.start + i].mediaId) return null
++    }
++    val index = (keep.start + state.currentMediaItemIndex).coerceIn(0, keep.items.size - 1)
++    return state.buildUpon()
++      .setMediaItems(keep.items)
++      .setCurrentMediaItemIndex(index)
++      .build()
++  }
++
++  /** What one item adds to a message, in UTF-8 bytes. */
++  private fun sizeOf(item: MediaItem): Int = try {
++    converter.toMediaQueueItem(item).toJson().toString().toByteArray(Charsets.UTF_8).size + PER_ITEM_OVERHEAD
++  } catch (_: Exception) {
++    FALLBACK_ITEM_BYTES
++  }
++
++  companion object {
++    private const val TAG = "TrackPlayer"
++
++    /** The SDK refuses messages over 524288 bytes; this leaves room for the envelope. */
++    const val BUDGET_BYTES = 200 * 1024
++    /** Items per message at most, whatever their size. */
++    const val MAX_ITEMS = 100
++    /** Items kept before the current one, so Previous works on the receiver. */
++    const val PREVIOUS_ITEMS = 5
++    /** How close to the end of its window the receiver gets before more is sent. */
++    const val EXTEND_WHEN_REMAINING = 3
++    const val PER_ITEM_OVERHEAD = 64
++    /** Assumed for an item the converter can't encode. */
++    const val FALLBACK_ITEM_BYTES = 4096
++
++    /**
++     * The index range of a window around [anchor] in a list of [count]
++     * items: up to [PREVIOUS_ITEMS] before it, then as many after it as the
++     * budget and [MAX_ITEMS] allow, then — if that reached the end — more
++     * from before. The anchor itself is always in.
++     */
++    fun windowBounds(
++      count: Int,
++      anchor: Int,
++      budget: Int = BUDGET_BYTES,
++      maxItems: Int = MAX_ITEMS,
++      previous: Int = PREVIOUS_ITEMS,
++      sizeOf: (Int) -> Int,
++    ): IntRange {
++      var start = anchor
++      var end = anchor + 1
++      var bytes = sizeOf(anchor)
++      while (start > 0 && anchor - start < previous && end - start < maxItems) {
++        val size = sizeOf(start - 1)
++        if (bytes + size > budget) break
++        bytes += size
++        start -= 1
++      }
++      while (end < count && end - start < maxItems) {
++        val size = sizeOf(end)
++        if (bytes + size > budget) break
++        bytes += size
++        end += 1
++      }
++      // The end was reached with room to spare: spend it on what came before,
++      // so a queue that fits is sent whole.
++      if (end == count) {
++        while (start > 0 && end - start < maxItems) {
++          val size = sizeOf(start - 1)
++          if (bytes + size > budget) break
++          bytes += size
++          start -= 1
++        }
++      }
++      return start until end
++    }
++
++    /** How many leading items of [count] fit the budget, at most [maxItems]. */
++    fun prefixCount(count: Int, maxItems: Int, budget: Int = BUDGET_BYTES, sizeOf: (Int) -> Int): Int {
++      var bytes = 0
++      var taken = 0
++      while (taken < count && taken < maxItems) {
++        val size = sizeOf(taken)
++        if (bytes + size > budget) break
++        bytes += size
++        taken += 1
++      }
++      return taken
++    }
++
++    fun isPlayable(item: MediaItem): Boolean {
++      val configuration = item.localConfiguration ?: return false
++      return configuration.uri != Uri.EMPTY
++    }
++  }
++}
++
++/**
++ * Moves playback between the phone and a Cast receiver through a
++ * [CastQueueWindow], so the receiver is never sent more than one message can
++ * carry. Otherwise as Media3's default: items that can't play are left out,
++ * and the current item, position, repeat, shuffle and speed carry over.
++ */
++@UnstableApi
++internal class WindowedCastTransferCallback(
++  private val window: CastQueueWindow,
++) : CastPlayer.TransferCallback {
++
++  override fun transferState(sourcePlayer: Player, targetPlayer: Player) {
++    try {
++      val state = PlayerTransferState.fromPlayer(sourcePlayer)
++      if (targetPlayer is RemoteCastPlayer) {
++        val playable = Playable.of(state) ?: return
++        val cut = window.cut(playable.items, playable.index)
++        state.buildUpon()
++          .setMediaItems(cut.items)
++          .setCurrentMediaItemIndex(playable.index - cut.start)
++          .setCurrentPosition(if (playable.currentKept) state.currentPosition else 0L)
++          .build()
++          .setToPlayer(targetPlayer)
++      } else {
++        window.restore(state)?.let {
++          it.setToPlayer(targetPlayer)
++          return
++        }
++        val playable = Playable.of(state) ?: return
++        state.buildUpon()
++          .setMediaItems(playable.items)
++          .setCurrentMediaItemIndex(playable.index)
++          .setCurrentPosition(if (playable.currentKept) state.currentPosition else 0L)
++          .build()
++          .setToPlayer(targetPlayer)
++      }
++    } catch (e: Exception) {
++      // Never let a hand-over take the app down: carry the current item alone.
++      Log.e(TAG, "Cast hand-over failed; carrying the current item only", e)
++      window.forget()
++      try {
++        val state = PlayerTransferState.fromPlayer(sourcePlayer)
++        val current = state.mediaItems.getOrNull(state.currentMediaItemIndex)
++        if (current != null && CastQueueWindow.isPlayable(current)) {
++          state.buildUpon()
++            .setMediaItems(listOf(current))
++            .setCurrentMediaItemIndex(0)
++            .build()
++            .setToPlayer(targetPlayer)
++        }
++      } catch (inner: Exception) {
++        Log.e(TAG, "Cast hand-over fallback failed", inner)
++      }
++    }
++  }
++
++  /** The playable items of a state, and where its current item lands among them. */
++  private class Playable(val items: List<MediaItem>, val index: Int, val currentKept: Boolean) {
++    companion object {
++      fun of(state: PlayerTransferState): Playable? {
++        val all = state.mediaItems
++        val current = state.currentMediaItemIndex
++        val items = ArrayList<MediaItem>(all.size)
++        var index = 0
++        var currentKept = false
++        for (i in all.indices) {
++          val item = all[i]
++          val playable = CastQueueWindow.isPlayable(item)
++          if (i == current) {
++            index = items.size
++            currentKept = playable
++          }
++          if (playable) items.add(item)
++        }
++        if (items.isEmpty()) return null
++        return Playable(items, index.coerceAtMost(items.size - 1), currentKept)
++      }
++    }
++  }
++
++  private companion object {
++    const val TAG = "TrackPlayer"
++  }
++}
+diff --git a/node_modules/@rntp/player/android/src/main/java/com/doublesymmetry/trackplayer/TrackPlayerPlaybackService.kt b/node_modules/@rntp/player/android/src/main/java/com/doublesymmetry/trackplayer/TrackPlayerPlaybackService.kt
+index d30014e..0135d17 100644
+--- a/node_modules/@rntp/player/android/src/main/java/com/doublesymmetry/trackplayer/TrackPlayerPlaybackService.kt
++++ b/node_modules/@rntp/player/android/src/main/java/com/doublesymmetry/trackplayer/TrackPlayerPlaybackService.kt
+@@ -239,6 +239,8 @@ class TrackPlayerPlaybackService: MediaLibraryService(), MediaLibraryService.Med
+   private var simpleCache: SimpleCache? = null
+   private var exoPlayer: ExoPlayer? = null
+   internal var castPlayer: CastPlayer? = null
++  /** What the Cast receiver is given of the queue, kept under the Cast message limit. */
++  internal var castQueueWindow: CastQueueWindow? = null
+   internal var activePlayer: Player? = null
+   private val livePositionGuard = LivePositionGuard()
+   private var progressSyncTimer: java.util.Timer? = null
+@@ -349,15 +351,21 @@ class TrackPlayerPlaybackService: MediaLibraryService(), MediaLibraryService.Med
+     val activePlayer: Player = config.castReceiverAppId?.let { appId ->
+       android.util.Log.d("TrackPlayer", "Cast enabled (appId=$appId), building CastPlayer")
+       try {
++        val castConverter = TrackPlayerCastMediaItemConverter()
++        val queueWindow = CastQueueWindow(castConverter)
+         val remoteCastPlayer = RemoteCastPlayer.Builder(this)
+-          .setMediaItemConverter(TrackPlayerCastMediaItemConverter())
++          .setMediaItemConverter(castConverter)
+           .build()
+         CastPlayer.Builder(this)
+           .setLocalPlayer(built)
+           .setRemotePlayer(remoteCastPlayer)
++          // The whole queue in one Cast message overflows its 512 KiB limit
++          // on a long playlist and crashes the app; send a window instead.
++          .setTransferCallback(WindowedCastTransferCallback(queueWindow))
+           .build()
+           .also {
+             castPlayer = it
++            castQueueWindow = queueWindow
+             it.setSessionAvailabilityListener(castAvailability)
+             android.util.Log.d(
+               "TrackPlayer",
+@@ -390,6 +398,7 @@ class TrackPlayerPlaybackService: MediaLibraryService(), MediaLibraryService.Med
+       }
+ 
+       override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
++        extendCastQueue(activePlayer)
+         livePositionGuard.onMediaItemTransition(activePlayer)
+         lastMediaMetadata = null
+         val currentIndex = activePlayer.currentMediaItemIndex
+@@ -436,6 +445,7 @@ class TrackPlayerPlaybackService: MediaLibraryService(), MediaLibraryService.Med
+       }
+ 
+       override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
++        extendCastQueue(activePlayer)
+         if (timeline.isEmpty) cancelPlaybackStart()
+         if (sleepTimerController?.sleepTimerType == "mediaItem" && (activePlayer?.mediaItemCount ?: 0) == 0) {
+           sleepTimerController?.cancelInternal(restoreVolume = false)
+@@ -477,6 +487,13 @@ class TrackPlayerPlaybackService: MediaLibraryService(), MediaLibraryService.Med
+     setupNotificationProvider(config)
+   }
+ 
++  /** While casting, sends the receiver more of a long queue as it nears the end of what it has. */
++  @OptIn(UnstableApi::class)
++  private fun extendCastQueue(player: Player) {
++    if (castPlayer?.isCastSessionAvailable() != true) return
++    castQueueWindow?.extend(player)
++  }
++
+   @OptIn(UnstableApi::class)
+   internal fun createForwardingPlayer(player: Player): Player {
+     return object : ForwardingPlayer(player) {
+@@ -492,14 +509,86 @@ class TrackPlayerPlaybackService: MediaLibraryService(), MediaLibraryService.Med
+ 
+       override fun getCurrentPosition(): Long = livePositionGuard.reportedPositionMs(player)
+ 
++      override fun setMediaItems(mediaItems: List<MediaItem>) {
++        val cut = castCut(mediaItems, 0)
++        super.setMediaItems(cut?.items ?: mediaItems)
++      }
++
+       override fun setMediaItems(mediaItems: List<MediaItem>, resetPosition: Boolean) {
+         clearEndedPlayIntent()
+-        super.setMediaItems(mediaItems, resetPosition)
++        val cut = castCut(mediaItems, 0)
++        super.setMediaItems(cut?.items ?: mediaItems, resetPosition)
+       }
+ 
+       override fun setMediaItems(mediaItems: List<MediaItem>, startIndex: Int, startPositionMs: Long) {
+         clearEndedPlayIntent()
+-        super.setMediaItems(mediaItems, startIndex, startPositionMs)
++        val cut = castCut(mediaItems, startIndex)
++        if (cut == null) {
++          super.setMediaItems(mediaItems, startIndex, startPositionMs)
++        } else {
++          super.setMediaItems(cut.items, startIndex - cut.start, startPositionMs)
++        }
++      }
++
++      override fun addMediaItems(mediaItems: List<MediaItem>) {
++        super.addMediaItems(castFit(mediaItems))
++      }
++
++      override fun addMediaItems(index: Int, mediaItems: List<MediaItem>) {
++        super.addMediaItems(index, castFit(mediaItems))
++      }
++
++      override fun replaceMediaItems(fromIndex: Int, toIndex: Int, mediaItems: List<MediaItem>) {
++        super.replaceMediaItems(fromIndex, toIndex, castFit(mediaItems))
++      }
++
++      override fun removeMediaItem(index: Int) {
++        castQueueWindow?.forget()
++        super.removeMediaItem(index)
++      }
++
++      override fun removeMediaItems(fromIndex: Int, toIndex: Int) {
++        castQueueWindow?.forget()
++        super.removeMediaItems(fromIndex, toIndex)
++      }
++
++      override fun moveMediaItem(currentIndex: Int, newIndex: Int) {
++        castQueueWindow?.forget()
++        super.moveMediaItem(currentIndex, newIndex)
++      }
++
++      override fun moveMediaItems(fromIndex: Int, toIndex: Int, newIndex: Int) {
++        castQueueWindow?.forget()
++        super.moveMediaItems(fromIndex, toIndex, newIndex)
++      }
++
++      override fun clearMediaItems() {
++        castQueueWindow?.forget()
++        super.clearMediaItems()
++      }
++
++      /**
++       * While casting, the window of [items] around [anchor] that fits one
++       * Cast message, or null to send them all (not casting, or they fit).
++       */
++      private fun castCut(items: List<MediaItem>, anchor: Int): CastQueueWindow.Window? {
++        val window = castQueueWindow ?: return null
++        if (castPlayer?.isCastSessionAvailable() != true) {
++          window.forget()
++          return null
++        }
++        val cut = window.cut(items, anchor)
++        return if (cut.items.size == items.size) null else cut
++      }
++
++      /** While casting, the leading [items] that fit one Cast message. */
++      private fun castFit(items: List<MediaItem>): List<MediaItem> {
++        val window = castQueueWindow ?: return items
++        if (castPlayer?.isCastSessionAvailable() != true) {
++          window.forget()
++          return items
++        }
++        return window.fit(items)
+       }
+ 
+       private fun clearEndedPlayIntent() {
+@@ -734,6 +823,7 @@ class TrackPlayerPlaybackService: MediaLibraryService(), MediaLibraryService.Med
+     exoPlayer?.release()
+     exoPlayer = null
+     castPlayer = null
++    castQueueWindow = null
+     synchronized(cacheLifecycleLock) {
+       simpleCache?.release()
+       simpleCache = null

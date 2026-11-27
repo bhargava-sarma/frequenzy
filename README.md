@@ -284,11 +284,29 @@ arrived as an over-the-air update rather than needing a new build.
 
 Google Cast comes from Media3's Cast player, which the playback library
 already includes: when a session starts, Media3 hands the queue and the
-position to the speaker, and takes them back when it ends. It targets Google's
-Default Media Receiver — what Google Home, Nest speakers and Chromecasts run —
-so no receiver app is registered anywhere. The one piece of native setup, the
-Cast options provider in the Android manifest, is added by
-`plugins/withCast.js`.
+position to the speaker, and takes them back when it ends. The receiver is the
+one Media3's default options provider names — Google's Default Media Receiver
+with DRM support, which Google Home, Nest speakers and Chromecasts run — so no
+receiver app is registered anywhere. The one piece of native setup, the Cast
+options provider in the Android manifest, is added by `plugins/withCast.js`.
+
+The playback library is kept at 5.13 or later for this: it carries Media3
+1.11, whose hand-over between phone and speaker no longer passes along queue
+entries the speaker never sent back in full (Media3 1.9 crashed the app on
+those), and which reads a speaker's queue without assuming another Media3 app
+put it there.
+
+- **Long queues.** A Cast message can carry at most 512 KiB, and Media3 sends
+  a whole playlist in one — at one to two KiB a track, a few hundred tracks
+  made the Cast SDK throw and closed the app the moment a speaker was picked.
+  So the speaker is given a window: a few tracks before the current one and
+  as many after it as fit a 200 KiB budget (at most 100), measured from the
+  real encoded items. Near the end of its window it is sent the next part,
+  and when playback returns to the phone the full queue comes back with it.
+  While casting, the app's queue shows what the speaker has. This lives in
+  the playback library's native code, as a patch applied on install
+  (`patches/@rntp+player+5.13.0.patch`, via patch-package): the library is
+  pinned to exactly 5.13.0 so the patch always applies.
 
 - **What the speaker plays.** The speaker fetches each track itself, so it is
   given the same `format=raw`, uncapped stream URL the phone uses, at the home
@@ -319,6 +337,18 @@ Each one is written to a small log on the device. *Settings → Diagnostics*
 shows the latest with a key to share the full report, stack included, and the
 app mentions once on the next launch that it recovered from one. Nothing
 leaves the device unless that key is pressed.
+
+A crash in native code — the player, Media3, the Cast SDK — closes the app
+before any of that can run, so the native side leaves a note instead
+(`plugins/withCrashRecorder.js`): the Java stack trace of an uncaught
+exception, and on Android 11+ the system's record of an ANR or a native
+crash. The next launch moves it into the same log (`src/data/nativeCrash.ts`).
+The app still closes as it would have; the note is so the report can say
+exactly where.
+
+If the player's controller loses its playback service, the player reports it
+and stops accepting commands; the app sets it up again and puts the saved
+queue back, paused where it was (`src/player/controllerRecovery.ts`).
 
 ---
 
@@ -373,6 +403,45 @@ audio hardware. Three influences, each with a job.
 Three finishes: **Aluminium** (light), **Graphite** (dark) and **OLED** (true
 black). The player, lyrics and queue are always dark, whatever the theme.
 
+### Material You and Material 3 Expressive
+
+On Android the device is built from **Material You**: the wallpaper's colours,
+the way Android 16 colours everything else. The hardware stays — panels on a
+ground, keys proud of their panels, wells cut in, the black display, the LEDs —
+but each layer is made of the Material surface container at its height, the
+loud key is the wallpaper's primary, and the grey keys become its tonal
+secondary container. On Android 14+ the system's own Material 3 colour roles
+are read as they are (so the colour style picked in *Wallpaper & style* and the
+contrast setting carry through); Android 12–13 publish only the tonal palettes,
+which are mapped at the spec's tones. A wallpaper change shows the next time
+the app comes to the front. *Settings → Appearance → Colour* switches between
+**Wallpaper** and the **Preset** keycap colours; the player and the wash behind
+every screen still follow the cover when *Colour from artwork* is on. The
+colours come from a small native module in the app (`modules/material-you`),
+which also gives haptics the system's own vocabulary — segment ticks, key taps,
+confirm and reject, toggles — instead of raw vibration.
+
+The controls take on **Material 3 Expressive**, Android 16's design language:
+
+- **The wavy track.** What has played on the scrub bar is a moving wave while
+  the music runs, flattening to a line on pause; what's left is a straight
+  track ending in a stop dot, with clear space around a slim upright handle —
+  as on Android 16's media controls. The tape ruler stays underneath. The wave
+  is one pre-drawn path translated on the native animation driver, and moves
+  only while the player is on screen.
+- **Shape morphing.** Keys tighten their corners while held and spring back;
+  the play key is round while paused and square-cornered while playing,
+  morphing between the two.
+- **The loading indicator.** Loading is Material's morphing mark — soft burst,
+  cookie, pentagon, pill, sunny, cookie, oval — turning as it changes.
+- **Navigation.** The selected tab gets Material's pill in the accent's
+  container colour, growing from the centre, and its glyph fills in.
+- **Switches.** Material's switch: a small outlined thumb that grows, carrying
+  a check, as it crosses to on, and swells while held.
+- **Springs.** Movement uses the Expressive motion scheme's spatial springs —
+  a key comes back with a little give, a shape overshoots and settles — and
+  colour and fades use its effects springs, which never bounce.
+
 Type is Space Grotesk for words, Space Mono for labels and figures, and Doto for
 the dot-matrix display.
 
@@ -390,8 +459,8 @@ be felt rather than watched.
   later if that never comes, so nothing can sit invisible below the screen.
   Going deeper is a short crossfade; changing tabs is a cut, since fading two
   whole stacks into each other is the most expensive thing a screen can draw.
-  The raised key under a segmented control or the dock slides to its new place
-  rather than blinking there. Small blocks — a loader, an empty or error
+  The raised key under a segmented control slides to its new place rather
+  than blinking there, and the dock's pill grows in under the chosen tab. Small blocks — a loader, an empty or error
   panel — fade up as they arrive, and the loader waits a moment before showing,
   so a read that comes straight from the cache never flashes. Screens and
   lists themselves are never faded: on Android that redraws everything inside
@@ -404,9 +473,11 @@ be felt rather than watched.
 
 All of it is transforms and opacity on the UI thread, so none of it waits on
 JavaScript and none of it lays anything out; a long list carries one running
-animation, not one per row. Springs are used only for things a finger moved or
-a selection that travels, and only the like is loose enough to bounce. Nothing
-drifts or loops for decoration. **Reduce motion** stills the lot: transitions
+animation, not one per row. Springs are used for things a finger moved, a
+selection that travels and a shape that changes — Material 3 Expressive's
+spatial springs, with a little give — while colour and fades never bounce.
+Nothing drifts or loops for decoration; the one moving wave says the music is
+running. **Reduce motion** stills the lot: transitions
 become cuts, the bars and the record hold, and the app's own setting applies
 whether or not the system's does.
 

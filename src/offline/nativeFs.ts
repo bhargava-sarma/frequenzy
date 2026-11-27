@@ -95,6 +95,13 @@ function documents(): string {
   return root.endsWith('/') ? root : `${root}/`;
 }
 
+/** A file directly in the app's private documents folder, or null without the module. */
+export function documentFile(name: string): NativeFile | null {
+  const module = native();
+  if (!module) return null;
+  return new module.FileSystemFile(`${documents()}${name}`);
+}
+
 /** Where everything downloaded lives. Deleting this folder deletes it all. */
 export const dirs = {
   root: () => `${documents()}offline/`,

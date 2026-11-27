@@ -54,26 +54,58 @@ export const timings: Record<TimingName, WithTimingConfig> = {
   crossfade: { duration: motion.durationCrossfade, easing: Easing.inOut(Easing.quad) },
 };
 
-export type SpringName = 'press' | 'select' | 'settle' | 'pop';
+export type SpringName =
+  | 'press'
+  | 'select'
+  | 'settle'
+  | 'pop'
+  | 'spatialFast'
+  | 'spatial'
+  | 'spatialSlow'
+  | 'effectsFast'
+  | 'effects';
+
+/**
+ * A Material 3 Expressive spring, from its damping ratio and stiffness (the
+ * way the spec writes them) as Reanimated's mass/stiffness/damping.
+ */
+function expressive(dampingRatio: number, stiffness: number): WithSpringConfig {
+  return { mass: 1, stiffness, damping: 2 * dampingRatio * Math.sqrt(stiffness) };
+}
 
 /**
  * Spring presets. Pass straight to withSpring.
  *
- * Described by duration and damping ratio rather than stiffness and mass:
- * the ratio is the thing being chosen. 1 settles without crossing its
- * target; just under 1 arrives with the faintest give, which is what makes a
- * moved thing feel moved rather than repositioned. Only `pop` is loose
- * enough to bounce, and it is used for exactly one thing.
+ * Material 3 Expressive's motion scheme, the one Android 16 moves with:
+ * spatial springs for things that travel or change shape — underdamped, so a
+ * key comes back up with a little give and a shape overshoots and settles
+ * the way a physical thing does — and effects springs, critically damped,
+ * for colour and opacity, which must never bounce.
+ *
+ *   spatialFast  0.6 / 800  — small things: a key, a thumb, a corner
+ *   spatial      0.8 / 380  — a selection travelling, a panel moving
+ *   spatialSlow  0.8 / 200  — large surfaces
+ *   effectsFast  1.0 / 3800 — a colour or fade answering a touch
+ *   effects      1.0 / 1600 — a colour or fade settling
+ *
+ * `press` and `select` are the two the controls use most, so they are the
+ * spatial springs by name; `settle` stays critically damped for drags let go,
+ * and `pop` stays loose for the one thing that should bounce: a like.
  */
 export const springs: Record<SpringName, WithSpringConfig> = {
   /** A control coming back up after a press. */
-  press: { duration: 180, dampingRatio: 0.82 },
+  press: expressive(0.6, 800),
   /** A selection travelling to a new segment or tab. */
-  select: { duration: 260, dampingRatio: 0.88 },
+  select: expressive(0.8, 380),
   /** Something dragged and let go: back to rest, no overshoot. */
   settle: { duration: 300, dampingRatio: 1, overshootClamping: true },
   /** A like landing. */
   pop: { duration: 320, dampingRatio: 0.5 },
+  spatialFast: expressive(0.6, 800),
+  spatial: expressive(0.8, 380),
+  spatialSlow: expressive(0.8, 200),
+  effectsFast: expressive(1, 3800),
+  effects: expressive(1, 1600),
 };
 
 const always = { reduceMotion: ReduceMotion.Always } as const;
@@ -88,12 +120,9 @@ const instantTimings: Record<TimingName, WithTimingConfig> = {
   crossfade: { ...timings.crossfade, ...always },
 };
 
-const instantSprings: Record<SpringName, WithSpringConfig> = {
-  press: { ...springs.press, ...always },
-  select: { ...springs.select, ...always },
-  settle: { ...springs.settle, ...always },
-  pop: { ...springs.pop, ...always },
-};
+const instantSprings = Object.fromEntries(
+  Object.entries(springs).map(([name, config]) => [name, { ...config, ...always }]),
+) as Record<SpringName, WithSpringConfig>;
 
 export interface Motion {
   /** The Reduce motion setting. Check it before starting anything that loops. */

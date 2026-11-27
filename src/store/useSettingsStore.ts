@@ -16,6 +16,8 @@ import type { AccentPreset } from '../theme/tokens';
 
 export type ThemePreference = 'system' | 'light' | 'dark' | 'black';
 export type AccentMode = 'artwork' | 'preset';
+/** Where the app's own colours come from: the wallpaper (Material You) or a preset. */
+export type ColorSource = 'wallpaper' | 'preset';
 export type PlayerFace = 'artwork' | 'vinyl' | 'tape';
 export type LyricsSize = 'small' | 'medium' | 'large';
 export type LibraryMode = 'playlists' | 'albums' | 'artists' | 'genres' | 'downloads';
@@ -25,6 +27,12 @@ export type StartTab = 'Home' | 'Search' | 'Library';
 
 export interface Settings {
   theme: ThemePreference;
+  /**
+   * The app's colours: the wallpaper's Material You scheme, or the preset
+   * below. Falls back to the preset where the system has no wallpaper
+   * colours (before Android 12, on web, on a build without the module).
+   */
+  colorSource: ColorSource;
   accentMode: AccentMode;
   accentPreset: AccentPreset;
   /** Strength of the ambient artwork wash, 0-1. 0 removes it entirely. */
@@ -64,6 +72,7 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: 'dark',
+  colorSource: 'wallpaper',
   accentMode: 'artwork',
   accentPreset: 'orange',
   ambient: 0.8,

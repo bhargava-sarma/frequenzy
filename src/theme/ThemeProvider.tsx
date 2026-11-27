@@ -12,8 +12,11 @@ import { cancelAnimation, useSharedValue, withTiming, type SharedValue } from 'r
 import { create } from 'zustand';
 
 import type { ArtworkColorSet } from './artworkColor';
+import { materialRoles, rolesKey } from './material';
 import { useTimings } from './motion';
+import { useSystemColorsStore, watchSystemColors } from './systemColors';
 import {
+  buildMaterialPalette,
   buildPalette,
   fallbackArtworkPalette,
   modeOf,
@@ -155,30 +158,47 @@ const layerKey = (layer: MeshLayer) => `${paletteKey(layer.mesh)}|${paletteKey(l
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const systemScheme = useColorScheme();
   const theme = useSettingsStore((s) => s.theme);
+  const colorSource = useSettingsStore((s) => s.colorSource);
   const accentMode = useSettingsStore((s) => s.accentMode);
   const accentPreset = useSettingsStore((s) => s.accentPreset);
   const ambient = useSettingsStore((s) => s.ambient);
   const reduceMotion = useSettingsStore((s) => s.reduceMotion);
   const gridPaper = useSettingsStore((s) => s.gridPaper);
   const artworkColors = useArtworkColorStore((s) => s.colors);
+  const systemColors = useSystemColorsStore((s) => s.colors);
+  useEffect(() => watchSystemColors(), []);
 
   const name: ThemeName =
     theme === 'system' ? (systemScheme === 'light' ? 'light' : 'dark') : theme;
   const mode = modeOf(name);
   const art = accentMode === 'artwork' ? artworkColors : null;
 
-  // The app's accent is the chosen preset; the cover's accent is the
-  // player's (see the note at the top of this file).
+  // The app's colours are the wallpaper's Material You scheme or the chosen
+  // preset; the cover's accent is the player's (see the note at the top of
+  // this file). Without wallpaper colours to read, the preset stands in.
+  const wallpaper = colorSource === 'wallpaper';
+  const roles = useMemo(
+    () => (wallpaper ? materialRoles(systemColors, mode) : null),
+    [wallpaper, systemColors, mode],
+  );
+  const darkRoles = useMemo(
+    () => (wallpaper ? materialRoles(systemColors, 'dark') : null),
+    [wallpaper, systemColors],
+  );
+  const scheme = rolesKey(roles);
   const preset = presetAccent(accentPreset, mode);
   const palette = useMemo(
-    () => buildPalette(name, preset),
+    () => (roles ? buildMaterialPalette(name, roles) : buildPalette(name, preset)),
     // Compared by value, so a re-render keeps the same palette object — the
     // style cache depends on it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [name, preset.accent, preset.accentInk],
+    [name, scheme, preset.accent, preset.accentInk],
   );
 
-  const immersiveAccent: AccentPair = art?.dark.accent ?? presetAccent(accentPreset, 'dark');
+  const baseAccent: AccentPair = darkRoles
+    ? { accent: darkRoles.primary, accentInk: darkRoles.onPrimary }
+    : presetAccent(accentPreset, 'dark');
+  const immersiveAccent: AccentPair = art?.dark.accent ?? baseAccent;
   const immersivePalette = useMemo(
     () => {
       const base = buildPalette('dark', immersiveAccent);

@@ -124,7 +124,9 @@ export function LyricsScreen() {
     offsets.current[i] = y;
   }, []);
 
-  const seekTo = useCallback(
+  // Named apart from the player's seekTo: when this was also called seekTo it
+  // hid the import and called itself, and a tap on a line overflowed the stack.
+  const seekToLine = useCallback(
     (seconds: number) => {
       manualUntil.current = 0;
       setFollowing(true);
@@ -223,7 +225,7 @@ export function LyricsScreen() {
           idleColor={color.onArtwork}
           activeColor={color.accent}
           onLayout={onLineLayout}
-          onSeek={seekTo}
+          onSeek={seekToLine}
         />
       ),
     );

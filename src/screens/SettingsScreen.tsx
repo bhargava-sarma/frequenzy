@@ -38,6 +38,8 @@ import { useServerStore } from '../store/useServerStore';
 import { useSettingsStore, type Settings } from '../store/useSettingsStore';
 import { errorMessage, toast } from '../store/useToastStore';
 import { pickInk } from '../theme/color';
+import { materialRoles, type MaterialRoles } from '../theme/material';
+import { useSystemColorsStore } from '../theme/systemColors';
 import { ACCENT_PRESET_ORDER, accentPresets, hairline, layout, radius, space, type } from '../theme/tokens';
 import type { Palette } from '../theme/tokens';
 import { useTheme, useThemeControls, useThemedStyles } from '../theme/ThemeProvider';
@@ -80,6 +82,18 @@ const hostOf = (url?: string) => (url ? url.replace(/^https?:\/\//, '') : undefi
 
 /** The finish each palette is named for on the faceplate. */
 const FINISH = { light: 'ALUMINIUM', dark: 'GRAPHITE', black: 'OLED' } as const;
+const COLOR_SOURCES = [
+  { value: 'wallpaper' as const, label: 'Wallpaper' },
+  { value: 'preset' as const, label: 'Preset' },
+];
+/** The roles shown in the Material You preview, with their printed legends. */
+const ROLE_PLATE: { role: keyof MaterialRoles; ink: keyof MaterialRoles; legend: string }[] = [
+  { role: 'primary', ink: 'onPrimary', legend: 'PRI' },
+  { role: 'secondary', ink: 'onSecondary', legend: 'SEC' },
+  { role: 'tertiary', ink: 'onTertiary', legend: 'TER' },
+  { role: 'primaryContainer', ink: 'onPrimaryContainer', legend: 'CON' },
+  { role: 'surfaceContainerHigh', ink: 'onSurface', legend: 'SRF' },
+];
 
 /** "0.55.2 (a1b2c3d)" → "0.55.2": the build hash is noise on a phone. */
 const shortVersion = (version?: string) => version?.replace(/\s*\(.*\)\s*$/, '').trim();
@@ -90,9 +104,12 @@ export function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { name: themeName, resolved } = useThemeControls();
+  const systemColors = useSystemColorsStore((state) => state.colors);
+  const wallpaperRoles = useMemo(() => materialRoles(systemColors, resolved), [systemColors, resolved]);
 
   const settings = useSettingsStore();
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) => settings.update({ [key]: value } as Partial<Settings>);
+  const usingWallpaper = settings.colorSource === 'wallpaper' && wallpaperRoles != null;
 
   const config = useServerStore((state) => state.config);
   const connection = useServerStore((state) => state.connection);
@@ -234,7 +251,7 @@ export function SettingsScreen() {
         <View style={styles.nav}>
           <IconButton icon={IconChevronLeft} accessibilityLabel="Back" variant="surface" onPress={() => navigation.goBack()} />
           <View style={styles.navText}>
-            <Label tone="tertiary">{`FQ-1 · ${FINISH[themeName]}${settings.theme === 'system' ? ' · AUTO' : ''}`}</Label>
+            <Label tone="tertiary">{`FQ-1 · ${FINISH[themeName]}${settings.theme === 'system' ? ' · AUTO' : ''}${usingWallpaper ? ' · YOU' : ''}`}</Label>
             <Text style={[type.largeTitle, { color: color.label }]}>Settings</Text>
           </View>
         </View>
@@ -246,6 +263,40 @@ export function SettingsScreen() {
             <Segmented options={THEMES} value={settings.theme} onChange={(value) => set('theme', value)} />
 
             <View style={styles.divider} />
+            <Text style={styles.controlLabel}>Colour</Text>
+            {wallpaperRoles ? (
+              <Segmented
+                options={COLOR_SOURCES}
+                value={settings.colorSource}
+                onChange={(value) => set('colorSource', value)}
+              />
+            ) : (
+              <Text style={styles.hint}>
+                Material You colours come from your wallpaper on Android 12 and later, with the latest build of the app.
+              </Text>
+            )}
+
+            {usingWallpaper && wallpaperRoles ? (
+              <>
+                <View style={[styles.rolePlate, styles.spaced]} accessibilityLabel="Material You colours from your wallpaper">
+                  {ROLE_PLATE.map(({ role, ink, legend }) => (
+                    <View key={role} style={styles.roleCell}>
+                      <View style={[styles.roleChip, { backgroundColor: wallpaperRoles[role] }]}>
+                        <Text style={[type.labelBold, styles.roleInk, { color: wallpaperRoles[ink] }]}>Aa</Text>
+                      </View>
+                      <Label tone="tertiary" style={styles.roleLegend}>
+                        {legend}
+                      </Label>
+                    </View>
+                  ))}
+                </View>
+                <Text style={styles.hint}>
+                  Material You: the panels, keys and accent follow your wallpaper and the colour style chosen in Wallpaper & style.
+                </Text>
+              </>
+            ) : null}
+
+            <View style={styles.divider} />
             <Row label="Colour from artwork" hint="The player and the wash behind every screen take the colours of the cover that's playing.">
               <Toggle
                 value={settings.accentMode === 'artwork'}
@@ -254,8 +305,8 @@ export function SettingsScreen() {
               />
             </Row>
 
-            <Text style={[styles.controlLabel, styles.spaced]}>Accent</Text>
-            <View style={styles.swatches}>
+            {!usingWallpaper && <Text style={[styles.controlLabel, styles.spaced]}>Accent</Text>}
+            {!usingWallpaper && <View style={styles.swatches}>
               {ACCENT_PRESET_ORDER.map((preset) => {
                 const fill = accentPresets[preset][resolved];
                 const selected = settings.accentPreset === preset;
@@ -279,7 +330,7 @@ export function SettingsScreen() {
                   </Pressable>
                 );
               })}
-            </View>
+            </View>}
 
             <View style={styles.divider} />
             <Text style={styles.controlLabel}>Player face</Text>
@@ -656,6 +707,19 @@ const makeStyles = (color: Palette) =>
     spaced: { marginTop: space[4] },
     divider: { height: hairline, backgroundColor: color.separator, marginVertical: space[4] },
     swatches: { flexDirection: 'row', flexWrap: 'wrap', gap: space[2] },
+    rolePlate: { flexDirection: 'row', gap: space[2] },
+    roleCell: { flex: 1, alignItems: 'center', gap: space[1] },
+    roleChip: {
+      alignSelf: 'stretch',
+      height: 44,
+      borderRadius: radius.lg,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: hairline,
+      borderColor: color.border,
+    },
+    roleInk: { fontSize: 12 },
+    roleLegend: { fontSize: 9 },
     swatch: {
       width: 40,
       height: 40,

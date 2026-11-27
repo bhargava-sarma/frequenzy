@@ -51,6 +51,9 @@ export { default as IconListNumbers } from '@tabler/icons-react-native/IconListN
 export { default as IconHome } from '@tabler/icons-react-native/IconHome';
 export { default as IconSearch } from '@tabler/icons-react-native/IconSearch';
 export { default as IconLibrary } from '@tabler/icons-react-native/IconLibrary';
+export { default as IconHomeFilled } from '@tabler/icons-react-native/IconHomeFilled';
+export { default as IconSearchFilled } from '@tabler/icons-react-native/IconSearchFilled';
+export { default as IconLibraryFilled } from '@tabler/icons-react-native/IconLibraryFilled';
 export { default as IconChevronRight } from '@tabler/icons-react-native/IconChevronRight';
 export { default as IconChevronLeft } from '@tabler/icons-react-native/IconChevronLeft';
 export { default as IconChevronDown } from '@tabler/icons-react-native/IconChevronDown';
