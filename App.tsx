@@ -12,6 +12,7 @@ import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { PlayerOverlay } from './src/components/PlayerOverlay';
 import { ToastHost } from './src/components/ToastHost';
 import { getCrashLog, installGlobalErrorHandler } from './src/data/crashLog';
+import { importNativeCrashes } from './src/data/nativeCrash';
 import { clearLyricsCache } from './src/data/lyricsCache';
 import { clearPlayHistory } from './src/data/playHistory';
 import { clearRecentSearches } from './src/data/recentSearches';
@@ -19,6 +20,7 @@ import { RootNavigator } from './src/navigation/RootNavigator';
 import { removeAllDownloads, startDownloads } from './src/offline/downloads';
 import { clearPendingScrobbles } from './src/player/pendingScrobbles';
 import { clearSavedQueue, restoreQueue, startQueuePersistence } from './src/player/queuePersistence';
+import { startControllerRecovery } from './src/player/controllerRecovery';
 import { startScrobbler } from './src/player/scrobbler';
 import { startStreamRepair } from './src/player/streamRepair';
 import { SetupScreen } from './src/screens/SetupScreen';
@@ -68,6 +70,12 @@ export default function App() {
 
 /** The newest crash already mentioned this session. */
 let lastSeenCrash = 0;
+
+/**
+ * A crash in native code leaves a note for the next launch (see
+ * nativeCrash); it is moved into the log before anything reads the log.
+ */
+const nativeCrashesImported = importNativeCrashes().catch(() => {});
 
 /** If stored settings take longer than this to load, render with defaults. */
 const SETTINGS_GRACE_MS = 1500;
@@ -130,11 +138,15 @@ function AppContent() {
     const stopRepair = startStreamRepair((message) =>
       toast.error('Playback stopped', { detail: message }),
     );
+    const stopRecovery = startControllerRecovery((message) =>
+      toast.error('Player unavailable', { detail: message }),
+    );
     return () => {
       stopDownloads();
       stopScrobbler();
       stopPersistence();
       stopRepair();
+      stopRecovery();
     };
   }, [status]);
 
@@ -178,7 +190,7 @@ function AppContent() {
   // reported rather than forgotten.
   useEffect(() => {
     const launchedAt = Date.now();
-    void getCrashLog().then((log) => {
+    void nativeCrashesImported.then(getCrashLog).then((log) => {
       const latest = log[0];
       if (!latest || latest.at > launchedAt) return;
       if (launchedAt - latest.at > 24 * 60 * 60 * 1000) return;

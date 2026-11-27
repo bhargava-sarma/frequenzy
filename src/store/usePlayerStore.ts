@@ -206,10 +206,11 @@ const REFIRE_AFTER_MS = 750;
  * waits for the event — it used to poll a full copy of the queue every
  * 25 ms, and on a long playlist each of those copies stalled the app.
  *
- * `verify` is read once, after the event. A command sent before the
- * MediaController has bound is announced but dropped — which is what made
- * the very first play need two taps — so with `refire` a replace that
- * didn't land is sent once more. Never set `refire` for an append.
+ * `verify` is read once, after the event — or after the wait runs out,
+ * since a change can land without being announced one event per edit.
+ * With `refire` a replace that didn't land is sent once more (it is what
+ * made the very first play need two taps, back when a command sent before
+ * the controller bound was dropped). Never set `refire` for an append.
  * `events` is how many changes `mutate` makes, so a remove-then-add waits
  * for both.
  */
@@ -218,9 +219,11 @@ async function applyQueueChange(
   verify?: () => boolean,
   { refire = false, timeoutMs = 3000, events = 1 }: { refire?: boolean; timeoutMs?: number; events?: number } = {},
 ): Promise<void> {
-  await afterQueueChange(mutate, timeoutMs, events);
-  if (!verify || verify()) return;
-  if (refire) {
+  const announced = await afterQueueChange(mutate, timeoutMs, events);
+  // The queue itself is the answer when there is a way to read it; the
+  // event is only the cue to look.
+  if (verify ? verify() : announced) return;
+  if (refire && verify) {
     await sleep(REFIRE_AFTER_MS);
     if (verify()) return;
     await afterQueueChange(mutate, timeoutMs, events);
@@ -567,10 +570,12 @@ export const usePlayerStore = create<PlayerStore>((set, get) => {
       // A last look, as close to the send as possible: something may have
       // started playing while the items were being built.
       if (TrackPlayer.getActiveMediaItemIndex() != null) return;
+      // A load at launch can be held until the player's controller has
+      // connected, and then runs; it is waited for rather than given up on.
       await applyQueueChange(
         () => TrackPlayer.setMediaItems(items, start),
         () => landedOn(items[start]),
-        { timeoutMs: 1200 },
+        { timeoutMs: 6000 },
       );
       original = playable.songs;
       // Dispatched on the same native queue as the replace, so it lands

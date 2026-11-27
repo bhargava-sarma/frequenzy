@@ -203,26 +203,44 @@ export async function restoreQueue(): Promise<boolean> {
   const snapshot = await readSnapshot();
   if (!snapshot) return false;
 
-  for (const wait of [700, 1600]) {
-    await sleep(wait);
-    try {
-      if (TrackPlayer.getActiveMediaItemIndex() != null || TrackPlayer.isPlaying()) return false;
-    } catch {
-      // Unreadable yet; the load below decides.
-    }
-    try {
-      await usePlayerStore
-        .getState()
-        .loadPaused(snapshot.songs, snapshot.index, snapshot.position, snapshot.source ?? {
-          kind: 'restored',
-          label: 'Last session',
-        });
-      return TrackPlayer.getActiveMediaItemIndex() != null;
-    } catch {
-      // Dropped by an unbound controller; the next attempt looks again.
-    }
+  // Until the player's controller has connected to its service, every read
+  // answers "nothing playing" — and a load sent meanwhile is held and run
+  // once it connects. Loading straight away would replace a queue that is in
+  // fact playing: one started from Android Auto or a headset while the app
+  // was closed, or one the user started in the first moment after launch.
+  // So the player is watched for a moment first.
+  const deadline = Date.now() + RESTORE_WATCH_MS;
+  while (Date.now() < deadline) {
+    await sleep(RESTORE_POLL_MS);
+    if (playerHasQueue()) return false;
   }
-  return false;
+
+  try {
+    await usePlayerStore
+      .getState()
+      .loadPaused(snapshot.songs, snapshot.index, snapshot.position, snapshot.source ?? {
+        kind: 'restored',
+        label: 'Last session',
+      });
+    return TrackPlayer.getActiveMediaItemIndex() != null;
+  } catch {
+    // Sent once only: the player holds a load until it can run it, so a
+    // second attempt would queue the same tracks twice.
+    return false;
+  }
+}
+
+/** How long to watch for a queue that is already playing before restoring. */
+const RESTORE_WATCH_MS = 1500;
+const RESTORE_POLL_MS = 250;
+
+function playerHasQueue(): boolean {
+  if (usePlaybackStore.getState().queue.length > 0) return true;
+  try {
+    return TrackPlayer.getActiveMediaItemIndex() != null || TrackPlayer.isPlaying();
+  } catch {
+    return false;
+  }
 }
 
 export async function clearSavedQueue(): Promise<void> {

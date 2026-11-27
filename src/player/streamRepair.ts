@@ -189,6 +189,9 @@ export function startStreamRepair(onUnrecoverable: (message: string) => void): (
   const retried = new Map<string, number>();
 
   const errorSub = TrackPlayer.addEventListener(Event.PlaybackError, (event) => {
+    // The player itself is unreachable, not a track: nothing here can fix
+    // that (see controllerRecovery).
+    if (event.code === 'controller-connection-failed') return;
     void (async () => {
       // From the mirror: an error is no moment to wait on the main thread.
       const mirror = usePlaybackStore.getState();
